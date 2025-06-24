@@ -190,9 +190,9 @@ async def mmr_lookup(ctx, member: discord.Member = None):
     mmr = get_mmr(user)
     await ctx.send(f"{user.display_name}'s MMR is **{mmr}**.")
 
-@bot.command(name="set_mmr")
+@bot.command(name="setmmr")
 @commands.has_permissions(administrator=True)
-async def set_mmr(ctx, mmr: int, member: discord.Member):
+async def setmmr(ctx, mmr: int, member: discord.Member):
     user_id = str(member.id)
     if user_id not in player_data:
         player_data[user_id] = {}
@@ -200,7 +200,7 @@ async def set_mmr(ctx, mmr: int, member: discord.Member):
     save_config(player_data)
     await ctx.send(f"{member.mention}'s MMR has been manually set to **{mmr}**.")
 
-@set_mmr.error
+@setmmr.error
 async def set_mmr_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("You do not have permission to use this command.")
@@ -310,18 +310,22 @@ async def set_password_error(ctx, error):
 async def help_command(ctx):
     help_text = (
         "**Available Commands:**\n\n"
-        "**!cfg `<steam_id>`** – Link your Steam ID to fetch your MMR from STRATZ.\n"
-        "**!mmr [@user]** – Show your MMR or another user's MMR.\n"
-        "**!lobby** – Create or refresh the inhouse lobby.\n"
-        "**!reset** – Clear the current lobby and start fresh.\n"
-        "**!add @user1 @user2 ...** – Manually add one or more users to the lobby.\n"
-        "**!remove @user1 @user2 ...** – Manually remove one or more users from the lobby.\n"
-        "**!set_mmr @user `<mmr>`** – (Admin only) Manually set a user's MMR.\n"
-        "**!setpassword `<new_password>`** – (Admin only) Change the inhouse lobby password.\n"
-        "**!changeprefix `<new_prefix>`** – (Admin only) Changes the prefix of the bot commands.\n"
-        "**👍 / 👎 Reactions** – Join or leave the lobby.\n"
-        "**🚀 Reaction** – Generate balanced teams when lobby is full.\n"
-        "**♻️ Reaction** – Re-roll teams (up to 5 times).\n"
+        "__**👥 General Commands**__\n"
+        "**!cfg `<steam_id>` `<@user>** - 🔗 Link your Steam ID to fetch your MMR from STRATZ.\n"
+        "**!mmr `<@user>`** - 📈 Show your MMR or another user's MMR.\n"
+        "**👍 / 👎 Reactions** - Join or leave the lobby.\n"
+        "**🚀 Reaction** - Generate balanced teams when lobby is full.\n"
+        "**♻️ Reaction** - Re-roll teams (up to 5 times).\n\n"
+        "__**🏠 Lobby Management**__\n"
+        "**!lobby** - Create or refresh the inhouse lobby.\n"
+        "**!reset** - Clear the current lobby and start fresh.\n"
+        "**!add `@user1` `@user2` ...** - Manually add one or more users to the lobby.\n"
+        "**!remove `@user1` `@user2` ...** - Manually remove one or more users from the lobby.\n\n"
+        "__**🔐 Admin Commands**__\n"
+        "**!setmmr @user `<mmr>`** - (Admin only) Manually set a user's MMR.\n"
+        "**!setpassword `<new_password>`** - (Admin only) Change the inhouse lobby password.\n"
+        "**!changeprefix `<new_prefix>`** - (Admin only) Changes the prefix of the bot commands.\n"
+        "**!alert** - 🚨 (Admin only) Mention all 10 players when the lobby is full.\n"
     )
     await ctx.send(help_text)
 
