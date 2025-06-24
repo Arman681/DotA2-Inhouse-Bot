@@ -375,18 +375,21 @@ async def on_raw_reaction_add(payload):
             updated = True
     
     elif emoji == "👎":
-        if len(lobby_players) == 9:
-            leaving_from_9 = True
-        else:
-            leaving_from_9 = False
+        was_full = len(lobby_players) == 10
 
         for i, (uid, _, _) in enumerate(lobby_players):
             if uid == user.id:
                 del lobby_players[i]
                 updated = True
-                if leaving_from_9:
+                if was_full and len(lobby_players) == 9:
                     await channel.send(f"Wow, so nice of you to leave at 9/10, {user.mention}")
                 break
+
+        # Remove 🚀 and ♻️ if lobby drops from 10 to 9
+        if was_full and len(lobby_players) == 9:
+            for reaction in message.reactions:
+                if str(reaction.emoji) in ["🚀", "♻️"]:
+                    await message.clear_reaction(reaction.emoji)
 
     elif emoji == "🚀" and len(lobby_players) == 10:
         team_rolls = calculate_balanced_teams(lobby_players)
