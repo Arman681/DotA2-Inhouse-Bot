@@ -1,3 +1,11 @@
+# ------------------------------------------------------------
+# ArmanBotty - Discord Inhouse Lobby Bot
+# Author: Arman Hasan
+# Created: June 2025
+# Location: Ft. Lauderdale, Florida
+# Description: A Discord bot for managing DotA2 inhouse lobbies,
+#              including MMR tracking, team balancing, and lobby alerts.
+# ------------------------------------------------------------
 import os
 import json
 import discord
@@ -16,7 +24,6 @@ intents.message_content = True
 intents.reactions = True
 intents.guilds = True
 intents.members = True
-
 
 def get_prefix(bot, message):
     return current_prefix
