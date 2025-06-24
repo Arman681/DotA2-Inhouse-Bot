@@ -130,8 +130,8 @@ def get_mmr(user):
     user_id = str(user.id)
     info = player_data.get(user_id)
     if isinstance(info, dict):
-        return info.get("mmr")
-    return 4000 + hash(user.name) % 3000
+        return info.get("mmr", 0)
+    return 0
 
 def get_active_user_ids():
     """Return a set of user IDs across all servers the bot is in."""
