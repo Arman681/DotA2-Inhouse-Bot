@@ -311,7 +311,7 @@ async def help_command(ctx):
     help_text = (
         "\n**Available Commands:**\n\n"
         "__**👥 General Commands**__\n"
-        "**!cfg `<steam_id>` `<@user>'** - 🔗 Link your Steam ID to fetch your MMR from STRATZ.\n"
+        "**!cfg `<steam_id>` `<@user>`** - 🔗 Link your Steam ID to fetch your MMR from STRATZ.\n"
         "**!mmr `<@user>`** - 📈 Show your MMR or another user's MMR.\n"
         "**👍 / 👎 Reactions** - Join or leave the lobby.\n"
         "**🚀 Reaction** - Generate balanced teams when lobby is full.\n"
