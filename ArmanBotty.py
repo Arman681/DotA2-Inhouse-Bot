@@ -155,7 +155,6 @@ def build_team_embed(team1, team2):
 
     return embed
 
-
 # ---------- Commands ----------
 @bot.command(name="cfg")
 async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
@@ -216,7 +215,6 @@ async def add_to_lobby(ctx, *members: discord.Member):
     else:
         await ctx.send("No new members were added.")
 
-
 @bot.command(name="remove")
 async def remove_from_lobby(ctx, *members: discord.Member):
     global lobby_players
@@ -233,10 +231,13 @@ async def remove_from_lobby(ctx, *members: discord.Member):
     else:
         await ctx.send("None of the specified members were in the lobby.")
 
-
 @bot.command(name="lobby")
 async def lobby_cmd(ctx):
     global lobby_message
+    try:
+        await ctx.message.delete()  # Delete the user's command message
+    except discord.Forbidden:
+        pass  # Bot doesn't have permission to delete messages
     if lobby_message:
         try:
             await lobby_message.delete()
@@ -301,7 +302,6 @@ async def set_password(ctx, *, new_password: str):
 async def set_password_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("You do not have permission to use this command.")
-
 
 @bot.command(name="help")
 async def help_command(ctx):
@@ -404,6 +404,9 @@ async def on_raw_reaction_add(payload):
         await message.remove_reaction(payload.emoji, user)
 
     elif emoji == "♻️" and len(lobby_players) == 10:
+        if not user.guild_permissions.administrator:
+            await message.remove_reaction(payload.emoji, user)
+            return
         if not team_rolls:
             return
         if roll_count >= MAX_ROLLS:
@@ -442,4 +445,3 @@ async def update_lobby_embed():
             await lobby_message.add_reaction("🚀")
 
 bot.run(TOKEN)
-
