@@ -485,23 +485,45 @@ async def on_raw_reaction_add(payload):
 
 @bot.event
 async def on_guild_join(guild):
-    # Try to find a text channel where the bot can send messages
+    welcome_embed = discord.Embed(
+        title="👋 Welcome to FeederBot!",
+        description=(
+            "Thanks for inviting me to your server!\n\n"
+            "**To get started**, try using:\n"
+            "`!lobby` - to create an inhouse lobby\n"
+            "`!cfg <steam_id>` - to link your Steam ID\n"
+            "`!add @user` - to add players\n"
+            "`!help` - for full command list\n\n"
+            "FeederBot keeps lobby info separate for each server. If you ever need help, run `!help`."
+        ),
+        color=discord.Color.green()
+    )
+    welcome_embed.set_footer(text="Enjoy your games!")
+    # Try system channel
+    if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
+        try:
+            await guild.system_channel.send(embed=welcome_embed)
+            return
+        except discord.Forbidden:
+            pass  # fall through to DM
+    # Try the first available text channel
     for channel in guild.text_channels:
         if channel.permissions_for(guild.me).send_messages:
-            embed = discord.Embed(
-                title="👋 Thanks for adding FeederBot!",
-                description=(
-                    "**Here's how to get started:**\n\n"
-                    "🛠 Use `!lobby` to create a lobby embed\n"
-                    "💡 Use `!help` to see all available commands\n"
-                    "🔐 Admins can use `!changeprefix`, `!setpassword`, `!alert`, etc.\n\n"
-                    "Happy inhousing!"
-                ),
-                color=discord.Color.green()
+            try:
+                await channel.send(embed=welcome_embed)
+                return
+            except discord.Forbidden:
+                continue
+    # If all else fails, DM the server owner
+    try:
+        if guild.owner:
+            await guild.owner.send(
+                f"Hi {guild.owner.name}, I couldn't post a welcome message in `{guild.name}` "
+                "due to missing permissions. Please ensure I can send messages in a channel. Here's what I'd say:",
+                embed=welcome_embed
             )
-            embed.set_footer(text="Need help? Use !help or contact the bot creator.")
-            await channel.send(embed=embed)
-            break
+    except discord.Forbidden:
+        print(f"Could not DM the owner of {guild.name}.")
 
 # ---------- Embeds ----------
 def build_lobby_embed(guild):
