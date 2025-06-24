@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# ArmanBotty - Discord Inhouse Lobby Bot
+# FeederBot - Discord Inhouse Lobby Bot
 # Author: Arman Hasan
 # Created: June 2025
 # Location: Ft. Lauderdale, Florida
@@ -176,6 +176,9 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     mmr, season_rank = fetch_mmr_from_stratz(steam32)
     player_data[user_id] = {
         "steam_id": steam32,
+        "steam_name": target.name,
+        "discord_username": str(target), #global username
+        "discord_nickname": target.nick if target.nick else target.display_name,
         "mmr": mmr,
         "seasonRank": season_rank
     }
