@@ -309,9 +309,9 @@ async def set_password_error(ctx, error):
 @bot.command(name="help")
 async def help_command(ctx):
     help_text = (
-        "**Available Commands:**\n\n"
+        "\n**Available Commands:**\n\n"
         "__**👥 General Commands**__\n"
-        "**!cfg `<steam_id>` `<@user>** - 🔗 Link your Steam ID to fetch your MMR from STRATZ.\n"
+        "**!cfg `<steam_id>` `<@user>'** - 🔗 Link your Steam ID to fetch your MMR from STRATZ.\n"
         "**!mmr `<@user>`** - 📈 Show your MMR or another user's MMR.\n"
         "**👍 / 👎 Reactions** - Join or leave the lobby.\n"
         "**🚀 Reaction** - Generate balanced teams when lobby is full.\n"
@@ -325,7 +325,7 @@ async def help_command(ctx):
         "**!setmmr @user `<mmr>`** - (Admin only) Manually set a user's MMR.\n"
         "**!setpassword `<new_password>`** - (Admin only) Change the inhouse lobby password.\n"
         "**!changeprefix `<new_prefix>`** - (Admin only) Changes the prefix of the bot commands.\n"
-        "**!alert** - 🚨 (Admin only) Mention all 10 players when the lobby is full.\n"
+        "**!alert** - (Admin only) Mention all 10 players when the lobby is full.\n"
     )
     await ctx.send(help_text)
 
