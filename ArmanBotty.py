@@ -264,6 +264,31 @@ async def reset(ctx):
     await lobby_message.add_reaction("👎")
     await ctx.send("Lobby has been cleared and refreshed.")
 
+@bot.command(name="alert")
+@commands.has_permissions(administrator=True)
+async def alert(ctx):
+    if len(lobby_players) != 10:
+        await ctx.send("We do not have 10 players in the lobby yet.")
+        return
+
+    guild = ctx.guild
+    mentions = []
+
+    for user_id, _, _ in lobby_players:
+        member = guild.get_member(user_id)
+        if member:
+            mentions.append(member.mention)
+
+    if mentions:
+        await ctx.send(f"{' '.join(mentions)} lobby up.")
+    else:
+        await ctx.send("Could not find any users to alert.")
+
+@alert.error
+async def alert_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("You do not have permission to use this command.")
+
 @bot.command(name="setpassword")
 @commands.has_permissions(administrator=True)
 async def set_password(ctx, *, new_password: str):
