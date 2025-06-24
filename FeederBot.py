@@ -144,7 +144,6 @@ def calculate_balanced_teams(players):
     team_pairs.sort(key=lambda x: x[0])
     return [(t1, t2) for _, t1, t2 in team_pairs]
 
-
 def build_team_embed(team1, team2):
     global roll_count
     avg1 = sum(p[2] for p in team1) / 5
@@ -159,7 +158,6 @@ def build_team_embed(team1, team2):
     embed.add_field(name="Team One", value=", ".join(f"{p[1]} ({p[2]})" for p in team1_sorted), inline=False)
     embed.add_field(name="Team Two", value=", ".join(f"{p[1]} ({p[2]})" for p in team2_sorted), inline=False)
     embed.add_field(name="**Password**", value=current_password, inline=False)
-
     return embed
 
 # ---------- Commands ----------
@@ -169,10 +167,8 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     if steam32 is None:
         await ctx.send("Please provide a valid numeric Steam friend code or Steam ID.")
         return
-    
     target = member or ctx.author
     user_id = str(target.id)
-
     mmr, season_rank = fetch_mmr_from_stratz(steam32)
     player_data[user_id] = {
         "steam_id": steam32,
@@ -281,15 +277,12 @@ async def alert(ctx):
     if len(lobby_players) != 10:
         await ctx.send("We do not have 10 players in the lobby yet.")
         return
-
     guild = ctx.guild
     mentions = []
-
     for user_id, _, _ in lobby_players:
         member = guild.get_member(user_id)
         if member:
             mentions.append(member.mention)
-
     if mentions:
         await ctx.send(f"{' '.join(mentions)} lobby up.")
     else:
@@ -366,27 +359,21 @@ async def on_raw_reaction_add(payload):
 
     if payload.user_id == bot.user.id or payload.message_id != getattr(lobby_message, "id", None):
         return
-
     guild = bot.get_guild(payload.guild_id)
     user = guild.get_member(payload.user_id)
     if user is None:
         return
-
     channel = bot.get_channel(payload.channel_id)
     message = await channel.fetch_message(payload.message_id)
-
     emoji = str(payload.emoji)
     updated = False
-
     if emoji == "👍":
         if not any(uid == user.id for uid, _, _ in lobby_players):
             mmr = get_mmr(user)
             lobby_players.append((user.id, user.name, mmr))
             updated = True
-    
     elif emoji == "👎":
         was_full = len(lobby_players) == 10
-
         for i, (uid, _, _) in enumerate(lobby_players):
             if uid == user.id:
                 del lobby_players[i]
@@ -394,13 +381,11 @@ async def on_raw_reaction_add(payload):
                 if was_full and len(lobby_players) == 9:
                     await channel.send(f"Wow, so nice of you to leave at 9/10, {user.mention}")
                 break
-
         # Remove 🚀 and ♻️ if lobby drops from 10 to 9
         if was_full and len(lobby_players) == 9:
             for reaction in message.reactions:
                 if str(reaction.emoji) in ["🚀", "♻️"]:
                     await message.clear_reaction(reaction.emoji)
-
     elif emoji == "🚀" and len(lobby_players) == 10:
         team_rolls = calculate_balanced_teams(lobby_players)
         original_teams = team_rolls[0]
@@ -412,7 +397,6 @@ async def on_raw_reaction_add(payload):
         await message.add_reaction("👎")
         await message.add_reaction("♻️")
         await message.remove_reaction(payload.emoji, user)
-
     elif emoji == "♻️" and len(lobby_players) == 10:
         if not user.guild_permissions.administrator:
             await message.remove_reaction(payload.emoji, user)
@@ -427,10 +411,8 @@ async def on_raw_reaction_add(payload):
             embed = build_team_embed(*team_rolls[roll_count - 1])
         await message.edit(embed=embed)
         await message.remove_reaction(payload.emoji, user)
-
     if updated:
         await update_lobby_embed()
-
     channel = bot.get_channel(payload.channel_id)
     message = await channel.fetch_message(payload.message_id)
     await message.remove_reaction(payload.emoji, user)
