@@ -483,6 +483,26 @@ async def on_raw_reaction_add(payload):
     # Always remove the user's reaction
     await message.remove_reaction(payload.emoji, user)
 
+@bot.event
+async def on_guild_join(guild):
+    # Try to find a text channel where the bot can send messages
+    for channel in guild.text_channels:
+        if channel.permissions_for(guild.me).send_messages:
+            embed = discord.Embed(
+                title="👋 Thanks for adding FeederBot!",
+                description=(
+                    "**Here's how to get started:**\n\n"
+                    "🛠 Use `!lobby` to create a lobby embed\n"
+                    "💡 Use `!help` to see all available commands\n"
+                    "🔐 Admins can use `!changeprefix`, `!setpassword`, `!alert`, etc.\n\n"
+                    "Happy inhousing!"
+                ),
+                color=discord.Color.green()
+            )
+            embed.set_footer(text="Need help? Use !help or contact the bot creator.")
+            await channel.send(embed=embed)
+            break
+
 # ---------- Embeds ----------
 def build_lobby_embed(guild):
     guild_id = guild.id
