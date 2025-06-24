@@ -348,12 +348,21 @@ async def on_raw_reaction_add(payload):
             mmr = get_mmr(user)
             lobby_players.append((user.id, user.name, mmr))
             updated = True
+    
     elif emoji == "👎":
+        if len(lobby_players) == 9:
+            leaving_from_9 = True
+        else:
+            leaving_from_9 = False
+
         for i, (uid, _, _) in enumerate(lobby_players):
             if uid == user.id:
                 del lobby_players[i]
                 updated = True
+                if leaving_from_9:
+                    await channel.send(f"Wow, so nice of you to leave at 9/10, {user.mention}")
                 break
+
     elif emoji == "🚀" and len(lobby_players) == 10:
         team_rolls = calculate_balanced_teams(lobby_players)
         original_teams = team_rolls[0]
@@ -401,9 +410,6 @@ async def update_lobby_embed():
     if lobby_message:
         embed = build_lobby_embed()
         await lobby_message.edit(embed=embed)
-        """await lobby_message.clear_reactions()
-        await lobby_message.add_reaction("👍")
-        await lobby_message.add_reaction("👎")"""
         if len(lobby_players) == 10:
             await lobby_message.add_reaction("🚀")
 
