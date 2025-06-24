@@ -26,19 +26,21 @@ intents.guilds = True
 intents.members = True
 
 def get_prefix(bot, message):
-    return current_prefix
+    guild_id = message.guild.id if message.guild else None
+    return current_prefix.get(guild_id, "!")
 bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None)
 
 CONFIG_FILE = "player_config.json"
+PREFIX_FILE = "prefixes.json"
 player_data = {}
-lobby_players = []  # list of (user_id, name, mmr)
-lobby_message = None
-roll_count = 0
+lobby_players = {}         # {guild_id: list of (user_id, name, mmr)}
+lobby_message = {}         # {guild_id: message}
+roll_count = {}            # {guild_id: int}
+team_rolls = {}            # {guild_id: list of team tuples}
+original_teams = {}        # {guild_id: team tuple}
+current_password = {}      # {guild_id: password string}
+current_prefix = {}        # {guild_id: prefix}
 MAX_ROLLS = 5
-team_rolls = []
-original_teams = None
-current_password = "penguin"
-current_prefix = "!"
 
 # ---------- MMR Mapping ----------
 season_rank_to_mmr = {
@@ -65,6 +67,19 @@ def load_config():
 def save_config(data):
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
+def load_prefixes():
+    if os.path.exists(PREFIX_FILE):
+        with open(PREFIX_FILE, "r") as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                return {}
+    return {}
+
+def save_prefixes():
+    with open(PREFIX_FILE, "w") as f:
+        json.dump(current_prefix, f, indent=2)
 
 # ---------- Steam ID Conversion ----------
 def convert_to_steam32(steam_id_str):
@@ -118,18 +133,31 @@ def get_mmr(user):
         return info.get("mmr")
     return 4000 + hash(user.name) % 3000
 
+def get_active_user_ids():
+    """Return a set of user IDs across all servers the bot is in."""
+    user_ids = set()
+    for guild in bot.guilds:
+        for member in guild.members:
+            if not member.bot:
+                user_ids.add(str(member.id))
+    return user_ids
+
 @tasks.loop(hours=24)
 async def refresh_all_mmrs():
     print("Refreshing MMRs...")
-    for user_id, info in player_data.items():
+    active_ids = get_active_user_ids()
+    refreshed = 0
+    for user_id in active_ids:
+        info = player_data.get(user_id)
         if isinstance(info, dict) and "steam_id" in info:
-            steam_id = info["steam_id"]
-            mmr, season_rank = fetch_mmr_from_stratz(steam_id)
+            mmr, season_rank = fetch_mmr_from_stratz(info["steam_id"])
             if mmr:
                 info["mmr"] = mmr
                 info["seasonRank"] = season_rank
+                refreshed += 1
     save_config(player_data)
-    await update_lobby_embed()
+    print(f"MMRs refreshed for {refreshed} active users.")
+    await update_all_lobbies()
 
 # ---------- Team Calculation ----------
 def calculate_balanced_teams(players):
@@ -173,7 +201,7 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     player_data[user_id] = {
         "steam_id": steam32,
         "steam_name": target.name,
-        "discord_username": str(target), #global username
+        "discord_username": str(target), # Global username
         "discord_nickname": target.nick if target.nick else target.display_name,
         "mmr": mmr,
         "seasonRank": season_rank
@@ -193,12 +221,17 @@ async def mmr_lookup(ctx, member: discord.Member = None):
 @bot.command(name="setmmr")
 @commands.has_permissions(administrator=True)
 async def setmmr(ctx, mmr: int, member: discord.Member):
+    # Safety check
+    if member not in ctx.guild.members:
+        await ctx.send("That user is not in this server.")
+        return
     user_id = str(member.id)
     if user_id not in player_data:
         player_data[user_id] = {}
     player_data[user_id]["mmr"] = mmr
     save_config(player_data)
     await ctx.send(f"{member.mention}'s MMR has been manually set to **{mmr}**.")
+
 
 @setmmr.error
 async def set_mmr_error(ctx, error):
@@ -207,79 +240,97 @@ async def set_mmr_error(ctx, error):
 
 @bot.command(name="add")
 async def add_to_lobby(ctx, *members: discord.Member):
-    global lobby_players
+    guild_id = ctx.guild.id
+
+    # Initialize lobby for this guild if not already present
+    if guild_id not in lobby_players:
+        lobby_players[guild_id] = []
     added = []
     for member in members:
-        if any(uid == member.id for uid, _, _ in lobby_players):
+        if any(uid == member.id for uid, _, _ in lobby_players[guild_id]):
             continue
         mmr = get_mmr(member)
-        lobby_players.append((member.id, member.name, mmr))
+        lobby_players[guild_id].append((member.id, member.name, mmr))
         added.append(member.display_name)
     if added:
-        await update_lobby_embed()
+        await update_lobby_embed(ctx.guild)
         await ctx.send(f"Added to lobby: {', '.join(added)}")
     else:
         await ctx.send("No new members were added.")
 
 @bot.command(name="remove")
 async def remove_from_lobby(ctx, *members: discord.Member):
-    global lobby_players
+    guild_id = ctx.guild.id
     removed = []
+    if guild_id not in lobby_players:
+        await ctx.send("There is no lobby for this server yet.")
+        return
     for member in members:
-        for i, (uid, _, _) in enumerate(lobby_players):
+        for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
             if uid == member.id:
-                del lobby_players[i]
+                del lobby_players[guild_id][i]
                 removed.append(member.display_name)
                 break
     if removed:
-        await update_lobby_embed()
+        await update_lobby_embed(ctx.guild)
         await ctx.send(f"Removed from lobby: {', '.join(removed)}")
     else:
         await ctx.send("None of the specified members were in the lobby.")
 
 @bot.command(name="lobby")
 async def lobby_cmd(ctx):
-    global lobby_message
+    guild_id = ctx.guild.id
+    # Initialize structures if not already present
+    if guild_id not in lobby_players:
+        lobby_players[guild_id] = []
+    if guild_id not in current_password:
+        current_password[guild_id] = "penguin"
     try:
-        await ctx.message.delete()  # Delete the user's command message
+        await ctx.message.delete()
     except discord.Forbidden:
-        pass  # Bot doesn't have permission to delete messages
-    if lobby_message:
+        pass
+    # Delete old lobby message if it exists
+    if guild_id in lobby_message:
         try:
-            await lobby_message.delete()
+            await lobby_message[guild_id].delete()
         except discord.NotFound:
             pass
-    embed = build_lobby_embed()
-    lobby_message = await ctx.send(embed=embed)
-    await lobby_message.add_reaction("👍")
-    await lobby_message.add_reaction("👎")
-    if len(lobby_players) == 10:
-        await lobby_message.add_reaction("🚀")
+    # Send new lobby message
+    embed = build_lobby_embed(ctx.guild)
+    message = await ctx.send(embed=embed)
+    lobby_message[guild_id] = message
+    # Add reactions
+    await message.add_reaction("👍")
+    await message.add_reaction("👎")
+    if len(lobby_players[guild_id]) == 10:
+        await message.add_reaction("🚀")
 
 @bot.command(name="reset")
 async def reset(ctx):
-    global lobby_players, lobby_message
-    lobby_players.clear()
-    if lobby_message:
-        try:
-            await lobby_message.delete()
-        except discord.NotFound:
-            pass
-    embed = build_lobby_embed()
-    lobby_message = await ctx.send(embed=embed)
-    await lobby_message.add_reaction("👍")
-    await lobby_message.add_reaction("👎")
+    guild_id = ctx.guild.id
+    lobby_players[guild_id] = []
+    try:
+        if guild_id in lobby_message:
+            await lobby_message[guild_id].delete()
+    except discord.NotFound:
+        pass
+    embed = build_lobby_embed(ctx.guild)
+    message = await ctx.send(embed=embed)
+    lobby_message[guild_id] = message
+    await message.add_reaction("👍")
+    await message.add_reaction("👎")
     await ctx.send("Lobby has been cleared and refreshed.")
 
 @bot.command(name="alert")
 @commands.has_permissions(administrator=True)
 async def alert(ctx):
-    if len(lobby_players) != 10:
+    guild = ctx.guild
+    guild_id = guild.id
+    if guild_id not in lobby_players or len(lobby_players[guild_id]) != 10:
         await ctx.send("We do not have 10 players in the lobby yet.")
         return
-    guild = ctx.guild
     mentions = []
-    for user_id, _, _ in lobby_players:
+    for user_id, _, _ in lobby_players[guild_id]:
         member = guild.get_member(user_id)
         if member:
             mentions.append(member.mention)
@@ -296,9 +347,9 @@ async def alert_error(ctx, error):
 @bot.command(name="setpassword")
 @commands.has_permissions(administrator=True)
 async def set_password(ctx, *, new_password: str):
-    global current_password
-    current_password = new_password
-    await update_lobby_embed()
+    guild_id = ctx.guild.id
+    current_password[guild_id] = new_password
+    await update_lobby_embed(ctx.guild)
     await ctx.send(f"Password updated to: `{new_password}`")
 
 @set_password.error
@@ -332,9 +383,10 @@ async def help_command(ctx):
 @bot.command(name="changeprefix")
 @commands.has_permissions(administrator=True)
 async def change_prefix(ctx, new_prefix: str):
-    global current_prefix
-    current_prefix = new_prefix
-    await ctx.send(f"Command prefix changed to `{new_prefix}`")
+    guild_id = ctx.guild.id
+    current_prefix[guild_id] = new_prefix
+    save_prefixes()
+    await ctx.send(f"Command prefix changed to `{new_prefix}` for this server.")
 
 @change_prefix.error
 async def change_prefix_error(ctx, error):
@@ -344,8 +396,9 @@ async def change_prefix_error(ctx, error):
 # ---------- Events ----------
 @bot.event
 async def on_ready():
-    global player_data
+    global player_data, current_prefix
     player_data = load_config()
+    current_prefix = load_prefixes()
     print(f"{bot.user} is online!")
     refresh_all_mmrs.start()
 
@@ -359,85 +412,103 @@ async def on_message(msg):
 
 @bot.event
 async def on_raw_reaction_add(payload):
-    global lobby_players, roll_count, team_rolls, original_teams
-
-    if payload.user_id == bot.user.id or payload.message_id != getattr(lobby_message, "id", None):
+    if payload.user_id == bot.user.id:
         return
-    guild = bot.get_guild(payload.guild_id)
-    user = guild.get_member(payload.user_id)
+    guild_id = payload.guild_id
+    user_id = payload.user_id
+    channel = bot.get_channel(payload.channel_id)
+    guild = bot.get_guild(guild_id)
+    if guild_id not in lobby_message:
+        return
+    # Make sure it's the correct message
+    if payload.message_id != lobby_message[guild_id].id:
+        return
+    message = await channel.fetch_message(payload.message_id)
+    user = guild.get_member(user_id)
     if user is None:
         return
-    channel = bot.get_channel(payload.channel_id)
-    message = await channel.fetch_message(payload.message_id)
     emoji = str(payload.emoji)
     updated = False
+    # Initialize data if needed
+    lobby_players.setdefault(guild_id, [])
+    roll_count.setdefault(guild_id, 0)
+    team_rolls.setdefault(guild_id, [])
+    original_teams.setdefault(guild_id, None)
     if emoji == "👍":
-        if not any(uid == user.id for uid, _, _ in lobby_players):
+        if not any(uid == user.id for uid, _, _ in lobby_players[guild_id]):
             mmr = get_mmr(user)
-            lobby_players.append((user.id, user.name, mmr))
+            lobby_players[guild_id].append((user.id, user.name, mmr))
             updated = True
     elif emoji == "👎":
-        was_full = len(lobby_players) == 10
-        for i, (uid, _, _) in enumerate(lobby_players):
+        was_full = len(lobby_players[guild_id]) == 10
+        for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
             if uid == user.id:
-                del lobby_players[i]
+                del lobby_players[guild_id][i]
                 updated = True
-                if was_full and len(lobby_players) == 9:
+                if was_full and len(lobby_players[guild_id]) == 9:
                     await channel.send(f"Wow, so nice of you to leave at 9/10, {user.mention}")
                 break
-        # Remove 🚀 and ♻️ if lobby drops from 10 to 9
-        if was_full and len(lobby_players) == 9:
+        # Remove 🚀 and ♻️ if needed
+        if was_full and len(lobby_players[guild_id]) == 9:
             for reaction in message.reactions:
                 if str(reaction.emoji) in ["🚀", "♻️"]:
                     await message.clear_reaction(reaction.emoji)
-    elif emoji == "🚀" and len(lobby_players) == 10:
-        team_rolls = calculate_balanced_teams(lobby_players)
-        original_teams = team_rolls[0]
-        roll_count = 1
-        embed = build_team_embed(*original_teams)
+    elif emoji == "🚀" and len(lobby_players[guild_id]) == 10:
+        team_rolls[guild_id] = calculate_balanced_teams(lobby_players[guild_id])
+        original_teams[guild_id] = team_rolls[guild_id][0]
+        roll_count[guild_id] = 1
+        embed = build_team_embed(*original_teams[guild_id])
         await message.edit(embed=embed)
         await message.clear_reactions()
         await message.add_reaction("👍")
         await message.add_reaction("👎")
         await message.add_reaction("♻️")
         await message.remove_reaction(payload.emoji, user)
-    elif emoji == "♻️" and len(lobby_players) == 10:
+    elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
         if not user.guild_permissions.administrator:
             await message.remove_reaction(payload.emoji, user)
             return
-        if not team_rolls:
+        if not team_rolls[guild_id]:
             return
-        if roll_count >= MAX_ROLLS:
-            roll_count = 1
-            embed = build_team_embed(*original_teams)
+        if roll_count[guild_id] >= MAX_ROLLS:
+            roll_count[guild_id] = 1
+            embed = build_team_embed(*original_teams[guild_id])
         else:
-            roll_count += 1
-            embed = build_team_embed(*team_rolls[roll_count - 1])
+            roll_count[guild_id] += 1
+            embed = build_team_embed(*team_rolls[guild_id][roll_count[guild_id] - 1])
         await message.edit(embed=embed)
         await message.remove_reaction(payload.emoji, user)
     if updated:
-        await update_lobby_embed()
-    channel = bot.get_channel(payload.channel_id)
-    message = await channel.fetch_message(payload.message_id)
+        await update_lobby_embed(guild)
+    # Always remove the user's reaction
     await message.remove_reaction(payload.emoji, user)
 
 # ---------- Embeds ----------
-def build_lobby_embed():
+def build_lobby_embed(guild):
+    guild_id = guild.id
     embed = discord.Embed(
         title="DotA2 Inhouse",
-        description=f"({len(lobby_players)}/10)",
+        description=f"({len(lobby_players.get(guild_id, []))}/10)",
         color=discord.Color.purple()
     )
-    for _, name, mmr in lobby_players:
+    for _, name, mmr in lobby_players.get(guild_id, []):
         embed.add_field(name=name, value=str(mmr), inline=True)
-    embed.add_field(name="**Password**", value=current_password, inline=False)
+    password = current_password.get(guild_id, "penguin")
+    embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
-async def update_lobby_embed():
-    if lobby_message:
-        embed = build_lobby_embed()
-        await lobby_message.edit(embed=embed)
-        if len(lobby_players) == 10:
-            await lobby_message.add_reaction("🚀")
+async def update_lobby_embed(guild):
+    guild_id = guild.id
+    if guild_id not in lobby_players or guild_id not in lobby_message:
+        return
+    embed = build_lobby_embed(guild)
+    message = lobby_message[guild_id]
+    await message.edit(embed=embed)
+    if len(lobby_players[guild_id]) == 10:
+        await message.add_reaction("🚀")
+
+async def update_all_lobbies():
+    for guild in bot.guilds:
+        await update_lobby_embed(guild)
 
 bot.run(TOKEN)
