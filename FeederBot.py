@@ -81,9 +81,15 @@ def get_player_config(user_id):
     return doc.to_dict() if doc.exists else None
 
 # Stores a custom command prefix for a specific Discord server (guild) to Firestore.
-def store_guild_prefix(guild_id, prefix):
+def store_guild_prefix(guild_id, prefix, server_name=None, set_by=None):
+    data = {
+        "prefix": prefix,
+        "server_name": server_name,
+        "set_by": set_by,
+        "timestamp": firestore.SERVER_TIMESTAMP
+    }
     doc_ref = db.collection("prefixes").document(str(guild_id))
-    doc_ref.set({ "prefix": prefix })
+    doc_ref.set(data, merge=True)
 
 # Retrieves the stored command prefix for a Discord server from Firestore, or "!" if none is set.
 def fetch_guild_prefix(guild_id):
@@ -93,9 +99,15 @@ def fetch_guild_prefix(guild_id):
     return "!"
 
 # Saves the inhouse lobby password for a Discord server (guild) to Firestore.
-def save_lobby_password_for_guild(guild_id, password):
+def save_lobby_password_for_guild(guild_id, password, server_name=None, set_by=None):
+    data = {
+        "password": password,
+        "server_name": server_name,
+        "set_by": set_by,
+        "timestamp": firestore.SERVER_TIMESTAMP
+    }
     doc_ref = db.collection("lobbies").document(str(guild_id))
-    doc_ref.set({ "password": password }, merge=True)
+    doc_ref.set(data, merge=True)
 
 # Loads the saved inhouse lobby password for a guild from Firestore; returns "penguin" if not set.
 def load_lobby_password_for_guild(guild_id):
@@ -397,7 +409,12 @@ async def alert_error(ctx, error):
 @is_admin_or_has_role()
 async def set_password(ctx, *, new_password: str):
     guild_id = ctx.guild.id
-    save_lobby_password_for_guild(guild_id, new_password)
+    save_lobby_password_for_guild(
+    guild_id,
+    new_password,
+    server_name=ctx.guild.name,
+    set_by=str(ctx.author)
+)
     await update_lobby_embed(ctx.guild)
     await ctx.send(f"Password updated to: `{new_password}`")
 
@@ -411,7 +428,12 @@ async def set_password_error(ctx, error):
 @is_admin_or_has_role()
 async def change_prefix(ctx, new_prefix: str):
     guild_id = ctx.guild.id
-    store_guild_prefix(guild_id, new_prefix)
+    store_guild_prefix(
+    guild_id,
+    new_prefix,
+    server_name=ctx.guild.name,
+    set_by=str(ctx.author)
+)
     await ctx.send(f"✅ Command prefix changed to `{new_prefix}` for this server.")
 
 @change_prefix.error
