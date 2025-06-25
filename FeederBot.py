@@ -205,6 +205,9 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     target = member or ctx.author
     user_id = str(target.id)
     mmr, season_rank = fetch_mmr_from_stratz(steam32)
+    # If MMR is None but seasonRank is high, set MMR manually
+    if mmr is None and season_rank and season_rank >= 80:
+        mmr = 5650
     config_data = {
     "steam_id": steam32,
     "steam_name": target.name,
