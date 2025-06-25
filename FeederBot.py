@@ -35,21 +35,7 @@ intents.reactions = True
 intents.guilds = True
 intents.members = True
 
-async def get_prefix(bot, message):
-    guild_id = message.guild.id if message.guild else None
-    if guild_id:
-        prefix = load_prefix_for_guild(guild_id)
-        return prefix
-    return "!"  # fallback default
-bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None)
 
-def is_admin_or_has_role():
-    async def predicate(ctx):
-        if ctx.author.guild_permissions.administrator:
-            return True
-        admin_roles = ["Inhouse Admin", "Drow Picker"]
-        return any(role.name in admin_roles for role in ctx.author.roles)
-    return commands.check(predicate)
 
 player_data = {}
 lobby_players = {}         # {guild_id: list of (user_id, name, mmr)}
@@ -59,18 +45,31 @@ team_rolls = {}            # {guild_id: list of team tuples}
 original_teams = {}        # {guild_id: team tuple}
 MAX_ROLLS = 5
 
-# ---------- MMR Mapping ----------
-season_rank_to_mmr = {
-    11: 77, 12: 231, 13: 385, 14: 539, 15: 693,
-    21: 847, 22: 1001, 23: 1155, 24: 1309, 25: 1463,
-    31: 1594, 32: 1749, 33: 1953, 34: 2081, 35: 2208,
-    41: 2387, 42: 2541, 43: 2695, 44: 2849, 45: 3003,
-    51: 3157, 52: 3311, 53: 3465, 54: 3619, 55: 3772,
-    61: 3927, 62: 4081, 63: 4235, 64: 4389, 65: 4542,
-    71: 4720, 72: 4920, 73: 5120, 74: 5320, 75: 5520,
-    81: 5650, 82: 5650, 83: 5650, 84: 5650, 85: 5650
-}
+# ========================================================================================================================
+# ============================================ ⚙️ Core Functions & Utilities ============================================
+# ========================================================================================================================
 
+# ============================== 🛠️ Bot Configuration ==============================
+# Resolves the correct command prefix for the bot, based on the message's guild.
+async def resolve_command_prefix(bot, message):
+    guild_id = message.guild.id if message.guild else None
+    if guild_id:
+        prefix = fetch_guild_prefix(guild_id)
+        return prefix
+    return "!"  # fallback default
+bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_command=None)
+
+# =============================== 🔐 Permission Checks ===============================
+# Custom check that allows admins or specific roles to use commands
+def is_admin_or_has_role():
+    async def predicate(ctx):
+        if ctx.author.guild_permissions.administrator:
+            return True
+        admin_roles = ["Inhouse Admin", "Drow Picker"]
+        return any(role.name in admin_roles for role in ctx.author.roles)
+    return commands.check(predicate)
+
+# ========================== 🔥 Firestore Access & Persistence ==========================
 # Saves a player's config data (Steam info, MMR, etc.) to Firestore under their Discord user ID.
 def save_player_config(user_id, data):
     doc_ref = db.collection("players").document(str(user_id))
@@ -81,29 +80,41 @@ def get_player_config(user_id):
     doc = db.collection("players").document(str(user_id)).get()
     return doc.to_dict() if doc.exists else None
 
-# Stores a custom command prefix for a specific Discord server (guild).
-def save_prefix_for_guild(guild_id, prefix):
+# Stores a custom command prefix for a specific Discord server (guild) to Firestore.
+def store_guild_prefix(guild_id, prefix):
     doc_ref = db.collection("prefixes").document(str(guild_id))
     doc_ref.set({ "prefix": prefix })
 
-# Retrieves the stored command prefix for a Discord server, or "!" if none is set.
-def load_prefix_for_guild(guild_id):
+# Retrieves the stored command prefix for a Discord server from Firestore, or "!" if none is set.
+def fetch_guild_prefix(guild_id):
     doc = db.collection("prefixes").document(str(guild_id)).get()
     if doc.exists:
         return doc.to_dict().get("prefix", "!")
     return "!"
 
-# Saves the inhouse lobby password for a Discord server (guild).
+# Saves the inhouse lobby password for a Discord server (guild) to Firestore.
 def save_lobby_password_for_guild(guild_id, password):
     doc_ref = db.collection("lobbies").document(str(guild_id))
     doc_ref.set({ "password": password }, merge=True)
 
-# Loads the saved inhouse lobby password for a guild; returns "penguin" if not set.
+# Loads the saved inhouse lobby password for a guild from Firestore; returns "penguin" if not set.
 def load_lobby_password_for_guild(guild_id):
     doc = db.collection("lobbies").document(str(guild_id)).get()
     if doc.exists:
         return doc.to_dict().get("password", "penguin")  # Default if not set
     return "penguin"
+
+# ============================ 🎯 MMR & STRATZ Integration ============================
+# Maps Dota 2 STRATZ seasonRank values to estimated MMR values.
+season_rank_to_mmr = {
+    11: 77, 12: 231, 13: 385, 14: 539, 15: 693,
+    21: 847, 22: 1001, 23: 1155, 24: 1309, 25: 1463,
+    31: 1594, 32: 1749, 33: 1953, 34: 2081, 35: 2208,
+    41: 2387, 42: 2541, 43: 2695, 44: 2849, 45: 3003,
+    51: 3157, 52: 3311, 53: 3465, 54: 3619, 55: 3772,
+    61: 3927, 62: 4081, 63: 4235, 64: 4389, 65: 4542,
+    71: 4720, 72: 4920, 73: 5120, 74: 5320, 75: 5520
+}
 
 # Converts a full 64-bit Steam ID to the shorter 32-bit Steam account ID used by STRATZ.
 def convert_to_steam32(steam_id_str):
@@ -158,6 +169,7 @@ def get_mmr(user):
         return info.get("mmr", 0)
     return 0
 
+# ============================ 👥 Player & Lobby Utilities ============================
 # Returns a set of user IDs across all servers that the bot is currently in (non-bot members only).
 def get_active_user_ids():
     """Return a set of user IDs across all servers the bot is in."""
@@ -187,6 +199,7 @@ async def refresh_all_mmrs():
     # Refresh lobby embeds across all servers
     await update_all_lobbies()
 
+# ================================ ⚖️ Team Balancing ================================
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
 def calculate_balanced_teams(players):
     combinations = list(itertools.combinations(players, 5))
@@ -200,25 +213,11 @@ def calculate_balanced_teams(players):
     team_pairs.sort(key=lambda x: x[0])
     return [(t1, t2) for _, t1, t2 in team_pairs]
 
-# Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
-def build_team_embed(team1, team2, guild):
-    global roll_count
-    avg1 = sum(p[2] for p in team1) / 5
-    avg2 = sum(p[2] for p in team2) / 5
-    embed = discord.Embed(
-        title="DotA2 Inhouse",
-        description=f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count}/{MAX_ROLLS}",
-        color=discord.Color.gold()
-    )
-    team1_sorted = sorted(team1, key=lambda x: x[2], reverse=True)
-    team2_sorted = sorted(team2, key=lambda x: x[2], reverse=True)
-    password = load_lobby_password_for_guild(guild.id)
-    embed.add_field(name="Team One", value=", ".join(f"{p[1]} ({p[2]})" for p in team1_sorted), inline=False)
-    embed.add_field(name="Team Two", value=", ".join(f"{p[1]} ({p[2]})" for p in team2_sorted), inline=False)
-    embed.add_field(name="**Password**", value=password, inline=False)
-    return embed
+# ========================================================================================================================
+# ================================================= 💬 Commands Section =================================================
+# ========================================================================================================================
 
-# ---------- Commands ----------
+# ============================== 👥 General Commands ==============================
 # Links a user's Steam ID to their Discord account and stores their MMR/seasonRank in Firebase.
 @bot.command(name="cfg")
 async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
@@ -253,28 +252,7 @@ async def mmr_lookup(ctx, member: discord.Member = None):
     mmr = get_mmr(user)
     await ctx.send(f"{user.display_name}'s MMR is **{mmr}**.")
 
-# Admin command to manually set a user's MMR in Firebase.
-@bot.command(name="setmmr")
-@is_admin_or_has_role()
-async def setmmr(ctx, mmr: int, member: discord.Member):
-    # Safety check
-    if member not in ctx.guild.members:
-        await ctx.send("That user is not in this server.")
-        return
-    user_id = str(member.id)
-    # Update Firestore document
-    try:
-        user_ref = db.collection("players").document(user_id)
-        user_ref.set({"mmr": mmr}, merge=True)
-        await ctx.send(f"{member.mention}'s MMR has been manually set to **{mmr}**.")
-    except Exception as e:
-        await ctx.send(f"Failed to set MMR due to an error: {e}")
-
-@setmmr.error
-async def set_mmr_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
-
+# ========================== 🏠 Lobby Management Commands =========================
 # Adds one or more users to the current lobby for the server.
 @bot.command(name="add")
 async def add_to_lobby(ctx, *members: discord.Member):
@@ -360,6 +338,29 @@ async def reset(ctx):
     await message.add_reaction("👎")
     await ctx.send("Lobby has been cleared and refreshed.")
 
+# ============================= 🔐 Admin-Only Commands ============================
+# Admin only: manually set a user's MMR in Firebase.
+@bot.command(name="setmmr")
+@is_admin_or_has_role()
+async def setmmr(ctx, mmr: int, member: discord.Member):
+    # Safety check
+    if member not in ctx.guild.members:
+        await ctx.send("That user is not in this server.")
+        return
+    user_id = str(member.id)
+    # Update Firestore document
+    try:
+        user_ref = db.collection("players").document(user_id)
+        user_ref.set({"mmr": mmr}, merge=True)
+        await ctx.send(f"{member.mention}'s MMR has been manually set to **{mmr}**.")
+    except Exception as e:
+        await ctx.send(f"Failed to set MMR due to an error: {e}")
+
+@setmmr.error
+async def set_mmr_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
+
 # Admin-only: mentions all 10 players in a full lobby to alert them.
 @bot.command(name="alert")
 @is_admin_or_has_role()
@@ -398,6 +399,20 @@ async def set_password_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
 
+# Admin-only: changes the bot's command prefix for the server.
+@bot.command(name="changeprefix")
+@is_admin_or_has_role()
+async def change_prefix(ctx, new_prefix: str):
+    guild_id = ctx.guild.id
+    store_guild_prefix(guild_id, new_prefix)
+    await ctx.send(f"✅ Command prefix changed to `{new_prefix}` for this server.")
+
+@change_prefix.error
+async def change_prefix_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
+
+# ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
 @bot.command(name="help")
 async def help_command(ctx):
@@ -422,20 +437,10 @@ async def help_command(ctx):
     )
     await ctx.send(help_text)
 
-# Admin-only: changes the bot's command prefix for the server.
-@bot.command(name="changeprefix")
-@is_admin_or_has_role()
-async def change_prefix(ctx, new_prefix: str):
-    guild_id = ctx.guild.id
-    save_prefix_for_guild(guild_id, new_prefix)
-    await ctx.send(f"✅ Command prefix changed to `{new_prefix}` for this server.")
+# ========================================================================================================================
+# ================================================ 🎯 Bot Event Handlers ================================================
+# ========================================================================================================================
 
-@change_prefix.error
-async def change_prefix_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
-
-# ---------- Events ----------
 # Runs once when the bot starts and begins the MMR refresh task.
 @bot.event
 async def on_ready():
@@ -570,7 +575,11 @@ async def on_guild_join(guild):
     except discord.Forbidden:
         print(f"Could not DM the owner of {guild.name}.")
 
-# ---------- Embeds ----------
+# ========================================================================================================================
+# ============================================== 🖼️ Embed Builders Section ==============================================
+# ========================================================================================================================
+
+# ============================= 📋 Lobby Embed Functions =============================
 # Builds and returns a lobby embed showing current players and the server's password.
 def build_lobby_embed(guild):
     guild_id = guild.id
@@ -600,5 +609,26 @@ async def update_lobby_embed(guild):
 async def update_all_lobbies():
     for guild in bot.guilds:
         await update_lobby_embed(guild)
+
+# ============================== ⚔️ Team Embed Function ==============================
+# Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
+def build_team_embed(team1, team2, guild):
+    global roll_count
+    avg1 = sum(p[2] for p in team1) / 5
+    avg2 = sum(p[2] for p in team2) / 5
+    embed = discord.Embed(
+        title="DotA2 Inhouse",
+        description=f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count}/{MAX_ROLLS}",
+        color=discord.Color.gold()
+    )
+    team1_sorted = sorted(team1, key=lambda x: x[2], reverse=True)
+    team2_sorted = sorted(team2, key=lambda x: x[2], reverse=True)
+    password = load_lobby_password_for_guild(guild.id)
+    embed.add_field(name="Team One", value=", ".join(f"{p[1]} ({p[2]})" for p in team1_sorted), inline=False)
+    embed.add_field(name="Team Two", value=", ".join(f"{p[1]} ({p[2]})" for p in team2_sorted), inline=False)
+    embed.add_field(name="**Password**", value=password, inline=False)
+    return embed
+
+
 
 bot.run(TOKEN)
