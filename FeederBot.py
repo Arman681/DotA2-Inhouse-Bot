@@ -347,8 +347,8 @@ async def remove_from_lobby(ctx, *members: discord.Member):
         channel = ctx.channel
         message = await channel.fetch_message(lobby_message[guild_id].id)
 
-        # Check if it went from full (10) to 9
-        if len(lobby_players[guild_id]) == 9:
+        # Clear special reactions if lobby is no longer full
+        if len(lobby_players[guild_id]) < 10:
             # Clear reactions only after embed update to prevent race conditions
             await update_lobby_embed(ctx.guild)  # Ensure the embed is updated first
             for reaction in message.reactions:
@@ -364,6 +364,8 @@ async def remove_from_lobby(ctx, *members: discord.Member):
 @bot.command(name="lobby")
 async def lobby_cmd(ctx, mode: str = None):
     guild_id = ctx.guild.id
+    # Preserve current players if they exist
+    existing_players = lobby_players.get(guild_id, [])
     if mode:
         # Restrict mode changes to admins and allowed roles only
         if not await user_is_admin_or_has_role(ctx.author):
@@ -379,7 +381,7 @@ async def lobby_cmd(ctx, mode: str = None):
     inhouse_mode[guild_id] = selected_mode
     # Initialize structures if not already present
     if guild_id not in lobby_players:
-        lobby_players[guild_id] = []
+        lobby_players[guild_id] = existing_players
     try:
         await ctx.message.delete()
     except discord.Forbidden:
@@ -391,7 +393,7 @@ async def lobby_cmd(ctx, mode: str = None):
         except discord.NotFound:
             pass
     # Send new lobby message
-    embed = build_lobby_embed(ctx.guild)
+    embed = build_lobby_embed(ctx.guild, mode)
     message = await ctx.send(embed=embed)
     lobby_message[guild_id] = message
     # Add reactions
@@ -758,7 +760,7 @@ async def on_guild_join(guild):
 
 # ============================= 📋 Lobby Embed Functions =============================
 # Builds and returns a lobby embed showing current players and the server's password.
-def build_lobby_embed(guild):
+def build_lobby_embed(guild, mode="regular"):
     guild_id = guild.id
     mode = inhouse_mode.get(guild.id, "regular")  # fallback to "regular" if not set
     embed = discord.Embed(
