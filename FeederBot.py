@@ -490,7 +490,7 @@ async def change_prefix_error(ctx, error):
 async def viewlogs(ctx, *, flags: str = ""):
     guild_id = ctx.guild.id
     guild_name = ctx.guild.name
-    verbose = "--verbose" in flags.lower()
+    verbose = '--verbose' in (flags or "").lower()
     prefix_doc = db.collection("prefixes").document(str(guild_id)).get()
     password_doc = db.collection("lobbies").document(str(guild_id)).get()
     mode_doc = db.collection("inhouse_modes").document(str(guild_id)).get()
