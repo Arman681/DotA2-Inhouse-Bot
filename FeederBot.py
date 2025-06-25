@@ -14,6 +14,13 @@ import time
 import itertools
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+cred = credentials.Certificate("feederbot-db-firebase-adminsdk-fbsvc-e90da63704.json")
+firebase_admin.initialize_app(cred)
+
+db = firestore.client()
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -25,9 +32,12 @@ intents.reactions = True
 intents.guilds = True
 intents.members = True
 
-def get_prefix(bot, message):
+async def get_prefix(bot, message):
     guild_id = message.guild.id if message.guild else None
-    return current_prefix.get(guild_id, "!")
+    if guild_id:
+        prefix = load_prefix_for_guild(guild_id)
+        return prefix
+    return "!"  # fallback default
 bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None)
 
 CONFIG_FILE = "player_config.json"
@@ -39,7 +49,6 @@ roll_count = {}            # {guild_id: int}
 team_rolls = {}            # {guild_id: list of team tuples}
 original_teams = {}        # {guild_id: team tuple}
 current_password = {}      # {guild_id: password string}
-current_prefix = {}        # {guild_id: prefix}
 MAX_ROLLS = 5
 
 # ---------- MMR Mapping ----------
@@ -54,32 +63,26 @@ season_rank_to_mmr = {
     81: 5650, 82: 5650, 83: 5650, 84: 5650, 85: 5650
 }
 
-# ---------- Persistent Storage ----------
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                return {}
-    return {}
+# ---------- Persistent Storage (Firebase) ----------
+def save_player_config(user_id, data):
+    doc_ref = db.collection("players").document(str(user_id))
+    doc_ref.set(data)
 
-def save_config(data):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+def get_player_config(user_id):
+    doc = db.collection("players").document(str(user_id)).get()
+    return doc.to_dict() if doc.exists else None
 
-def load_prefixes():
-    if os.path.exists(PREFIX_FILE):
-        with open(PREFIX_FILE, "r") as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                return {}
-    return {}
+# ---------- Save Prefix for a Guild ----------
+def save_prefix_for_guild(guild_id, prefix):
+    doc_ref = db.collection("prefixes").document(str(guild_id))
+    doc_ref.set({ "prefix": prefix })
 
-def save_prefixes():
-    with open(PREFIX_FILE, "w") as f:
-        json.dump(current_prefix, f, indent=2)
+# ---------- Load Prefix for a Guild ----------
+def load_prefix_for_guild(guild_id):
+    doc = db.collection("prefixes").document(str(guild_id)).get()
+    if doc.exists:
+        return doc.to_dict().get("prefix", "!")
+    return "!"
 
 # ---------- Steam ID Conversion ----------
 def convert_to_steam32(steam_id_str):
@@ -128,8 +131,8 @@ def fetch_mmr_from_stratz(steam_id, max_retries=5):
 
 def get_mmr(user):
     user_id = str(user.id)
-    info = player_data.get(user_id)
-    if isinstance(info, dict):
+    info = get_player_config(user_id)
+    if info and isinstance(info, dict):
         return info.get("mmr", 0)
     return 0
 
@@ -144,20 +147,19 @@ def get_active_user_ids():
 
 @tasks.loop(hours=24)
 async def refresh_all_mmrs():
-    print("Refreshing MMRs...")
-    active_ids = get_active_user_ids()
-    refreshed = 0
-    for user_id in active_ids:
-        info = player_data.get(user_id)
-        if isinstance(info, dict) and "steam_id" in info:
-            mmr, season_rank = fetch_mmr_from_stratz(info["steam_id"])
+    print("Refreshing MMRs (Firebase)...")
+    players_ref = db.collection("players").stream()
+    for doc in players_ref:
+        user_id = doc.id
+        data = doc.to_dict()
+        if "steam_id" in data:
+            mmr, season_rank = fetch_mmr_from_stratz(data["steam_id"])
             if mmr:
-                info["mmr"] = mmr
-                info["seasonRank"] = season_rank
-                refreshed += 1
-    save_config(player_data)
-    print(f"MMRs refreshed for {refreshed} active users.")
-    await update_all_lobbies()
+                db.collection("players").document(user_id).update({
+                    "mmr": mmr,
+                    "seasonRank": season_rank
+                })
+    await update_lobby_embed()
 
 # ---------- Team Calculation ----------
 def calculate_balanced_teams(players):
@@ -198,15 +200,15 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     target = member or ctx.author
     user_id = str(target.id)
     mmr, season_rank = fetch_mmr_from_stratz(steam32)
-    player_data[user_id] = {
-        "steam_id": steam32,
-        "steam_name": target.name,
-        "discord_username": str(target), # Global username
-        "discord_nickname": target.nick if target.nick else target.display_name,
-        "mmr": mmr,
-        "seasonRank": season_rank
-    }
-    save_config(player_data)
+    config_data = {
+    "steam_id": steam32,
+    "steam_name": target.name,
+    "discord_username": str(target),
+    "discord_nickname": target.nick if target.nick else target.display_name,
+    "mmr": mmr,
+    "seasonRank": season_rank
+}
+    save_player_config(user_id, config_data)
     if mmr:
         await ctx.send(f"{target.mention}, your Steam ID `{steam32}` has been linked with an estimated MMR of **{mmr}**.")
     else:
@@ -226,12 +228,13 @@ async def setmmr(ctx, mmr: int, member: discord.Member):
         await ctx.send("That user is not in this server.")
         return
     user_id = str(member.id)
-    if user_id not in player_data:
-        player_data[user_id] = {}
-    player_data[user_id]["mmr"] = mmr
-    save_config(player_data)
-    await ctx.send(f"{member.mention}'s MMR has been manually set to **{mmr}**.")
-
+    # Update Firestore document
+    try:
+        user_ref = db.collection("players").document(user_id)
+        user_ref.set({"mmr": mmr}, merge=True)
+        await ctx.send(f"{member.mention}'s MMR has been manually set to **{mmr}**.")
+    except Exception as e:
+        await ctx.send(f"Failed to set MMR due to an error: {e}")
 
 @setmmr.error
 async def set_mmr_error(ctx, error):
@@ -384,9 +387,8 @@ async def help_command(ctx):
 @commands.has_permissions(administrator=True)
 async def change_prefix(ctx, new_prefix: str):
     guild_id = ctx.guild.id
-    current_prefix[guild_id] = new_prefix
-    save_prefixes()
-    await ctx.send(f"Command prefix changed to `{new_prefix}` for this server.")
+    save_prefix_for_guild(guild_id, new_prefix)
+    await ctx.send(f"✅ Command prefix changed to `{new_prefix}` for this server.")
 
 @change_prefix.error
 async def change_prefix_error(ctx, error):
@@ -396,9 +398,8 @@ async def change_prefix_error(ctx, error):
 # ---------- Events ----------
 @bot.event
 async def on_ready():
-    global player_data, current_prefix
-    player_data = load_config()
-    current_prefix = load_prefixes()
+    global player_data
+    player_data = {}  # still fine to cache this in memory
     print(f"{bot.user} is online!")
     refresh_all_mmrs.start()
 
