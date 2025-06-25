@@ -311,10 +311,13 @@ async def mmr_lookup(ctx, member: discord.Member = None):
 @bot.command(name="add")
 async def add_to_lobby(ctx, *members: discord.Member):
     guild_id = ctx.guild.id
-
     # Initialize lobby for this guild if not already present
     if guild_id not in lobby_players:
         lobby_players[guild_id] = []
+    # Prevent adding if lobby already has 10 players
+    if len(lobby_players[guild_id]) >= 10:
+        await ctx.send("Lobby is already full. Cannot add more players.")
+        return
     added = []
     for member in members:
         if any(uid == member.id for uid, _, _ in lobby_players[guild_id]):
@@ -634,6 +637,10 @@ async def on_raw_reaction_add(payload):
     team_rolls.setdefault(guild_id, [])
     original_teams.setdefault(guild_id, None)
     if emoji == "👍":
+        if len(lobby_players[guild_id]) >= 10:
+            await channel.send(f"{user.mention}, the lobby is already full (10/10). Please wait for someone to leave.")
+            await message.remove_reaction(payload.emoji, user)
+            return
         if not any(uid == user.id for uid, _, _ in lobby_players[guild_id]):
             mmr = get_mmr(user)
             lobby_players[guild_id].append((user.id, user.name, mmr))
