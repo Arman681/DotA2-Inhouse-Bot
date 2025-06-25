@@ -646,10 +646,13 @@ async def on_raw_reaction_add(payload):
             embed = build_team_embed(*original_teams[guild_id], guild)
         elif mode == "immortal":
             all_pairs = get_all_captain_pairs(lobby_players[guild_id])
-            captain_draft_state[guild_id] = all_pairs  # cache all valid pairs for this lobby
-            first_pair, pool, _ = all_pairs[0]
-            roll_count[guild_id] = 0
-            embed = build_immortal_embed(first_pair, pool, guild, roll_count[guild_id])
+            captain_draft_state[guild_id] = {
+                "pairs": all_pairs,
+                "index": 0
+            }
+            captains, pool, _ = all_pairs[0]
+            original_teams[guild_id] = (captains, pool)
+            embed = build_immortal_embed(captains, pool, guild, 0)
         await message.edit(embed=embed)
         await message.clear_reactions()
         await message.add_reaction("👍")
@@ -674,14 +677,18 @@ async def on_raw_reaction_add(payload):
             embed = build_team_embed(*original_teams[guild_id], guild)
         # IMMORTAL INHOUSE REROLL
         elif mode == "immortal":
-            if guild_id not in get_all_captain_pairs:
-                get_all_captain_pairs[guild_id] = get_all_captain_pairs(lobby_players[guild_id])
-            all_pairs = get_all_captain_pairs[guild_id]
             max_rolls = IMMORTAL_MAX_ROLLS
-            roll_count[guild_id] = (roll_count[guild_id] + 1) % (max_rolls + 1)
-            current_pair, pool, _ = all_pairs[roll_count[guild_id] % len(all_pairs)]
-            original_teams[guild_id] = (current_pair, pool)
-            embed = build_immortal_embed(current_pair, pool, guild, roll_count[guild_id])
+            if guild_id not in captain_draft_state:
+                all_pairs = get_all_captain_pairs(lobby_players[guild_id])
+                captain_draft_state[guild_id] = {
+                    "pairs": all_pairs,
+                    "index": 0
+                }
+            draft_state = captain_draft_state[guild_id]
+            draft_state["index"] = (draft_state["index"] + 1) % (max_rolls + 1)
+            captains, pool, _ = draft_state["pairs"][draft_state["index"]]
+            original_teams[guild_id] = (captains, pool)
+            embed = build_immortal_embed(captains, pool, guild, draft_state["index"])
         await message.edit(embed=embed)
         await message.remove_reaction(payload.emoji, user)
     if updated:
