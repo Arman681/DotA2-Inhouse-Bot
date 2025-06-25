@@ -226,19 +226,26 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
         await ctx.send("Please provide a valid numeric Steam friend code or Steam ID.")
         return
     target = member or ctx.author
+    # Check if user is trying to configure someone else
+    if target != ctx.author:
+        # Only allow if user is admin or has one of the special roles
+        allowed_roles = ["Inhouse Admin", "Drow Picker"]
+        if not ctx.author.guild_permissions.administrator and not any(role.name in allowed_roles for role in ctx.author.roles):
+            await ctx.send("❌ You do not have permission to configure another user. Only admins or users with the 'Inhouse Admin' or 'Drow Picker' role may do that.")
+            return
     user_id = str(target.id)
     mmr, season_rank = fetch_mmr_from_stratz(steam32)
     # If MMR is None but seasonRank is high, set MMR manually
     if mmr is None and season_rank and season_rank >= 80:
         mmr = 5650
     config_data = {
-    "steam_id": steam32,
-    "steam_name": target.name,
-    "discord_username": str(target),
-    "discord_nickname": target.nick if target.nick else target.display_name,
-    "mmr": mmr,
-    "seasonRank": season_rank
-}
+        "steam_id": steam32,
+        "steam_name": target.name,
+        "discord_username": str(target),
+        "discord_nickname": target.nick if target.nick else target.display_name,
+        "mmr": mmr,
+        "seasonRank": season_rank
+    }
     save_player_config(user_id, config_data)
     if mmr:
         await ctx.send(f"{target.mention}, your Steam ID `{steam32}` has been linked with an estimated MMR of **{mmr}**.")
