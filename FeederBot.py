@@ -569,6 +569,8 @@ async def help_command(ctx):
         "**!setpassword `<new_password>`** - (Admin only) Change the inhouse lobby password.\n"
         "**!changeprefix `<new_prefix>`** - (Admin only) Changes the prefix of the bot commands.\n"
         "**!alert** - (Admin only) Mention all 10 players when the lobby is full.\n"
+        "**!viewlogs** - (Admin only) View recent lobby or user config logs.\n"
+        "**!viewlogs --verbose** - (Admin only) View full detailed logs for this server.\n"
     )
     await ctx.send(help_text)
 
