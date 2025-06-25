@@ -43,7 +43,8 @@ roll_count = {}            # {guild_id: int}
 team_rolls = {}            # {guild_id: list of team tuples}
 original_teams = {}        # {guild_id: team tuple}
 captain_draft_state = {}   # {guild_id: {"pairs": [...], "index": 0}}
-MAX_ROLLS = 5
+MAX_ROLLS = 5  # for regular
+IMMORTAL_MAX_ROLLS = 3  # for immortal
 
 # ========================================================================================================================
 # ============================================ ⚙️ Core Functions & Utilities ============================================
@@ -644,15 +645,11 @@ async def on_raw_reaction_add(payload):
             roll_count[guild_id] = 1
             embed = build_team_embed(*original_teams[guild_id], guild)
         elif mode == "immortal":
-            captain_pairs = get_all_captain_pairs(lobby_players[guild_id])
-            captain_draft_state[guild_id] = {
-                "pairs": captain_pairs,
-                "index": 0
-            }
-            first_pair, pool, _ = captain_pairs[0]
-            original_teams[guild_id] = (first_pair, pool)
-            roll_count[guild_id] = 1
-            embed = build_immortal_embed(first_pair, pool, guild, reroll_count=0)
+            all_pairs = get_all_captain_pairs(lobby_players[guild_id])
+            captain_draft_state[guild_id] = all_pairs  # cache all valid pairs for this lobby
+            first_pair, pool, _ = all_pairs[0]
+            roll_count[guild_id] = 0
+            embed = build_immortal_embed(first_pair, pool, guild, roll_count[guild_id])
         await message.edit(embed=embed)
         await message.clear_reactions()
         await message.add_reaction("👍")
@@ -665,8 +662,8 @@ async def on_raw_reaction_add(payload):
         if not user.guild_permissions.administrator:
             await message.remove_reaction(payload.emoji, user)
             return
+        # REGULAR INHOUSE REROLL
         if mode == "regular":
-            # REGULAR INHOUSE REROLL
             max_rolls = 3 if mode == "immortal" else MAX_ROLLS
             if roll_count[guild_id] >= max_rolls:
                 roll_count[guild_id] = 1
@@ -675,18 +672,16 @@ async def on_raw_reaction_add(payload):
             team_rolls[guild_id] = calculate_balanced_teams(lobby_players[guild_id])
             original_teams[guild_id] = team_rolls[guild_id][0]
             embed = build_team_embed(*original_teams[guild_id], guild)
+        # IMMORTAL INHOUSE REROLL
         elif mode == "immortal":
-            state = captain_draft_state.get(guild_id)
-            if not state:
-                await channel.send("⚠️ No cached captain data found. Please restart the lobby.")
-                return
-            if state["index"] >= 2:  # max 3 rerolls (index 0, 1, 2)
-                await channel.send("⛔ Maximum re-rolls reached for Immortal Draft.")
-                return
-            state["index"] += 1
-            next_pair, next_pool, _ = state["pairs"][state["index"]]
-            original_teams[guild_id] = (next_pair, next_pool)
-            embed = build_immortal_embed(next_pair, next_pool, guild, reroll_count=state["index"])
+            if guild_id not in get_all_captain_pairs:
+                get_all_captain_pairs[guild_id] = get_all_captain_pairs(lobby_players[guild_id])
+            all_pairs = get_all_captain_pairs[guild_id]
+            max_rolls = IMMORTAL_MAX_ROLLS
+            roll_count[guild_id] = (roll_count[guild_id] + 1) % (max_rolls + 1)
+            current_pair, pool, _ = all_pairs[roll_count[guild_id] % len(all_pairs)]
+            original_teams[guild_id] = (current_pair, pool)
+            embed = build_immortal_embed(current_pair, pool, guild, roll_count[guild_id])
         await message.edit(embed=embed)
         await message.remove_reaction(payload.emoji, user)
     if updated:
@@ -791,11 +786,11 @@ def build_team_embed(team1, team2, guild):
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
-def build_immortal_embed(captains, pool, guild, reroll_count=None):
+def build_immortal_embed(captains, pool, guild, reroll_count):
     c1, c2 = captains
     embed = discord.Embed(
         title="🛡️ Immortal Draft Inhouse",
-        description=f"Captains: {c1[1]} ({c1[2]}) vs {c2[1]} ({c2[2]})\nRoll #{reroll_count}/{MAX_ROLLS}",
+        description=f"Captains: {c1[1]} ({c1[2]}) vs {c2[1]} ({c2[2]})\nRoll #{reroll_count}/{IMMORTAL_MAX_ROLLS}",
         color=discord.Color.orange()
     )
     embed.add_field(name="Captain 1", value=f"{c1[1]} ({c1[2]})", inline=True)
