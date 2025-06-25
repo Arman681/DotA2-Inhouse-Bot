@@ -162,7 +162,9 @@ async def refresh_all_mmrs():
                     "mmr": mmr,
                     "seasonRank": season_rank
                 })
-    await update_lobby_embed()
+
+    for guild in bot.guilds:
+        await update_lobby_embed(guild)
 
 # ---------- Team Calculation ----------
 def calculate_balanced_teams(players):
