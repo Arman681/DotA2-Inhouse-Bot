@@ -35,8 +35,7 @@ intents.reactions = True
 intents.guilds = True
 intents.members = True
 
-
-
+inhouse_mode = {}          # {guild_id: "regular" or "immortal"}
 player_data = {}
 lobby_players = {}         # {guild_id: list of (user_id, name, mmr)}
 lobby_message = {}         # {guild_id: message}
@@ -115,6 +114,19 @@ def load_lobby_password_for_guild(guild_id):
     if doc.exists:
         return doc.to_dict().get("password", "penguin")  # Default if not set
     return "penguin"
+
+def save_inhouse_mode_for_guild(guild_id, mode, set_by):
+    db.collection("inhouse_modes").document(str(guild_id)).set({
+        "mode": mode,
+        "set_by": str(set_by),
+        "timestamp": firestore.SERVER_TIMESTAMP
+    })
+
+def load_inhouse_mode_for_guild(guild_id):
+    doc = db.collection("inhouse_modes").document(str(guild_id)).get()
+    if doc.exists:
+        return doc.to_dict().get("mode", "regular")
+    return "regular"
 
 # ============================ 🎯 MMR & STRATZ Integration ============================
 # Maps Dota 2 STRATZ seasonRank values to estimated MMR values.
@@ -210,6 +222,21 @@ async def refresh_all_mmrs():
                 })
     # Refresh lobby embeds across all servers
     await update_all_lobbies()
+
+def get_captains_and_pool(players):
+    sorted_players = sorted(players, key=lambda p: p[2])  # sort by MMR
+    min_diff = float('inf')
+    best_pair = ()
+
+    for i in range(len(sorted_players)):
+        for j in range(i + 1, len(sorted_players)):
+            diff = abs(sorted_players[i][2] - sorted_players[j][2])
+            if diff < min_diff:
+                min_diff = diff
+                best_pair = (sorted_players[i], sorted_players[j])
+
+    pool = [p for p in players if p not in best_pair]
+    return best_pair, pool
 
 # ================================ ⚖️ Team Balancing ================================
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
@@ -313,10 +340,25 @@ async def remove_from_lobby(ctx, *members: discord.Member):
     else:
         await ctx.send("None of the specified members were in the lobby.")
 
-# Creates a new lobby message and embed, or refreshes the existing one.
+# Launches the inhouse lobby message and embed, or refreshes the existing one.
+# Accepts optional mode: 'regular' or 'immortal'. If mode is not provided, the bot will load the last-used mode from Firestore.
 @bot.command(name="lobby")
-async def lobby_cmd(ctx):
+async def lobby_cmd(ctx, mode: str = None):
     guild_id = ctx.guild.id
+    if mode:
+        # Restrict mode changes to admins and allowed roles only
+        if not is_admin_or_has_role(ctx.author):
+            await ctx.send("❌ You don't have permission to change the inhouse mode.")
+            return
+        # Save and use the provided mode (if valid)
+        selected_mode = mode.lower() if mode.lower() in ["regular", "immortal"] else "regular"
+        save_inhouse_mode_for_guild(guild_id, selected_mode, ctx.author)
+    else:
+        # Load last used mode from Firestore
+        selected_mode = load_inhouse_mode_for_guild(guild_id)
+    # Store mode in memory for reaction handling
+    inhouse_mode[guild_id] = selected_mode
+    inhouse_mode[guild_id] = mode.lower() if mode.lower() in ["regular", "immortal"] else "regular"
     # Initialize structures if not already present
     if guild_id not in lobby_players:
         lobby_players[guild_id] = []
@@ -500,6 +542,9 @@ async def help_command(ctx):
         "**!add `<@user1>` `<@user2>` ...** - Manually add one or more users to the lobby.\n"
         "**!remove `<@user1>` `<@user2>` ...** - Manually remove one or more users from the lobby.\n\n"
         "__**🔐 Admin Commands**__\n"
+        "**!lobby `<mode>`** - (Admin only) Sets the lobby mode for the inhouse \n"
+        "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
+        "• `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
         "**!setmmr `<mmr>` `<@user>`** - (Admin only) Manually set a user's MMR.\n"
         "**!setpassword `<new_password>`** - (Admin only) Change the inhouse lobby password.\n"
         "**!changeprefix `<new_prefix>`** - (Admin only) Changes the prefix of the bot commands.\n"
@@ -573,10 +618,17 @@ async def on_raw_reaction_add(payload):
                 if str(reaction.emoji) in ["🚀", "♻️"]:
                     await message.clear_reaction(reaction.emoji)
     elif emoji == "🚀" and len(lobby_players[guild_id]) == 10:
-        team_rolls[guild_id] = calculate_balanced_teams(lobby_players[guild_id])
-        original_teams[guild_id] = team_rolls[guild_id][0]
-        roll_count[guild_id] = 1
-        embed = build_team_embed(*original_teams[guild_id], guild)
+        mode = inhouse_mode.get(guild_id, "regular")
+        if mode == "regular":
+            team_rolls[guild_id] = calculate_balanced_teams(lobby_players[guild_id])
+            original_teams[guild_id] = team_rolls[guild_id][0]
+            roll_count[guild_id] = 1
+            embed = build_team_embed(*original_teams[guild_id], guild)
+        elif mode == "immortal":
+            captains, pool = get_captains_and_pool(lobby_players[guild_id])
+            original_teams[guild_id] = (captains, pool)
+            roll_count[guild_id] = 1
+            embed = build_immortal_embed(captains, pool, guild)
         await message.edit(embed=embed)
         await message.clear_reactions()
         await message.add_reaction("👍")
@@ -584,17 +636,29 @@ async def on_raw_reaction_add(payload):
         await message.add_reaction("♻️")
         await message.remove_reaction(payload.emoji, user)
     elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
+        mode = inhouse_mode.get(guild_id, "regular")
+        # Only allow admins to re-roll
         if not user.guild_permissions.administrator:
             await message.remove_reaction(payload.emoji, user)
             return
-        if not team_rolls[guild_id]:
-            return
-        if roll_count[guild_id] >= MAX_ROLLS:
-            roll_count[guild_id] = 1
+        if mode == "regular":
+            # REGULAR INHOUSE REROLL
+            if roll_count[guild_id] >= MAX_ROLLS:
+                roll_count[guild_id] = 1
+            else:
+                roll_count[guild_id] += 1
+            team_rolls[guild_id] = calculate_balanced_teams(lobby_players[guild_id])
+            original_teams[guild_id] = team_rolls[guild_id][0]
             embed = build_team_embed(*original_teams[guild_id], guild)
-        else:
-            roll_count[guild_id] += 1
-            embed = build_team_embed(*team_rolls[guild_id][roll_count[guild_id] - 1], guild)
+        elif mode == "immortal":
+            # IMMORTAL DRAFT REROLL
+            if roll_count[guild_id] >= MAX_ROLLS:
+                roll_count[guild_id] = 1
+            else:
+                roll_count[guild_id] += 1
+            captains, pool = get_captains_and_pool(lobby_players[guild_id])
+            original_teams[guild_id] = (captains, pool)
+            embed = build_immortal_embed(captains, pool, guild)
         await message.edit(embed=embed)
         await message.remove_reaction(payload.emoji, user)
     if updated:
@@ -699,6 +763,22 @@ def build_team_embed(team1, team2, guild):
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
-
+def build_immortal_embed(captains, pool, guild):
+    c1, c2 = captains
+    embed = discord.Embed(
+        title="🛡️ Immortal Draft Inhouse",
+        description=f"Captains: {c1[1]} ({c1[2]}) vs {c2[1]} ({c2[2]})\nRoll #{roll_count[guild.id]}/{MAX_ROLLS}",
+        color=discord.Color.orange()
+    )
+    embed.add_field(name="Captain 1", value=f"{c1[1]} ({c1[2]})", inline=True)
+    embed.add_field(name="Captain 2", value=f"{c2[1]} ({c2[2]})", inline=True)
+    embed.add_field(
+        name="🧩 Draft Pool",
+        value=", ".join(f"{p[1]} ({p[2]})" for p in sorted(pool, key=lambda x: x[2], reverse=True)),
+        inline=False
+    )
+    password = load_lobby_password_for_guild(guild.id)
+    embed.add_field(name="**Password**", value=password, inline=False)
+    return embed
 
 bot.run(TOKEN)
