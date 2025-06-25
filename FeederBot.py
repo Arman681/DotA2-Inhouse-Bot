@@ -68,6 +68,13 @@ def is_admin_or_has_role():
         return any(role.name in admin_roles for role in ctx.author.roles)
     return commands.check(predicate)
 
+# Utility function version of the role check (returns True/False instead of being a decorator)
+async def user_is_admin_or_has_role(member):
+    if member.guild_permissions.administrator:
+        return True
+    allowed_roles = ["Inhouse Admin", "Drow Picker"]
+    return any(role.name in allowed_roles for role in member.roles)
+
 # ========================== 🔥 Firestore Access & Persistence ==========================
 # Saves a player's config data (Steam info, MMR, etc.) to Firestore under their Discord user ID.
 def save_player_config(user_id, data):
@@ -347,7 +354,7 @@ async def lobby_cmd(ctx, mode: str = None):
     guild_id = ctx.guild.id
     if mode:
         # Restrict mode changes to admins and allowed roles only
-        if not is_admin_or_has_role(ctx.author):
+        if not await user_is_admin_or_has_role(ctx.author):
             await ctx.send("❌ You don't have permission to change the inhouse mode.")
             return
         # Save and use the provided mode (if valid)
@@ -358,7 +365,6 @@ async def lobby_cmd(ctx, mode: str = None):
         selected_mode = load_inhouse_mode_for_guild(guild_id)
     # Store mode in memory for reaction handling
     inhouse_mode[guild_id] = selected_mode
-    inhouse_mode[guild_id] = mode.lower() if isinstance(mode, str) and mode.lower() in ["regular", "immortal"] else "regular"
     # Initialize structures if not already present
     if guild_id not in lobby_players:
         lobby_players[guild_id] = []
