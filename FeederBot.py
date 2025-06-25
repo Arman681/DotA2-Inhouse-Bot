@@ -795,7 +795,7 @@ def build_immortal_embed(captains, pool, guild, reroll_count=None):
     c1, c2 = captains
     embed = discord.Embed(
         title="🛡️ Immortal Draft Inhouse",
-        description=f"Captains: {c1[1]} ({c1[2]}) vs {c2[1]} ({c2[2]})\nRoll #{reroll_count[guild.id]}/{MAX_ROLLS}",
+        description=f"Captains: {c1[1]} ({c1[2]}) vs {c2[1]} ({c2[2]})\nRoll #{reroll_count}/{MAX_ROLLS}",
         color=discord.Color.orange()
     )
     embed.add_field(name="Captain 1", value=f"{c1[1]} ({c1[2]})", inline=True)
