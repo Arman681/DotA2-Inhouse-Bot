@@ -17,7 +17,12 @@ from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-cred = credentials.Certificate("feederbot-db-firebase-adminsdk-fbsvc-e90da63704.json")
+cred_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+if not cred_json:
+    raise ValueError("Missing Firebase credentials!")
+
+cred_dict = json.loads(cred_json)
+cred = credentials.Certificate(cred_dict)
 firebase_admin.initialize_app(cred)
 
 db = firestore.client()
@@ -40,8 +45,6 @@ async def get_prefix(bot, message):
     return "!"  # fallback default
 bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None)
 
-CONFIG_FILE = "player_config.json"
-PREFIX_FILE = "prefixes.json"
 player_data = {}
 lobby_players = {}         # {guild_id: list of (user_id, name, mmr)}
 lobby_message = {}         # {guild_id: message}
