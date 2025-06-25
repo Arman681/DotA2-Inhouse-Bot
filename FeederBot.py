@@ -343,8 +343,18 @@ async def remove_from_lobby(ctx, *members: discord.Member):
                 removed.append(member.display_name)
                 break
     if removed:
-        await update_lobby_embed(ctx.guild)
-        await ctx.send(f"Removed from lobby: {', '.join(removed)}")
+        # Re-fetch message to get updated reaction state
+        message = await channel.fetch_message(lobby_message[guild_id].id)
+
+        # Check if it went from full (10) to 9
+        if len(lobby_players[guild_id]) == 9:
+            # Clear reactions only after embed update to prevent race conditions
+            await update_lobby_embed(ctx.guild)  # Ensure the embed is updated first
+            for reaction in message.reactions:
+                if str(reaction.emoji) in ["🚀", "♻️"]:  # clear both rocket and re-roll reactions
+                    await message.clear_reaction(reaction.emoji)
+
+            await ctx.send(f"Removed from lobby: {', '.join(removed)}")
     else:
         await ctx.send("None of the specified members were in the lobby.")
 
@@ -749,9 +759,10 @@ async def on_guild_join(guild):
 # Builds and returns a lobby embed showing current players and the server's password.
 def build_lobby_embed(guild):
     guild_id = guild.id
+    mode = inhouse_mode.get(guild.id, "regular")  # fallback to "regular" if not set
     embed = discord.Embed(
         title="DotA2 Inhouse",
-        description=f"({len(lobby_players.get(guild_id, []))}/10)",
+        description=f"**Mode:** `{mode.capitalize()}`\n({len(lobby_players[guild.id])}/10)",
         color=discord.Color.purple()
     )
     for _, name, mmr in lobby_players.get(guild_id, []):
