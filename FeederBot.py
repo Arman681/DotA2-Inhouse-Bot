@@ -43,6 +43,14 @@ async def get_prefix(bot, message):
     return "!"  # fallback default
 bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=None)
 
+def is_admin_or_has_role():
+    async def predicate(ctx):
+        if ctx.author.guild_permissions.administrator:
+            return True
+        admin_roles = ["Inhouse Admin", "Drow Picker"]
+        return any(role.name in admin_roles for role in ctx.author.roles)
+    return commands.check(predicate)
+
 player_data = {}
 lobby_players = {}         # {guild_id: list of (user_id, name, mmr)}
 lobby_message = {}         # {guild_id: message}
@@ -247,7 +255,7 @@ async def mmr_lookup(ctx, member: discord.Member = None):
 
 # Admin command to manually set a user's MMR in Firebase.
 @bot.command(name="setmmr")
-@commands.has_permissions(administrator=True)
+@is_admin_or_has_role()
 async def setmmr(ctx, mmr: int, member: discord.Member):
     # Safety check
     if member not in ctx.guild.members:
@@ -264,8 +272,8 @@ async def setmmr(ctx, mmr: int, member: discord.Member):
 
 @setmmr.error
 async def set_mmr_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("You do not have permission to use this command.")
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
 
 # Adds one or more users to the current lobby for the server.
 @bot.command(name="add")
@@ -354,7 +362,7 @@ async def reset(ctx):
 
 # Admin-only: mentions all 10 players in a full lobby to alert them.
 @bot.command(name="alert")
-@commands.has_permissions(administrator=True)
+@is_admin_or_has_role()
 async def alert(ctx):
     guild = ctx.guild
     guild_id = guild.id
@@ -373,12 +381,12 @@ async def alert(ctx):
 
 @alert.error
 async def alert_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("You do not have permission to use this command.")
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
 
 # Admin-only: changes the inhouse lobby password and updates the lobby embed.
 @bot.command(name="setpassword")
-@commands.has_permissions(administrator=True)
+@is_admin_or_has_role()
 async def set_password(ctx, *, new_password: str):
     guild_id = ctx.guild.id
     save_lobby_password_for_guild(guild_id, new_password)
@@ -387,8 +395,8 @@ async def set_password(ctx, *, new_password: str):
 
 @set_password.error
 async def set_password_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("You do not have permission to use this command.")
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
 
 # Displays a list of all bot commands and their usage.
 @bot.command(name="help")
@@ -416,7 +424,7 @@ async def help_command(ctx):
 
 # Admin-only: changes the bot's command prefix for the server.
 @bot.command(name="changeprefix")
-@commands.has_permissions(administrator=True)
+@is_admin_or_has_role()
 async def change_prefix(ctx, new_prefix: str):
     guild_id = ctx.guild.id
     save_prefix_for_guild(guild_id, new_prefix)
@@ -424,8 +432,8 @@ async def change_prefix(ctx, new_prefix: str):
 
 @change_prefix.error
 async def change_prefix_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("You do not have permission to change the prefix.")
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
 
 # ---------- Events ----------
 # Runs once when the bot starts and begins the MMR refresh task.
