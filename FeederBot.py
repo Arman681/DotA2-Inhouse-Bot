@@ -358,7 +358,7 @@ async def lobby_cmd(ctx, mode: str = None):
         selected_mode = load_inhouse_mode_for_guild(guild_id)
     # Store mode in memory for reaction handling
     inhouse_mode[guild_id] = selected_mode
-    inhouse_mode[guild_id] = mode.lower() if mode.lower() in ["regular", "immortal"] else "regular"
+    inhouse_mode[guild_id] = mode.lower() if isinstance(mode, str) and mode.lower() in ["regular", "immortal"] else "regular"
     # Initialize structures if not already present
     if guild_id not in lobby_players:
         lobby_players[guild_id] = []
