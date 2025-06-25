@@ -344,6 +344,7 @@ async def remove_from_lobby(ctx, *members: discord.Member):
                 break
     if removed:
         # Re-fetch message to get updated reaction state
+        channel = ctx.channel
         message = await channel.fetch_message(lobby_message[guild_id].id)
 
         # Check if it went from full (10) to 9
