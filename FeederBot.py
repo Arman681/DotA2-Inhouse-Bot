@@ -42,6 +42,7 @@ lobby_message = {}         # {guild_id: message}
 roll_count = {}            # {guild_id: int}
 team_rolls = {}            # {guild_id: list of team tuples}
 original_teams = {}        # {guild_id: team tuple}
+captain_draft_state = {}   # {guild_id: {"pairs": [...], "index": 0}}
 MAX_ROLLS = 5
 
 # ========================================================================================================================
@@ -230,20 +231,19 @@ async def refresh_all_mmrs():
     # Refresh lobby embeds across all servers
     await update_all_lobbies()
 
-def get_captains_and_pool(players):
+def get_all_captain_pairs(players):
     sorted_players = sorted(players, key=lambda p: p[2])  # sort by MMR
-    min_diff = float('inf')
-    best_pair = ()
-
+    pairs = []
     for i in range(len(sorted_players)):
         for j in range(i + 1, len(sorted_players)):
-            diff = abs(sorted_players[i][2] - sorted_players[j][2])
-            if diff < min_diff:
-                min_diff = diff
-                best_pair = (sorted_players[i], sorted_players[j])
-
-    pool = [p for p in players if p not in best_pair]
-    return best_pair, pool
+            p1 = sorted_players[i]
+            p2 = sorted_players[j]
+            diff = abs(p1[2] - p2[2])
+            pool = [p for p in sorted_players if p not in (p1, p2)]
+            pairs.append(((p1, p2), pool, diff))
+    # Sort by smallest mmr difference
+    pairs.sort(key=lambda x: x[2])  # sort by diff
+    return pairs  # List of (captain_pair, pool, diff)
 
 # ================================ ⚖️ Team Balancing ================================
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
@@ -644,10 +644,15 @@ async def on_raw_reaction_add(payload):
             roll_count[guild_id] = 1
             embed = build_team_embed(*original_teams[guild_id], guild)
         elif mode == "immortal":
-            captains, pool = get_captains_and_pool(lobby_players[guild_id])
-            original_teams[guild_id] = (captains, pool)
+            captain_pairs = get_all_captain_pairs(lobby_players[guild_id])
+            captain_draft_state[guild_id] = {
+                "pairs": captain_pairs,
+                "index": 0
+            }
+            first_pair, pool, _ = captain_pairs[0]
+            original_teams[guild_id] = (first_pair, pool)
             roll_count[guild_id] = 1
-            embed = build_immortal_embed(captains, pool, guild)
+            embed = build_immortal_embed(first_pair, pool, guild, reroll_count=0)
         await message.edit(embed=embed)
         await message.clear_reactions()
         await message.add_reaction("👍")
@@ -662,7 +667,8 @@ async def on_raw_reaction_add(payload):
             return
         if mode == "regular":
             # REGULAR INHOUSE REROLL
-            if roll_count[guild_id] >= MAX_ROLLS:
+            max_rolls = 3 if mode == "immortal" else MAX_ROLLS
+            if roll_count[guild_id] >= max_rolls:
                 roll_count[guild_id] = 1
             else:
                 roll_count[guild_id] += 1
@@ -670,14 +676,17 @@ async def on_raw_reaction_add(payload):
             original_teams[guild_id] = team_rolls[guild_id][0]
             embed = build_team_embed(*original_teams[guild_id], guild)
         elif mode == "immortal":
-            # IMMORTAL DRAFT REROLL
-            if roll_count[guild_id] >= MAX_ROLLS:
-                roll_count[guild_id] = 1
-            else:
-                roll_count[guild_id] += 1
-            captains, pool = get_captains_and_pool(lobby_players[guild_id])
-            original_teams[guild_id] = (captains, pool)
-            embed = build_immortal_embed(captains, pool, guild)
+            state = captain_draft_state.get(guild_id)
+            if not state:
+                await channel.send("⚠️ No cached captain data found. Please restart the lobby.")
+                return
+            if state["index"] >= 2:  # max 3 rerolls (index 0, 1, 2)
+                await channel.send("⛔ Maximum re-rolls reached for Immortal Draft.")
+                return
+            state["index"] += 1
+            next_pair, next_pool, _ = state["pairs"][state["index"]]
+            original_teams[guild_id] = (next_pair, next_pool)
+            embed = build_immortal_embed(next_pair, next_pool, guild, reroll_count=state["index"])
         await message.edit(embed=embed)
         await message.remove_reaction(payload.emoji, user)
     if updated:
@@ -782,11 +791,11 @@ def build_team_embed(team1, team2, guild):
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
-def build_immortal_embed(captains, pool, guild):
+def build_immortal_embed(captains, pool, guild, reroll_count=None):
     c1, c2 = captains
     embed = discord.Embed(
         title="🛡️ Immortal Draft Inhouse",
-        description=f"Captains: {c1[1]} ({c1[2]}) vs {c2[1]} ({c2[2]})\nRoll #{roll_count[guild.id]}/{MAX_ROLLS}",
+        description=f"Captains: {c1[1]} ({c1[2]}) vs {c2[1]} ({c2[2]})\nRoll #{reroll_count[guild.id]}/{MAX_ROLLS}",
         color=discord.Color.orange()
     )
     embed.add_field(name="Captain 1", value=f"{c1[1]} ({c1[2]})", inline=True)
