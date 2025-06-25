@@ -17,6 +17,9 @@ from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
 
+load_dotenv()
+TOKEN = os.getenv("DISCORD_TOKEN")
+STRATZ_TOKEN = os.getenv("STRATZ_TOKEN")
 cred_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
 if not cred_json:
     raise ValueError("Missing Firebase credentials!")
@@ -24,12 +27,7 @@ if not cred_json:
 cred_dict = json.loads(cred_json)
 cred = credentials.Certificate(cred_dict)
 firebase_admin.initialize_app(cred)
-
 db = firestore.client()
-
-load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
-STRATZ_TOKEN = os.getenv("STRATZ_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -51,7 +49,6 @@ lobby_message = {}         # {guild_id: message}
 roll_count = {}            # {guild_id: int}
 team_rolls = {}            # {guild_id: list of team tuples}
 original_teams = {}        # {guild_id: team tuple}
-current_password = {}      # {guild_id: password string}
 MAX_ROLLS = 5
 
 # ---------- MMR Mapping ----------
@@ -66,28 +63,41 @@ season_rank_to_mmr = {
     81: 5650, 82: 5650, 83: 5650, 84: 5650, 85: 5650
 }
 
-# ---------- Persistent Storage (Firebase) ----------
+# Saves a player's config data (Steam info, MMR, etc.) to Firestore under their Discord user ID.
 def save_player_config(user_id, data):
     doc_ref = db.collection("players").document(str(user_id))
     doc_ref.set(data)
 
+# Retrieves a player's saved config data from Firestore using their Discord user ID.
 def get_player_config(user_id):
     doc = db.collection("players").document(str(user_id)).get()
     return doc.to_dict() if doc.exists else None
 
-# ---------- Save Prefix for a Guild ----------
+# Stores a custom command prefix for a specific Discord server (guild).
 def save_prefix_for_guild(guild_id, prefix):
     doc_ref = db.collection("prefixes").document(str(guild_id))
     doc_ref.set({ "prefix": prefix })
 
-# ---------- Load Prefix for a Guild ----------
+# Retrieves the stored command prefix for a Discord server, or "!" if none is set.
 def load_prefix_for_guild(guild_id):
     doc = db.collection("prefixes").document(str(guild_id)).get()
     if doc.exists:
         return doc.to_dict().get("prefix", "!")
     return "!"
 
-# ---------- Steam ID Conversion ----------
+# Saves the inhouse lobby password for a Discord server (guild).
+def save_lobby_password_for_guild(guild_id, password):
+    doc_ref = db.collection("lobbies").document(str(guild_id))
+    doc_ref.set({ "password": password }, merge=True)
+
+# Loads the saved inhouse lobby password for a guild; returns "penguin" if not set.
+def load_lobby_password_for_guild(guild_id):
+    doc = db.collection("lobbies").document(str(guild_id)).get()
+    if doc.exists:
+        return doc.to_dict().get("password", "penguin")  # Default if not set
+    return "penguin"
+
+# Converts a full 64-bit Steam ID to the shorter 32-bit Steam account ID used by STRATZ.
 def convert_to_steam32(steam_id_str):
     try:
         steam_id = int(steam_id_str.replace(" ", ""))
@@ -97,7 +107,7 @@ def convert_to_steam32(steam_id_str):
     except ValueError:
         return None
 
-# ---------- MMR Fetching ----------
+# Sends a GraphQL query to STRATZ to fetch a user's seasonRank and maps it to an estimated MMR.
 def fetch_mmr_from_stratz(steam_id, max_retries=5):
     url = "https://api.stratz.com/graphql"
     headers = {
@@ -132,6 +142,7 @@ def fetch_mmr_from_stratz(steam_id, max_retries=5):
             return None, None
     return None, None
 
+# Gets the stored MMR value for a given Discord user, or returns 0 if not found.
 def get_mmr(user):
     user_id = str(user.id)
     info = get_player_config(user_id)
@@ -139,6 +150,7 @@ def get_mmr(user):
         return info.get("mmr", 0)
     return 0
 
+# Returns a set of user IDs across all servers that the bot is currently in (non-bot members only).
 def get_active_user_ids():
     """Return a set of user IDs across all servers the bot is in."""
     user_ids = set()
@@ -148,6 +160,8 @@ def get_active_user_ids():
                 user_ids.add(str(member.id))
     return user_ids
 
+# Periodic background task that updates all players' MMR values from STRATZ in Firebase,
+# and refreshes lobby embeds across all servers.
 @tasks.loop(hours=24)
 async def refresh_all_mmrs():
     print("Refreshing MMRs (Firebase)...")
@@ -162,11 +176,10 @@ async def refresh_all_mmrs():
                     "mmr": mmr,
                     "seasonRank": season_rank
                 })
+    # Refresh lobby embeds across all servers
+    await update_all_lobbies()
 
-    for guild in bot.guilds:
-        await update_lobby_embed(guild)
-
-# ---------- Team Calculation ----------
+# Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
 def calculate_balanced_teams(players):
     combinations = list(itertools.combinations(players, 5))
     team_pairs = []
@@ -179,7 +192,8 @@ def calculate_balanced_teams(players):
     team_pairs.sort(key=lambda x: x[0])
     return [(t1, t2) for _, t1, t2 in team_pairs]
 
-def build_team_embed(team1, team2):
+# Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
+def build_team_embed(team1, team2, guild):
     global roll_count
     avg1 = sum(p[2] for p in team1) / 5
     avg2 = sum(p[2] for p in team2) / 5
@@ -190,12 +204,14 @@ def build_team_embed(team1, team2):
     )
     team1_sorted = sorted(team1, key=lambda x: x[2], reverse=True)
     team2_sorted = sorted(team2, key=lambda x: x[2], reverse=True)
+    password = load_lobby_password_for_guild(guild.id)
     embed.add_field(name="Team One", value=", ".join(f"{p[1]} ({p[2]})" for p in team1_sorted), inline=False)
     embed.add_field(name="Team Two", value=", ".join(f"{p[1]} ({p[2]})" for p in team2_sorted), inline=False)
-    embed.add_field(name="**Password**", value=current_password, inline=False)
+    embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
 # ---------- Commands ----------
+# Links a user's Steam ID to their Discord account and stores their MMR/seasonRank in Firebase.
 @bot.command(name="cfg")
 async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     steam32 = convert_to_steam32(steam_id)
@@ -222,12 +238,14 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     else:
         await ctx.send(f"{target.mention}, Steam ID linked, but MMR could not be determined.")
 
+# Displays the stored MMR for the user or another mentioned member.
 @bot.command(name="mmr")
 async def mmr_lookup(ctx, member: discord.Member = None):
     user = member or ctx.author
     mmr = get_mmr(user)
     await ctx.send(f"{user.display_name}'s MMR is **{mmr}**.")
 
+# Admin command to manually set a user's MMR in Firebase.
 @bot.command(name="setmmr")
 @commands.has_permissions(administrator=True)
 async def setmmr(ctx, mmr: int, member: discord.Member):
@@ -249,6 +267,7 @@ async def set_mmr_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("You do not have permission to use this command.")
 
+# Adds one or more users to the current lobby for the server.
 @bot.command(name="add")
 async def add_to_lobby(ctx, *members: discord.Member):
     guild_id = ctx.guild.id
@@ -269,6 +288,7 @@ async def add_to_lobby(ctx, *members: discord.Member):
     else:
         await ctx.send("No new members were added.")
 
+# Removes one or more users from the current lobby for the server.
 @bot.command(name="remove")
 async def remove_from_lobby(ctx, *members: discord.Member):
     guild_id = ctx.guild.id
@@ -288,14 +308,13 @@ async def remove_from_lobby(ctx, *members: discord.Member):
     else:
         await ctx.send("None of the specified members were in the lobby.")
 
+# Creates a new lobby message and embed, or refreshes the existing one.
 @bot.command(name="lobby")
 async def lobby_cmd(ctx):
     guild_id = ctx.guild.id
     # Initialize structures if not already present
     if guild_id not in lobby_players:
         lobby_players[guild_id] = []
-    if guild_id not in current_password:
-        current_password[guild_id] = "penguin"
     try:
         await ctx.message.delete()
     except discord.Forbidden:
@@ -316,6 +335,7 @@ async def lobby_cmd(ctx):
     if len(lobby_players[guild_id]) == 10:
         await message.add_reaction("🚀")
 
+# Clears the current lobby list and creates a new lobby message embed.
 @bot.command(name="reset")
 async def reset(ctx):
     guild_id = ctx.guild.id
@@ -332,6 +352,7 @@ async def reset(ctx):
     await message.add_reaction("👎")
     await ctx.send("Lobby has been cleared and refreshed.")
 
+# Admin-only: mentions all 10 players in a full lobby to alert them.
 @bot.command(name="alert")
 @commands.has_permissions(administrator=True)
 async def alert(ctx):
@@ -355,11 +376,12 @@ async def alert_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("You do not have permission to use this command.")
 
+# Admin-only: changes the inhouse lobby password and updates the lobby embed.
 @bot.command(name="setpassword")
 @commands.has_permissions(administrator=True)
 async def set_password(ctx, *, new_password: str):
     guild_id = ctx.guild.id
-    current_password[guild_id] = new_password
+    save_lobby_password_for_guild(guild_id, new_password)
     await update_lobby_embed(ctx.guild)
     await ctx.send(f"Password updated to: `{new_password}`")
 
@@ -368,6 +390,7 @@ async def set_password_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("You do not have permission to use this command.")
 
+# Displays a list of all bot commands and their usage.
 @bot.command(name="help")
 async def help_command(ctx):
     help_text = (
@@ -381,16 +404,17 @@ async def help_command(ctx):
         "__**🏠 Lobby Management**__\n"
         "**!lobby** - Create or refresh the inhouse lobby.\n"
         "**!reset** - Clear the current lobby and start fresh.\n"
-        "**!add `@user1` `@user2` ...** - Manually add one or more users to the lobby.\n"
-        "**!remove `@user1` `@user2` ...** - Manually remove one or more users from the lobby.\n\n"
+        "**!add `<@user1>` `<@user2>` ...** - Manually add one or more users to the lobby.\n"
+        "**!remove `<@user1>` `<@user2>` ...** - Manually remove one or more users from the lobby.\n\n"
         "__**🔐 Admin Commands**__\n"
-        "**!setmmr @user `<mmr>`** - (Admin only) Manually set a user's MMR.\n"
+        "**!setmmr `<mmr>` `<@user>`** - (Admin only) Manually set a user's MMR.\n"
         "**!setpassword `<new_password>`** - (Admin only) Change the inhouse lobby password.\n"
         "**!changeprefix `<new_prefix>`** - (Admin only) Changes the prefix of the bot commands.\n"
         "**!alert** - (Admin only) Mention all 10 players when the lobby is full.\n"
     )
     await ctx.send(help_text)
 
+# Admin-only: changes the bot's command prefix for the server.
 @bot.command(name="changeprefix")
 @commands.has_permissions(administrator=True)
 async def change_prefix(ctx, new_prefix: str):
@@ -404,6 +428,7 @@ async def change_prefix_error(ctx, error):
         await ctx.send("You do not have permission to change the prefix.")
 
 # ---------- Events ----------
+# Runs once when the bot starts and begins the MMR refresh task.
 @bot.event
 async def on_ready():
     global player_data
@@ -411,6 +436,7 @@ async def on_ready():
     print(f"{bot.user} is online!")
     refresh_all_mmrs.start()
 
+# Listens for any messages containing "dota" and replies with a generic response.
 @bot.event
 async def on_message(msg):
     if msg.author.bot:
@@ -419,6 +445,7 @@ async def on_message(msg):
         await msg.channel.send(f"Interesting message, {msg.author.mention}")
     await bot.process_commands(msg)
 
+# Handles user reactions on lobby messages to join, leave, or roll teams.
 @bot.event
 async def on_raw_reaction_add(payload):
     if payload.user_id == bot.user.id:
@@ -466,7 +493,7 @@ async def on_raw_reaction_add(payload):
         team_rolls[guild_id] = calculate_balanced_teams(lobby_players[guild_id])
         original_teams[guild_id] = team_rolls[guild_id][0]
         roll_count[guild_id] = 1
-        embed = build_team_embed(*original_teams[guild_id])
+        embed = build_team_embed(*original_teams[guild_id], guild)
         await message.edit(embed=embed)
         await message.clear_reactions()
         await message.add_reaction("👍")
@@ -481,10 +508,10 @@ async def on_raw_reaction_add(payload):
             return
         if roll_count[guild_id] >= MAX_ROLLS:
             roll_count[guild_id] = 1
-            embed = build_team_embed(*original_teams[guild_id])
+            embed = build_team_embed(*original_teams[guild_id], guild)
         else:
             roll_count[guild_id] += 1
-            embed = build_team_embed(*team_rolls[guild_id][roll_count[guild_id] - 1])
+            embed = build_team_embed(*team_rolls[guild_id][roll_count[guild_id] - 1], guild)
         await message.edit(embed=embed)
         await message.remove_reaction(payload.emoji, user)
     if updated:
@@ -492,6 +519,7 @@ async def on_raw_reaction_add(payload):
     # Always remove the user's reaction
     await message.remove_reaction(payload.emoji, user)
 
+# Sends a welcome message with instructions when the bot joins a new server.
 @bot.event
 async def on_guild_join(guild):
     welcome_embed = discord.Embed(
@@ -535,6 +563,7 @@ async def on_guild_join(guild):
         print(f"Could not DM the owner of {guild.name}.")
 
 # ---------- Embeds ----------
+# Builds and returns a lobby embed showing current players and the server's password.
 def build_lobby_embed(guild):
     guild_id = guild.id
     embed = discord.Embed(
@@ -544,10 +573,11 @@ def build_lobby_embed(guild):
     )
     for _, name, mmr in lobby_players.get(guild_id, []):
         embed.add_field(name=name, value=str(mmr), inline=True)
-    password = current_password.get(guild_id, "penguin")
+    password = load_lobby_password_for_guild(guild_id)
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
+# Updates the current lobby embed message with the latest player list and password.
 async def update_lobby_embed(guild):
     guild_id = guild.id
     if guild_id not in lobby_players or guild_id not in lobby_message:
@@ -558,6 +588,7 @@ async def update_lobby_embed(guild):
     if len(lobby_players[guild_id]) == 10:
         await message.add_reaction("🚀")
 
+# Loops through all servers the bot is in and updates any existing lobby embed messages.
 async def update_all_lobbies():
     for guild in bot.guilds:
         await update_lobby_embed(guild)
