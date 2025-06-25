@@ -441,6 +441,47 @@ async def change_prefix_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.send("❌ You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
 
+# Displays the most recent prefix and lobby password logs for the current server. By default, shows a clean summary with who set each value and when.
+# Use "--verbose" to display detailed metadata including user IDs, timestamps, and full Firestore document data.
+@bot.command(name="viewlogs")
+@is_admin_or_has_role()
+async def viewlogs(ctx, *, flags: str = ""):
+    guild_id = ctx.guild.id
+    guild_name = ctx.guild.name
+    verbose = "--verbose" in flags.lower()
+    prefix_doc = db.collection("prefixes").document(str(guild_id)).get()
+    password_doc = db.collection("lobbies").document(str(guild_id)).get()
+    lines = []
+    if verbose:
+        lines.append(f"📜 **Admin Logs (Verbose)** for `{guild_name}` (Guild ID: `{guild_id}`)\n")
+    else:
+        lines.append(f"📜 **Admin Logs for `{guild_name}`**\n")
+    # PREFIX LOG
+    if prefix_doc.exists:
+        data = prefix_doc.to_dict()
+        prefix = data.get("prefix", "Unknown")
+        set_by = data.get("set_by", "Unknown")
+        timestamp = data.get("timestamp", "Unknown")
+        if verbose:
+            lines.append(f"🔧 **Prefix**:\n  • Value: `{prefix}`\n  • Set by: {set_by}\n  • Timestamp: `{timestamp}`\n  • Full Doc: `{data}`")
+        else:
+            lines.append(f"🔧 **Prefix**: `{prefix}`\nSet by: {set_by}\nTime: {timestamp}")
+    else:
+        lines.append("🔧 **Prefix**: No record found.")
+    # PASSWORD LOG
+    if password_doc.exists:
+        data = password_doc.to_dict()
+        password = data.get("password", "Unknown")
+        set_by = data.get("set_by", "Unknown")
+        timestamp = data.get("timestamp", "Unknown")
+        if verbose:
+            lines.append(f"\n🔐 **Lobby Password**:\n  • Value: `{password}`\n  • Set by: {set_by}\n  • Timestamp: `{timestamp}`\n  • Full Doc: `{data}`")
+        else:
+            lines.append(f"\n🔐 **Lobby Password**: `{password}`\nSet by: {set_by}\nTime: {timestamp}")
+    else:
+        lines.append("\n🔐 **Lobby Password**: No record found.")
+    await ctx.send("\n".join(lines))
+
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
 @bot.command(name="help")
