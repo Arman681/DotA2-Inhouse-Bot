@@ -493,6 +493,7 @@ async def viewlogs(ctx, *, flags: str = ""):
     verbose = "--verbose" in flags.lower()
     prefix_doc = db.collection("prefixes").document(str(guild_id)).get()
     password_doc = db.collection("lobbies").document(str(guild_id)).get()
+    mode_doc = db.collection("inhouse_modes").document(str(guild_id)).get()
     lines = []
     if verbose:
         lines.append(f"📜 **Admin Logs (Verbose)** for `{guild_name}` (Guild ID: `{guild_id}`)\n")
@@ -523,6 +524,18 @@ async def viewlogs(ctx, *, flags: str = ""):
     else:
         lines.append("\n🔐 **Lobby Password**: No record found.")
     await ctx.send("\n".join(lines))
+    # MODE LOG
+    if mode_doc.exists:
+        data = mode_doc.to_dict()
+        mode = data.get("mode", "Unknown")
+        set_by = data.get("set_by", "Unknown")
+        timestamp = data.get("timestamp", "Unknown")
+        if verbose:
+            lines.append(f"\n🛠️ **Inhouse Mode**:\n • Value: `{mode}`\n • Set by: {set_by}\n • Timestamp: `{timestamp}`\n • Full Doc: `{data}`")
+        else:
+            lines.append(f"\n🛠️ **Inhouse Mode**: `{mode}`\nSet by: {set_by}\nTime: {timestamp}")
+    else:
+        lines.append("\n🛠️ **Inhouse Mode**: No record found.")
 
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
