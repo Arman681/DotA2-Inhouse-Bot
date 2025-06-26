@@ -323,8 +323,9 @@ async def add_to_lobby(ctx, *members: discord.Member):
         if any(uid == member.id for uid, _, _ in lobby_players[guild_id]):
             continue
         mmr = get_mmr(member)
-        lobby_players[guild_id].append((member.id, member.name, mmr))
-        added.append(member.display_name)
+        display_name = member.display_name  # prefers nickname if available
+        lobby_players[guild_id].append((member.id, display_name, mmr))
+        added.append(display_name)
     if added:
         await update_lobby_embed(ctx.guild)
         await ctx.send(f"Added to lobby: {', '.join(added)}")
@@ -568,10 +569,7 @@ async def help_command(ctx):
         "\n**Available Commands:**\n\n"
         "__**👥 General Commands**__\n"
         "**!cfg `<steam_id>` `<@user>`** - 🔗 Link your Steam ID to fetch your MMR from STRATZ.\n"
-        "**!mmr `<@user>`** - 📈 Show your MMR or another user's MMR.\n"
-        "**👍 / 👎 Reactions** - Join or leave the lobby.\n"
-        "**🚀 Reaction** - Generate balanced teams when lobby is full.\n"
-        "**♻️ Reaction** - Re-roll teams (up to 5 times).\n\n"
+        "**!mmr `<@user>`** - 📈 Show your MMR or another user's MMR.\n\n"
         "__**🏠 Lobby Management**__\n"
         "**!lobby** - Create or refresh the inhouse lobby.\n"
         "**!reset** - Clear the current lobby and start fresh.\n"
@@ -580,7 +578,7 @@ async def help_command(ctx):
         "__**🔐 Admin Commands**__\n"
         "**!lobby `<mode>`** - (Admin only) Sets the lobby mode for the inhouse \n"
         "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
-        "• `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
+        "       • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
         "**!setmmr `<mmr>` `<@user>`** - (Admin only) Manually set a user's MMR.\n"
         "**!setpassword `<new_password>`** - (Admin only) Change the inhouse lobby password.\n"
         "**!changeprefix `<new_prefix>`** - (Admin only) Changes the prefix of the bot commands.\n"
@@ -603,13 +601,13 @@ async def on_ready():
     refresh_all_mmrs.start()
 
 # Listens for any messages containing "dota" and replies with a generic response.
-@bot.event
+"""@bot.event
 async def on_message(msg):
     if msg.author.bot:
         return
     if "dota" in msg.content.lower():
         await msg.channel.send(f"Interesting message, {msg.author.mention}")
-    await bot.process_commands(msg)
+    await bot.process_commands(msg)"""
 
 # Handles user reactions on lobby messages to join, leave, or roll teams.
 @bot.event
@@ -643,7 +641,8 @@ async def on_raw_reaction_add(payload):
             return
         if not any(uid == user.id for uid, _, _ in lobby_players[guild_id]):
             mmr = get_mmr(user)
-            lobby_players[guild_id].append((user.id, user.name, mmr))
+            display_name = user.display_name
+            lobby_players[guild_id].append((user.id, display_name, mmr))
             updated = True
     elif emoji == "👎":
         was_full = len(lobby_players[guild_id]) == 10
