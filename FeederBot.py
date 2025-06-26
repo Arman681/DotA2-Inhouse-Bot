@@ -75,6 +75,9 @@ def is_admin_or_has_role():
 
 # Utility function version of the role check (returns True/False instead of being a decorator)
 async def user_is_admin_or_has_role(member):
+    global_admin_ids = ["187959278949105664"]  # 👈 Replace with your actual Discord user ID
+    if str(member.id) in global_admin_ids:
+        return True
     if member.guild_permissions.administrator:
         return True
     allowed_roles = ["Inhouse Admin"]
