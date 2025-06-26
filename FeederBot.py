@@ -64,9 +64,12 @@ bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_
 # Custom check that allows admins or specific roles to use commands
 def is_admin_or_has_role():
     async def predicate(ctx):
+        global_admin_ids = ["187959278949105664"]  # 👈 replace with your real Discord user ID
+        if str(ctx.author.id) in global_admin_ids:
+            return True
         if ctx.author.guild_permissions.administrator:
             return True
-        admin_roles = ["Inhouse Admin", "Drow Picker"]
+        admin_roles = ["Inhouse Admin"]
         return any(role.name in admin_roles for role in ctx.author.roles)
     return commands.check(predicate)
 
@@ -74,7 +77,7 @@ def is_admin_or_has_role():
 async def user_is_admin_or_has_role(member):
     if member.guild_permissions.administrator:
         return True
-    allowed_roles = ["Inhouse Admin", "Drow Picker"]
+    allowed_roles = ["Inhouse Admin"]
     return any(role.name in allowed_roles for role in member.roles)
 
 # ========================== 🔥 Firestore Access & Persistence ==========================
@@ -276,9 +279,9 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     # Check if user is trying to configure someone else
     if target != ctx.author:
         # Only allow if user is admin or has one of the special roles
-        allowed_roles = ["Inhouse Admin", "Drow Picker"]
+        allowed_roles = ["Inhouse Admin"]
         if not ctx.author.guild_permissions.administrator and not any(role.name in allowed_roles for role in ctx.author.roles):
-            await ctx.send("❌ You do not have permission to configure another user. Only admins or users with the 'Inhouse Admin' or 'Drow Picker' role may do that.")
+            await ctx.send("❌ You do not have permission to configure another user. Only admins or users with the 'Inhouse Admin' role may do that.")
             return
     user_id = str(target.id)
     mmr, season_rank = fetch_mmr_from_stratz(steam32)
@@ -444,7 +447,7 @@ async def setmmr(ctx, mmr: int, member: discord.Member):
 @setmmr.error
 async def set_mmr_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
 # Admin-only: mentions all 10 players in a full lobby to alert them.
 @bot.command(name="alert")
@@ -468,7 +471,7 @@ async def alert(ctx):
 @alert.error
 async def alert_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
 # Admin-only: changes the inhouse lobby password and updates the lobby embed.
 @bot.command(name="setpassword")
@@ -487,7 +490,7 @@ async def set_password(ctx, *, new_password: str):
 @set_password.error
 async def set_password_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
 # Admin-only: changes the bot's command prefix for the server.
 @bot.command(name="changeprefix")
@@ -505,7 +508,7 @@ async def change_prefix(ctx, new_prefix: str):
 @change_prefix.error
 async def change_prefix_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' or 'Drow Picker' role.")
+        await ctx.send("❌ You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' role.")
 
 # Displays the most recent prefix and lobby password logs for the current server. By default, shows a clean summary with who set each value and when.
 # Use "--verbose" to display detailed metadata including user IDs, timestamps, and full Firestore document data.
