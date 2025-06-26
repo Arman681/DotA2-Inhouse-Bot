@@ -683,9 +683,10 @@ async def on_raw_reaction_add(payload):
         await message.remove_reaction(payload.emoji, user)
     elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
-        # Only allow admins to re-roll
-        if not user.guild_permissions.administrator:
-            await message.remove_reaction(payload.emoji, user)
+        # Get the member object from the guild
+        member = guild.get_member(payload.user_id)
+        # Check if they are admin or have special roles
+        if not await user_is_admin_or_has_role(member):
             return
         # REGULAR INHOUSE REROLL
         if mode == "regular":
