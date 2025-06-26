@@ -282,8 +282,8 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     # Check if user is trying to configure someone else
     if target != ctx.author:
         # Only allow if user is admin or has one of the special roles
-        allowed_roles = ["Inhouse Admin"]
-        if not ctx.author.guild_permissions.administrator and not any(role.name in allowed_roles for role in ctx.author.roles):
+        is_authorized = await user_is_admin_or_has_role(ctx.author)
+        if not is_authorized:
             await ctx.send("❌ You do not have permission to configure another user. Only admins or users with the 'Inhouse Admin' role may do that.")
             return
     user_id = str(target.id)
