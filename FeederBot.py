@@ -130,9 +130,10 @@ def load_lobby_password_for_guild(guild_id):
         return doc.to_dict().get("password", "penguin")  # Default if not set
     return "penguin"
 
-def save_inhouse_mode_for_guild(guild_id, mode, set_by):
+def save_inhouse_mode_for_guild(guild_id, mode, server_name=None, set_by=None):
     db.collection("inhouse_modes").document(str(guild_id)).set({
         "mode": mode,
+        "server_name": server_name,
         "set_by": str(set_by),
         "timestamp": firestore.SERVER_TIMESTAMP
     })
@@ -383,7 +384,7 @@ async def lobby_cmd(ctx, mode: str = None):
             return
         # Save and use the provided mode (if valid)
         selected_mode = mode.lower() if mode.lower() in ["regular", "immortal"] else "regular"
-        save_inhouse_mode_for_guild(guild_id, selected_mode, ctx.author)
+        save_inhouse_mode_for_guild(guild_id, selected_mode, server_name=ctx.guild.name, set_by=str(ctx.author))
     else:
         # Load last used mode from Firestore
         selected_mode = load_inhouse_mode_for_guild(guild_id)
