@@ -16,6 +16,9 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
+from mmr_manager import adjust_mmr
+from betting_manager import resolve_bets
+from match_tracker import fetch_match_result
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -525,7 +528,7 @@ async def change_prefix_error(ctx, error):
     elif isinstance(error, commands.CheckFailure):
         await ctx.send("❌ You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' role.")
 
-# Displays the most recent prefix and lobby password logs for the current server. By default, shows a clean summary with who set each value and when.
+# Admin-only: Displays the most recent prefix and lobby password logs for the current server. By default, shows a clean summary with who set each value and when.
 # Use "--verbose" to display detailed metadata including user IDs, timestamps, and full Firestore document data.
 @bot.command(name="viewlogs")
 @is_admin_or_has_role()
@@ -578,6 +581,25 @@ async def viewlogs(ctx, *, flags: str = ""):
             lines.append(f"\n🛠️ **Inhouse Mode**: `{mode}`\nSet by: {set_by}\nTime: {timestamp}")
     else:
         lines.append("\n🛠️ **Inhouse Mode**: No record found.")
+
+# Admin-only: Reports a completed match by match ID, updates in-house MMR and resolves bets.
+@bot.command(name="report")
+@is_admin_or_has_role()
+async def report_match(ctx, match_id: str):
+    await ctx.send("🔍 Fetching match result...")
+    result = fetch_match_result(match_id)
+    if not result:
+        await ctx.send("❌ Could not fetch match result from STRATZ. Check the match ID.")
+        return
+    if not match_id.isdigit():
+        await ctx.send("❗ Match ID must be a number.")
+        return
+    winner_ids = result["radiant"] if result["radiant_win"] else result["dire"]
+    loser_ids = result["dire"] if result["radiant_win"] else result["radiant"]
+    winning_team = "radiant" if result["radiant_win"] else "dire"
+    adjust_mmr(winner_ids, loser_ids)
+    resolve_bets(match_id, winning_team)
+    await ctx.send(f"✅ Match reported. `{winning_team.capitalize()}` won. MMRs and bets have been updated.")
 
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
