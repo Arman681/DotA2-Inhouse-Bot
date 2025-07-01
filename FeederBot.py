@@ -604,7 +604,7 @@ async def help_command(ctx):
         "**!viewlogs** - (Admin only) View recent lobby or user config logs.\n"
         "**!viewlogs --verbose** - (Admin only) View full detailed logs for this server.\n"
     )
-    await ctx.send(help_text)
+    await ctx.send(f"```{help_text}```")
 
 # ========================================================================================================================
 # ================================================ 🎯 Bot Event Handlers ================================================
