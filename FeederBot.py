@@ -306,6 +306,11 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     else:
         await ctx.send(f"{target.mention}, Steam ID linked, but MMR could not be determined.")
 
+@cfg_cmd.error
+async def cfg_cmd_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❗ Usage: `!cfg <steam_id>` (optional: `@user`)")
+
 # Displays the stored MMR for the user or another mentioned member.
 @bot.command(name="mmr")
 async def mmr_lookup(ctx, member: discord.Member = None):
@@ -450,7 +455,9 @@ async def setmmr(ctx, mmr: int, member: discord.Member):
 
 @setmmr.error
 async def set_mmr_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❗ Usage: `!setmmr <mmr> @user`")
+    elif isinstance(error, commands.CheckFailure):
         await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
 # Admin-only: mentions all 10 players in a full lobby to alert them.
@@ -493,7 +500,9 @@ async def set_password(ctx, *, new_password: str):
 
 @set_password.error
 async def set_password_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❗ Usage: `!setpassword <new_password>`")
+    elif isinstance(error, commands.CheckFailure):
         await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
 # Admin-only: changes the bot's command prefix for the server.
@@ -511,7 +520,9 @@ async def change_prefix(ctx, new_prefix: str):
 
 @change_prefix.error
 async def change_prefix_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❗ Usage: `!changeprefix <new_prefix>`")
+    elif isinstance(error, commands.CheckFailure):
         await ctx.send("❌ You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' role.")
 
 # Displays the most recent prefix and lobby password logs for the current server. By default, shows a clean summary with who set each value and when.
