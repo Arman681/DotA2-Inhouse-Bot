@@ -31,26 +31,49 @@ def place_bet(user_id, team, amount, match_key, nickname):
 
 def resolve_bets(match_key, winning_team):
     entries = list(db.collection("bets").document(match_key).collection("entries").stream())
+    print(f"[RESOLVE_BETS] Checking {len(entries)} bet entries for match_key: {match_key}")
     for doc in entries:
         data = doc.to_dict()
-        user_id = data.get("user_id")  # use user_id from the data, not doc.id
-        nickname = data.get("nickname", "Unknown")  # Fallback in case it's missing
-        if data["team"] == winning_team:
+        print(f"[DEBUG] Fetched data: {data}")
+        user_id = data.get("user_id")
+        nickname = data.get("nickname", "Unknown")
+        team = data.get("team")
+        if not user_id or not team:
+            print(f"[WARN] Missing data for doc {doc.id} -> user_id: {user_id}, team: {team}")
+            continue
+        if team == winning_team:
             update_balance(user_id, data["amount"] * 2)
             print(f"[RESOLVE_BETS] {nickname} ({user_id}) won {data['amount'] * 2} coins on {winning_team}")
         else:
-            print(f"[RESOLVE_BETS] ❌ {nickname} ({user_id}) lost {data['amount']} coins on {data['team']}")
-    # Delete all bets after resolution
-    bet_ref = db.collection("bets").document(match_key)
-    for doc in entries:
-        bet_ref.collection("entries").document(doc.id).delete()
+            print(f"[RESOLVE_BETS] ❌ {nickname} ({user_id}) lost {data['amount']} coins on {team}")
+
+def clear_guild_bets(ctx):
+    def sanitize_name(name):
+        return re.sub(r'\W+', '_', name.lower())
+    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
+    # Delete all entries
+    entries_ref = db.collection("bets").document(match_key).collection("entries").stream()
+    for entry in entries_ref:
+        db.collection("bets").document(match_key).collection("entries").document(entry.id).delete()
+    # Delete match document if empty
+    remaining = list(db.collection("bets").document(match_key).collection("entries").stream())
+    if not remaining:
+        db.collection("bets").document(match_key).delete()
+        print(f"[CLEAR] ✅ Deleted match document for guild: {match_key}")
+    else:
+        print(f"[CLEAR] ❌ Some entries still exist in {match_key}")
 
 def clear_all_bets():
     bets_ref = db.collection("bets").stream()
-    for doc in bets_ref:
+    bets = list(bets_ref)
+    print(f"[DEBUG] 🔍 Found {len(bets)} match documents in Firestore.")
+    for doc in bets:
         match_key = doc.id
+        # Delete all entries under each match_key
         entries_ref = db.collection("bets").document(match_key).collection("entries").stream()
         for entry in entries_ref:
             db.collection("bets").document(match_key).collection("entries").document(entry.id).delete()
+        # Delete the match document itself
         db.collection("bets").document(match_key).delete()
-    print("[INIT] 🔄 Cleared all bets from Firestore on startup.")
+        print(f"[CLEAR] ✅ Deleted match document: {match_key}")
+    print("[INIT] 🧹 Cleared ALL bets from Firestore on startup.")
