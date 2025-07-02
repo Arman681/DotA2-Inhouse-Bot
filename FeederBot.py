@@ -324,7 +324,7 @@ async def mmr_lookup(ctx, member: discord.Member = None):
 @bot.command(name="inhouse_mmr")
 async def inhouse_mmr(ctx, member: discord.Member = None):
     member = member or ctx.author
-    mmr = get_inhouse_mmr(str(member.id))
+    mmr = get_inhouse_mmr(ctx.guild.id, str(member.id))
     await ctx.send(f"{member.display_name}'s inhouse MMR is **{mmr}**.")
 
 # Displays the top 10 inhouse MMR players in the server.
@@ -689,7 +689,7 @@ async def submitmatch(ctx, match_id: str):
     loser_ids = result["dire"] if result["radiant_win"] else result["radiant"]
     winning_team = "radiant" if result["radiant_win"] else "dire"
     match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
-    adjust_mmr(winner_ids, loser_ids, guild_id=ctx.guild.id)
+    adjust_mmr(winner_ids, loser_ids, ctx.guild.id, ctx.guild)
     resolve_bets(match_key, winning_team)
     clear_guild_bets(ctx)
     await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.")
