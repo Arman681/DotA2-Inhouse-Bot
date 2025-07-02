@@ -126,22 +126,22 @@ def save_lobby_password_for_guild(match_key, password, server_name=None, set_by=
     doc_ref.set(data, merge=True)
 
 # Loads the saved inhouse lobby password for a guild from Firestore; returns "penguin" if not set.
-def load_lobby_password_for_guild(guild_id):
-    doc = db.collection("lobbies").document(str(guild_id)).get()
+def load_lobby_password_for_guild(match_key):
+    doc = db.collection("lobbies").document(str(match_key)).get()
     if doc.exists:
         return doc.to_dict().get("password", "penguin")  # Default if not set
     return "penguin"
 
-def save_inhouse_mode_for_guild(guild_id, mode, server_name=None, set_by=None):
-    db.collection("inhouse_modes").document(str(guild_id)).set({
+def save_inhouse_mode_for_guild(match_key, mode, server_name=None, set_by=None):
+    db.collection("inhouse_modes").document(str(match_key)).set({
         "mode": mode,
         "server_name": server_name,
         "set_by": str(set_by),
         "timestamp": firestore.SERVER_TIMESTAMP
     })
 
-def load_inhouse_mode_for_guild(guild_id):
-    doc = db.collection("inhouse_modes").document(str(guild_id)).get()
+def load_inhouse_mode_for_guild(match_key):
+    doc = db.collection("inhouse_modes").document(str(match_key)).get()
     if doc.exists:
         return doc.to_dict().get("mode", "regular")
     return "regular"
@@ -481,6 +481,7 @@ async def remove_from_lobby(ctx, *members: discord.Member):
 @bot.command(name="lobby")
 async def lobby_cmd(ctx, mode: str = None):
     guild_id = ctx.guild.id
+    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
     # Preserve current players if they exist
     existing_players = lobby_players.get(guild_id, [])
     if mode:
@@ -490,10 +491,10 @@ async def lobby_cmd(ctx, mode: str = None):
             return
         # Save and use the provided mode (if valid)
         selected_mode = mode.lower() if mode.lower() in ["regular", "immortal"] else "regular"
-        save_inhouse_mode_for_guild(guild_id, selected_mode, server_name=ctx.guild.name, set_by=str(ctx.author))
+        save_inhouse_mode_for_guild(match_key, selected_mode, server_name=ctx.guild.name, set_by=str(ctx.author))
     else:
         # Load last used mode from Firestore
-        selected_mode = load_inhouse_mode_for_guild(guild_id)
+        selected_mode = load_inhouse_mode_for_guild(match_key)
     # Store mode in memory for reaction handling
     inhouse_mode[guild_id] = selected_mode
     # Initialize structures if not already present
@@ -918,8 +919,9 @@ async def on_guild_join(guild):
 # Builds and returns a lobby embed showing current players and the server's password.
 def build_lobby_embed(guild, mode="regular"):
     guild_id = guild.id
+    match_key = f"{sanitize_name(guild.name)}_{guild.id}"
     if guild_id not in inhouse_mode:
-        inhouse_mode[guild_id] = load_inhouse_mode_for_guild(guild_id)
+        inhouse_mode[guild_id] = load_inhouse_mode_for_guild(match_key)
     mode = inhouse_mode[guild_id]
     embed = discord.Embed(
         title="DotA2 Inhouse",
@@ -928,7 +930,7 @@ def build_lobby_embed(guild, mode="regular"):
     )
     for _, name, mmr in lobby_players.get(guild_id, []):
         embed.add_field(name=name, value=str(mmr), inline=True)
-    password = load_lobby_password_for_guild(guild_id)
+    password = load_lobby_password_for_guild(match_key)
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
@@ -951,6 +953,7 @@ async def update_all_lobbies():
 # ============================== ⚔️ Team Embed Function ==============================
 # Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
 def build_team_embed(team1, team2, guild):
+    match_key = f"{sanitize_name(guild.name)}_{guild.id}"
     global roll_count
     avg1 = sum(p[2] for p in team1) / 5
     avg2 = sum(p[2] for p in team2) / 5
@@ -961,13 +964,14 @@ def build_team_embed(team1, team2, guild):
     )
     team1_sorted = sorted(team1, key=lambda x: x[2], reverse=True)
     team2_sorted = sorted(team2, key=lambda x: x[2], reverse=True)
-    password = load_lobby_password_for_guild(guild.id)
+    password = load_lobby_password_for_guild(match_key)
     embed.add_field(name="Team One", value=", ".join(f"{p[1]} ({p[2]})" for p in team1_sorted), inline=False)
     embed.add_field(name="Team Two", value=", ".join(f"{p[1]} ({p[2]})" for p in team2_sorted), inline=False)
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
 def build_immortal_embed(captains, pool, guild, reroll_count):
+    match_key = f"{sanitize_name(guild.name)}_{guild.id}"
     c1, c2 = captains
     embed = discord.Embed(
         title="🛡️ Immortal Draft Inhouse",
@@ -981,7 +985,7 @@ def build_immortal_embed(captains, pool, guild, reroll_count):
         value=", ".join(f"{p[1]} ({p[2]})" for p in sorted(pool, key=lambda x: x[2], reverse=True)),
         inline=False
     )
-    password = load_lobby_password_for_guild(guild.id)
+    password = load_lobby_password_for_guild(match_key)
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
