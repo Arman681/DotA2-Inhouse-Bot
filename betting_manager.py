@@ -14,11 +14,22 @@ def update_balance(user_id, amount):
     db.collection("wallets").document(str(user_id)).set({"balance": current + amount}, merge=True)
 
 def place_bet(user_id, team, amount, match_key, nickname):
-    if get_balance(user_id) < amount:
-        return False
     # Sanitize nickname to be Firestore-safe
     sanitized_nick = re.sub(r'[^\w\-]', '_', nickname.lower())
     entry_ref = db.collection("bets").document(match_key).collection("entries").document(sanitized_nick)
+    # Check if this user already has a bet placed
+    existing_bet_doc = entry_ref.get()
+    previous_amount = 0
+    if existing_bet_doc.exists:
+        existing_bet = existing_bet_doc.to_dict()
+        previous_amount = existing_bet.get("amount", 0)
+        update_balance(user_id, previous_amount)  # Refund the previous bet
+    # Now check if user has enough balance for the new amount
+    if get_balance(user_id) < amount:
+        return False
+    # Deduct the new amount
+    update_balance(user_id, -amount)
+    # Save or update the bet
     entry_ref.set({
         "nickname": nickname,
         "user_id": user_id,
@@ -26,7 +37,6 @@ def place_bet(user_id, team, amount, match_key, nickname):
         "amount": amount,
         "timestamp": firestore.SERVER_TIMESTAMP
     })
-    update_balance(user_id, -amount)
     return True
 
 def resolve_bets(match_key, winning_team):
