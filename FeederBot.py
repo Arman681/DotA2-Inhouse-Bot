@@ -352,15 +352,30 @@ async def bet(ctx, team: str, amount: int):
     def sanitize_name(name):
         return re.sub(r'\W+', '_', name.lower())
     match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
-    user_display_name = ctx.author.display_name
-    old_balance = get_balance(user_id)
     nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
+    sanitized_nick = sanitize_name(nickname)
+    # Check for existing bet
+    entry_ref = db.collection("bets").document(match_key).collection("entries").document(sanitized_nick)
+    existing_bet_doc = entry_ref.get()
+    previous_amount = 0
+    if existing_bet_doc.exists:
+        existing_bet = existing_bet_doc.to_dict()
+        previous_amount = existing_bet.get("amount", 0)
+        if amount <= previous_amount:
+            await ctx.send(
+                f"❌ You already bet `{previous_amount}`. You can only **increase** your bet amount."
+            )
+            return
+    old_balance = get_balance(user_id)
     success = place_bet(user_id, team, amount, match_key, nickname)
     new_balance = get_balance(user_id)
     if not success:
         await ctx.send("❌ You don’t have enough balance.")
     else:
-        await ctx.send(f"✅ You bet `{amount}` on **{team.capitalize()}** for this match. Your balance went from {old_balance} to {new_balance}.")
+        await ctx.send(
+            f"✅ You bet `{amount}` on **{team.capitalize()}** for this match. "
+            f"Your balance went from {old_balance} to {new_balance}."
+        )
 
 # Displays the user's current coin balance.
 @bot.command(name="balance")
