@@ -23,13 +23,16 @@ from match_tracker import fetch_match_result
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 STRATZ_TOKEN = os.getenv("STRATZ_TOKEN")
-cred_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-if not cred_json:
-    raise ValueError("Missing Firebase credentials!")
+# Initialize Firebase only once (required for Heroku + multi-import setups)
+if not firebase_admin._apps:
+    cred_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if not cred_json:
+        raise ValueError("Missing Firebase credentials!")
 
-cred_dict = json.loads(cred_json)
-cred = credentials.Certificate(cred_dict)
-firebase_admin.initialize_app(cred)
+    cred_dict = json.loads(cred_json)
+    cred = credentials.Certificate(cred_dict)
+    firebase_admin.initialize_app(cred)
+
 db = firestore.client()
 
 intents = discord.Intents.default()
