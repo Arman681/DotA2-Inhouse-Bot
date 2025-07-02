@@ -18,7 +18,7 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from firebase_admin import firestore
 from mmr_manager import adjust_mmr, get_inhouse_mmr, get_top_players
-from betting_manager import get_balance, place_bet, resolve_bets
+from betting_manager import get_balance, place_bet, resolve_bets, clear_all_bets
 from match_tracker import fetch_match_result
 
 load_dotenv()
@@ -710,6 +710,7 @@ async def on_ready():
     player_data = {}  # still fine to cache this in memory
     print(f"{bot.user} is online!")
     refresh_all_mmrs.start()
+    clear_all_bets()  # 🔥 Clear bets on startup
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
