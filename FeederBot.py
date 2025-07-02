@@ -45,6 +45,9 @@ captain_draft_state = {}   # {guild_id: {"pairs": [...], "index": 0}}
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
 
+def sanitize_name(name):
+        return re.sub(r'\W+', '_', name.lower())
+
 # ========================================================================================================================
 # ============================================ ⚙️ Core Functions & Utilities ============================================
 # ========================================================================================================================
@@ -52,11 +55,11 @@ IMMORTAL_MAX_ROLLS = 3  # for immortal
 # ============================== 🛠️ Bot Configuration ==============================
 # Resolves the correct command prefix for the bot, based on the message's guild.
 async def resolve_command_prefix(bot, message):
-    guild_id = message.guild.id if message.guild else None
-    if guild_id:
-        prefix = fetch_guild_prefix(guild_id)
+    if message.guild:
+        match_key = f"{sanitize_name(message.guild.name)}_{message.guild.id}"
+        prefix = fetch_guild_prefix(match_key)
         return prefix
-    return "!"  # fallback default
+    return "!"  # fallback default for DMs
 bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_command=None)
 
 # =============================== 🔐 Permission Checks ===============================
@@ -94,32 +97,32 @@ def get_player_config(user_id):
     return doc.to_dict() if doc.exists else None
 
 # Stores a custom command prefix for a specific Discord server (guild) to Firestore.
-def store_guild_prefix(guild_id, prefix, server_name=None, set_by=None):
+def store_guild_prefix(match_key, prefix, server_name=None, set_by=None):
     data = {
         "prefix": prefix,
         "server_name": server_name,
         "set_by": set_by,
         "timestamp": firestore.SERVER_TIMESTAMP
     }
-    doc_ref = db.collection("prefixes").document(str(guild_id))
+    doc_ref = db.collection("prefixes").document(match_key)
     doc_ref.set(data, merge=True)
 
 # Retrieves the stored command prefix for a Discord server from Firestore, or "!" if none is set.
-def fetch_guild_prefix(guild_id):
-    doc = db.collection("prefixes").document(str(guild_id)).get()
+def fetch_guild_prefix(match_key):
+    doc = db.collection("prefixes").document(match_key).get()
     if doc.exists:
         return doc.to_dict().get("prefix", "!")
     return "!"
 
 # Saves the inhouse lobby password for a Discord server (guild) to Firestore.
-def save_lobby_password_for_guild(guild_id, password, server_name=None, set_by=None):
+def save_lobby_password_for_guild(match_key, password, server_name=None, set_by=None):
     data = {
         "password": password,
         "server_name": server_name,
         "set_by": set_by,
         "timestamp": firestore.SERVER_TIMESTAMP
     }
-    doc_ref = db.collection("lobbies").document(str(guild_id))
+    doc_ref = db.collection("lobbies").document(str(match_key))
     doc_ref.set(data, merge=True)
 
 # Loads the saved inhouse lobby password for a guild from Firestore; returns "penguin" if not set.
@@ -349,8 +352,6 @@ async def bet(ctx, amount: int, team: str):
         await ctx.send("❌ Bet amount must be greater than 0.")
         return
     user_id = str(ctx.author.id)
-    def sanitize_name(name):
-        return re.sub(r'\W+', '_', name.lower())
     match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
     nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
     sanitized_nick = sanitize_name(nickname)
@@ -375,9 +376,9 @@ async def bet(ctx, amount: int, team: str):
             )
             return
         is_update = True
-    old_balance = get_balance(user_id)
+    old_balance = get_balance(match_key, nickname)
     success = place_bet(user_id, team, amount, match_key, nickname)
-    new_balance = get_balance(user_id)
+    new_balance = get_balance(match_key, nickname)
     if not success:
         await ctx.send("❌ You don’t have enough balance.")
     else:
@@ -405,8 +406,9 @@ async def bet_error(ctx, error):
 @bot.command(name="balance")
 async def balance(ctx, member: discord.Member = None):
     member = member or ctx.author
-    user_id = str(member.id)
-    coins = get_balance(user_id)
+    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
+    nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
+    coins = get_balance(match_key, nickname)
     await ctx.send(f"💰 {member.display_name}'s balance: `{coins}` coins.")
 
 # ========================== 🏠 Lobby Management Commands =========================
@@ -587,13 +589,8 @@ async def alert_error(ctx, error):
 @bot.command(name="setpassword")
 @is_admin_or_has_role()
 async def set_password(ctx, *, new_password: str):
-    guild_id = ctx.guild.id
-    save_lobby_password_for_guild(
-    guild_id,
-    new_password,
-    server_name=ctx.guild.name,
-    set_by=str(ctx.author)
-)
+    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
+    save_lobby_password_for_guild(match_key, new_password, server_name=ctx.guild.name, set_by=str(ctx.author))
     await update_lobby_embed(ctx.guild)
     await ctx.send(f"Password updated to: `{new_password}`")
 
@@ -608,12 +605,8 @@ async def set_password_error(ctx, error):
 @bot.command(name="changeprefix")
 @is_admin_or_has_role()
 async def change_prefix(ctx, new_prefix: str):
-    guild_id = ctx.guild.id
-    store_guild_prefix(
-    guild_id,
-    new_prefix,
-    server_name=ctx.guild.name,
-    set_by=str(ctx.author)
+    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
+    store_guild_prefix(match_key, new_prefix, server_name=ctx.guild.name, set_by=str(ctx.author)
 )
     await ctx.send(f"✅ Command prefix changed to `{new_prefix}` for this server.")
 
@@ -632,7 +625,8 @@ async def viewlogs(ctx, *, flags: str = ""):
     guild_id = ctx.guild.id
     guild_name = ctx.guild.name
     verbose = '--verbose' in (flags or "").lower()
-    prefix_doc = db.collection("prefixes").document(str(guild_id)).get()
+    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
+    prefix_doc = db.collection("prefixes").document(match_key).get()
     password_doc = db.collection("lobbies").document(str(guild_id)).get()
     mode_doc = db.collection("inhouse_modes").document(str(guild_id)).get()
     lines = []
@@ -693,8 +687,6 @@ async def submitmatch(ctx, match_id: str):
     winner_ids = result["radiant"] if result["radiant_win"] else result["dire"]
     loser_ids = result["dire"] if result["radiant_win"] else result["radiant"]
     winning_team = "radiant" if result["radiant_win"] else "dire"
-    def sanitize_name(name):
-        return re.sub(r'\W+', '_', name.lower())
     match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
     adjust_mmr(winner_ids, loser_ids, guild_id=ctx.guild.id)
     resolve_bets(match_key, winning_team)
