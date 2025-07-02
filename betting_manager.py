@@ -1,3 +1,4 @@
+import firebase_setup  # ensures Firebase is initialized before anything else
 from firebase_admin import firestore
 
 db = firestore.client()
