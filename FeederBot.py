@@ -699,7 +699,7 @@ async def on_ready():
     player_data = {}  # still fine to cache this in memory
     print(f"{bot.user} is online!")
     refresh_all_mmrs.start()
-    clear_all_bets()  # global clear
+    clear_all_bets(bot)
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
