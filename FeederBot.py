@@ -352,11 +352,13 @@ async def bet(ctx, team: str, amount: int):
         return re.sub(r'\W+', '_', name.lower())
     match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
     user_display_name = ctx.author.display_name
+    old_balance = get_balance(user_id)
     success = place_bet(user_id, team, amount, match_key, user_display_name)
+    new_balance = get_balance(user_id)
     if not success:
         await ctx.send("❌ You don’t have enough balance.")
     else:
-        await ctx.send(f"✅ You bet `{amount}` on **{team.capitalize()}** for this match.")
+        await ctx.send(f"✅ You bet `{amount}` on **{team.capitalize()}** for this match. Your balance went from {old_balance} to {new_balance}.")
 
 # Displays the user's current coin balance.
 @bot.command(name="balance")
