@@ -63,17 +63,17 @@ def clear_guild_bets(ctx):
     else:
         print(f"[CLEAR] ❌ Some entries still exist in {match_key}")
 
-def clear_all_bets():
-    bets_ref = db.collection("bets").stream()
-    bets = list(bets_ref)
-    print(f"[DEBUG] 🔍 Found {len(bets)} match documents in Firestore.")
-    for doc in bets:
-        match_key = doc.id
-        # Delete all entries under each match_key
+def clear_all_bets(bot):
+    def sanitize_name(name):
+        return re.sub(r'\W+', '_', name.lower())
+    for guild in bot.guilds:
+        match_key = f"{sanitize_name(guild.name)}_{guild.id}"
+        print(f"[DEBUG] 🔍 Looking for bets under: {match_key}")
         entries_ref = db.collection("bets").document(match_key).collection("entries").stream()
-        for entry in entries_ref:
+        entries = list(entries_ref)
+        print(f"[DEBUG] 🧾 Found {len(entries)} entries in: {match_key}")
+        # Delete each entry
+        for entry in entries:
             db.collection("bets").document(match_key).collection("entries").document(entry.id).delete()
-        # Delete the match document itself
-        db.collection("bets").document(match_key).delete()
-        print(f"[CLEAR] ✅ Deleted match document: {match_key}")
+            print(f"[CLEAR] 🗑️ Deleted entry: {entry.id} from match: {match_key}")
     print("[INIT] 🧹 Cleared ALL bets from Firestore on startup.")
