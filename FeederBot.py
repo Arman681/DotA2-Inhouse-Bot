@@ -8,6 +8,7 @@
 # ------------------------------------------------------------
 import os
 import json
+import re
 import discord
 import requests
 import time
@@ -347,8 +348,11 @@ async def bet(ctx, team: str, amount: int):
         await ctx.send("❌ Bet amount must be greater than 0.")
         return
     user_id = str(ctx.author.id)
-    match_key = f"guild_{ctx.guild.id}"
-    success = place_bet(user_id, team, amount, match_key)
+    def sanitize_name(name):
+        return re.sub(r'\W+', '_', name.lower())
+    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
+    user_display_name = ctx.author.display_name
+    success = place_bet(user_id, team, amount, match_key, user_display_name)
     if not success:
         await ctx.send("❌ You don’t have enough balance.")
     else:
