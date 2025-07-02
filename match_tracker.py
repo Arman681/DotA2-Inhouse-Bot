@@ -10,15 +10,35 @@ def fetch_match_result(match_id):
         "Content-Type": "application/json",
         "User-Agent": "STRATZ_API"
     }
-    resp = requests.get(url, headers=headers)
+    query = {
+    "query": f"""
+    query {{
+      match(id: {match_id}) {{
+        id
+        didRadiantWin
+        players {{
+          steamAccountId
+          isRadiant
+        }}
+      }}
+    }}
+    """
+}
+    
+    response = requests.post(
+    "https://api.stratz.com/graphql",
+    json=query
+)
+    
      # 🔍 DEBUG: print status and response content
-    print("STRATZ response code:", resp.status_code)
-    print("STRATZ response body:", resp.text)
-    if resp.status_code == 200:
-        data = resp.json()
-        radiant_win = data["didRadiantWin"]
-        players = data["players"]
-        radiant = [str(p["steamAccountId"]) for p in players if p["isRadiant"]]
-        dire = [str(p["steamAccountId"]) for p in players if not p["isRadiant"]]
-        return {"radiant_win": radiant_win, "radiant": radiant, "dire": dire}
+    print("STRATZ response code:", response.status_code)
+    print("STRATZ response body:", response.text)
+
+    if response.status_code == 200:
+        data = response.json()
+        match_data = data['data']['match']
+        print(match_data)
+    else:
+        print("Failed to fetch data. Status:", response.status_code)
+
     return None
