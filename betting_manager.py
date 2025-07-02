@@ -1,6 +1,7 @@
 import firebase_setup  # ensures Firebase is initialized before anything else
 from firebase_admin import firestore
 from datetime import datetime
+import re
 
 db = firestore.client()
 
@@ -13,16 +14,18 @@ def update_balance(user_id, amount):
     db.collection("wallets").document(str(user_id)).set({"balance": current + amount}, merge=True)
 
 
-def place_bet(user_id, team, amount, match_key, user_display_name):
+def place_bet(user_id, team, amount, match_key, nickname):
     if get_balance(user_id) < amount:
         return False
-
-    entry_ref = db.collection("bets").document(match_key).collection("entries").document(str(user_id))
+    # Sanitize nickname to be Firestore-safe
+    sanitized_nick = re.sub(r'[^\w\-]', '_', nickname.lower())
+    entry_ref = db.collection("bets").document(match_key).collection("entries").document(sanitized_nick)
     entry_ref.set({
+        "nickname": nickname,
+        "user_id": user_id,
         "team": team,
         "amount": amount,
-        "user_name": user_display_name,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": firestore.SERVER_TIMESTAMP
     })
     update_balance(user_id, -amount)
     return True
