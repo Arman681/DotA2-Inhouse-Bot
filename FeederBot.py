@@ -362,6 +362,13 @@ async def bet(ctx, amount: int, team: str):
     if existing_bet_doc.exists:
         existing_bet = existing_bet_doc.to_dict()
         previous_amount = existing_bet.get("amount", 0)
+        previous_team = existing_bet.get("team", "")
+        if team != previous_team:
+            await ctx.send(
+                f"❌ You already bet on **{previous_team.capitalize()}**. "
+                f"You cannot change teams once your bet is placed."
+            )
+            return
         if amount <= previous_amount:
             await ctx.send(
                 f"❌ You already bet `{previous_amount}`. You can only **increase** your bet amount."
