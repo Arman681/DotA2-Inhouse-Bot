@@ -672,12 +672,18 @@ async def help_command(ctx):
         "\n**Available Commands:**\n\n"
         "__**👥 General Commands**__\n"
         "**!cfg `<steam_id>` `<@user>`** - 🔗 Link your Steam ID to fetch your MMR from STRATZ.\n"
-        "**!mmr `<@user>`** - 📈 Show your MMR or another user's MMR.\n\n"
+        "**!mmr `<@user>`** - 📈 Show your MMR or another user's MMR.\n"
+        "**!inhouse_mmr `[@user]`** - Show inhouse MMR for yourself or another user\n"
+        "**!leaderboard** - View top 10 inhouse MMR players in this server\n"
+        "**!balance `[@user]`** - Show your or another user's coin balance\n\n"
         "__**🏠 Lobby Management**__\n"
         "**!lobby** - Create or refresh the inhouse lobby.\n"
         "**!reset** - Clear the current lobby and start fresh.\n"
         "**!add `<@user1>` `<@user2>` ...** - Manually add one or more users to the lobby.\n"
         "**!remove `<@user1>` `<@user2>` ...** - Manually remove one or more users from the lobby.\n\n"
+        "__**🎲 Betting Commands**__\n"
+        "**!bet `<radiant|dire>` `<amt>`** - Bet coins on the current inhouse match\n"
+        "**!balance `[@user]`** - Show your or another user’s coin balance\n\n"
         "__**🔐 Admin Commands**__\n"
         "**!lobby `<mode>`** - (Admin only) Sets the lobby mode for the inhouse \n"
         "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
@@ -688,6 +694,7 @@ async def help_command(ctx):
         "**!alert** - (Admin only) Mention all 10 players when the lobby is full.\n"
         "**!viewlogs** - (Admin only) View recent lobby or user config logs.\n"
         "**!viewlogs --verbose** - (Admin only) View full detailed logs for this server.\n"
+        "**!submitmatch `<match_id>`** - Admin-only: Report match and resolve MMR + bets\n"
     )
     await ctx.send(f"```{help_text}```")
 
