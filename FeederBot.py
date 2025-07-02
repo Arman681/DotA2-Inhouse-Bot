@@ -13,12 +13,13 @@ import discord
 import requests
 import time
 import itertools
+import betting_manager
 import firebase_setup  # ensures Firebase is initialized before anything else
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from firebase_admin import firestore
 from mmr_manager import adjust_mmr, get_inhouse_mmr, get_top_players
-from betting_manager import get_balance, place_bet, resolve_bets, clear_all_bets
+from betting_manager import clear_guild_bets, get_balance, place_bet, resolve_bets, clear_all_bets
 from match_tracker import fetch_match_result
 
 load_dotenv()
@@ -630,25 +631,6 @@ async def viewlogs(ctx, *, flags: str = ""):
     else:
         lines.append("\n🛠️ **Inhouse Mode**: No record found.")
 
-# Admin-only: Reports a completed match by match ID, updates in-house MMR and resolves bets.
-@bot.command(name="report")
-@is_admin_or_has_role()
-async def report_match(ctx, match_id: str):
-    await ctx.send("🔍 Fetching match result...")
-    result = fetch_match_result(match_id)
-    if not result:
-        await ctx.send("❌ Could not fetch match result from STRATZ. Check the match ID.")
-        return
-    if not match_id.isdigit():
-        await ctx.send("❗ Match ID must be a number.")
-        return
-    winner_ids = result["radiant"] if result["radiant_win"] else result["dire"]
-    loser_ids = result["dire"] if result["radiant_win"] else result["radiant"]
-    winning_team = "radiant" if result["radiant_win"] else "dire"
-    adjust_mmr(winner_ids, loser_ids, guild_id=ctx.guild.id)
-    resolve_bets(match_id, winning_team)
-    await ctx.send(f"✅ Match reported. `{winning_team.capitalize()}` won. MMRs and bets have been updated.")
-
 # Admin-only: Submits and processes a match ID manually for MMR and bet resolution.
 @bot.command(name="submitmatch")
 @is_admin_or_has_role()
@@ -658,11 +640,18 @@ async def submitmatch(ctx, match_id: str):
     if not result:
         await ctx.send("❌ Could not fetch match result. Check the match ID.")
         return
+    if not match_id.isdigit():
+        await ctx.send("❗ Match ID must be a number.")
+        return
     winner_ids = result["radiant"] if result["radiant_win"] else result["dire"]
     loser_ids = result["dire"] if result["radiant_win"] else result["radiant"]
     winning_team = "radiant" if result["radiant_win"] else "dire"
+    def sanitize_name(name):
+        return re.sub(r'\W+', '_', name.lower())
+    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
     adjust_mmr(winner_ids, loser_ids, guild_id=ctx.guild.id)
-    resolve_bets(f"guild_{ctx.guild.id}", winning_team)
+    resolve_bets(match_key, winning_team)
+    clear_guild_bets(ctx)
     await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.")
 
 # ================================ ℹ️ Help Command ================================
@@ -710,7 +699,7 @@ async def on_ready():
     player_data = {}  # still fine to cache this in memory
     print(f"{bot.user} is online!")
     refresh_all_mmrs.start()
-    clear_all_bets()  # 🔥 Clear bets on startup
+    clear_all_bets()  # global clear
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
