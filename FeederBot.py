@@ -353,7 +353,8 @@ async def bet(ctx, team: str, amount: int):
     match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
     user_display_name = ctx.author.display_name
     old_balance = get_balance(user_id)
-    success = place_bet(user_id, team, amount, match_key, user_display_name)
+    nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
+    success = place_bet(user_id, team, amount, match_key, nickname)
     new_balance = get_balance(user_id)
     if not success:
         await ctx.send("❌ You don’t have enough balance.")
