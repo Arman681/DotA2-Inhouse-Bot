@@ -22,13 +22,14 @@ def place_bet(user_id, team, amount, match_key):
     return True
 
 def resolve_bets(match_key, winning_team):
-    entries_ref = db.collection("bets").document(match_key).collection("entries").stream()
-    for doc in entries_ref:
+    entries = list(db.collection("bets").document(match_key).collection("entries").stream())
+    for doc in entries:
         data = doc.to_dict()
         user_id = doc.id
         if data["team"] == winning_team:
             update_balance(user_id, data["amount"] * 2)
-    # Optionally delete all bets after resolution
+    # Delete all bets after resolution
     bet_ref = db.collection("bets").document(match_key)
-    for doc in entries_ref:
+    for doc in entries:
         bet_ref.collection("entries").document(doc.id).delete()
+    print(f"[RESOLVE_BETS] User {user_id} won {data['amount'] * 2} coins on {winning_team}")
