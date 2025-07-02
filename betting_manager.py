@@ -5,13 +5,18 @@ import re
 
 db = firestore.client()
 
-def get_balance(user_id):
-    doc = db.collection("wallets").document(str(user_id)).get()
+def sanitize_name(name):
+    return re.sub(r'\W+', '_', name.lower())
+
+def get_balance(match_key, nickname):
+    sanitized_nick = sanitize_name(nickname)
+    doc = db.collection("wallets").document(match_key).collection("users").document(sanitized_nick).get()
     return doc.to_dict().get("balance", 1000) if doc.exists else 1000
 
-def update_balance(user_id, amount):
-    current = get_balance(user_id)
-    db.collection("wallets").document(str(user_id)).set({"balance": current + amount}, merge=True)
+def update_balance(match_key, nickname, amount):
+    sanitized_nick = sanitize_name(nickname)
+    current = get_balance(match_key, nickname)
+    db.collection("wallets").document(match_key).collection("users").document(sanitized_nick).set({"balance": current + amount}, merge=True)
 
 def place_bet(user_id, team, amount, match_key, nickname):
     # Sanitize nickname to be Firestore-safe
@@ -23,12 +28,12 @@ def place_bet(user_id, team, amount, match_key, nickname):
     if existing_bet_doc.exists:
         existing_bet = existing_bet_doc.to_dict()
         previous_amount = existing_bet.get("amount", 0)
-        update_balance(user_id, previous_amount)  # Refund the previous bet
+        update_balance(match_key, nickname, previous_amount)  # Refund the previous bet
     # Now check if user has enough balance for the new amount
-    if get_balance(user_id) < amount:
+    if get_balance(match_key, nickname) < amount:
         return False
     # Deduct the new amount
-    update_balance(user_id, -amount)
+    update_balance(match_key, nickname, -amount)
     # Save or update the bet
     entry_ref.set({
         "nickname": nickname,
@@ -52,14 +57,12 @@ def resolve_bets(match_key, winning_team):
             print(f"[WARN] Missing data for doc {doc.id} -> user_id: {user_id}, team: {team}")
             continue
         if team == winning_team:
-            update_balance(user_id, data["amount"] * 2)
+            update_balance(match_key, nickname, data["amount"] * 2)
             print(f"[RESOLVE_BETS] {nickname} ({user_id}) won {data['amount'] * 2} coins on {winning_team}")
         else:
             print(f"[RESOLVE_BETS] ❌ {nickname} ({user_id}) lost {data['amount']} coins on {team}")
 
 def clear_guild_bets(ctx):
-    def sanitize_name(name):
-        return re.sub(r'\W+', '_', name.lower())
     match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
     # Delete all entries
     entries_ref = db.collection("bets").document(match_key).collection("entries").stream()
@@ -74,8 +77,6 @@ def clear_guild_bets(ctx):
         print(f"[CLEAR] ❌ Some entries still exist in {match_key}")
 
 def clear_all_bets(bot):
-    def sanitize_name(name):
-        return re.sub(r'\W+', '_', name.lower())
     for guild in bot.guilds:
         match_key = f"{sanitize_name(guild.name)}_{guild.id}"
         print(f"[DEBUG] 🔍 Looking for bets under: {match_key}")
