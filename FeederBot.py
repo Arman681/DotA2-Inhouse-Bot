@@ -352,11 +352,10 @@ async def bet(ctx, amount: int, team: str):
         await ctx.send("❌ Bet amount must be greater than 0.")
         return
     user_id = str(ctx.author.id)
-    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
+    guild_id = str(ctx.guild.id)
     nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
-    sanitized_nick = sanitize_name(nickname)
     # Check for existing bet
-    entry_ref = db.collection("bets").document(match_key).collection("entries").document(sanitized_nick)
+    entry_ref = db.collection("bets").document(guild_id).collection("entries").document(str(ctx.author.id))
     existing_bet_doc = entry_ref.get()
     previous_amount = 0
     is_update = False
@@ -376,9 +375,9 @@ async def bet(ctx, amount: int, team: str):
             )
             return
         is_update = True
-    old_balance = get_balance(match_key, nickname)
-    success = place_bet(user_id, team, amount, match_key, nickname)
-    new_balance = get_balance(match_key, nickname)
+    old_balance = get_balance(guild_id, ctx.author.id)
+    success = place_bet(user_id, team, amount, guild_id, nickname)
+    new_balance = get_balance(guild_id, ctx.author.id)
     if not success:
         await ctx.send("❌ You don’t have enough balance.")
     else:
@@ -406,9 +405,9 @@ async def bet_error(ctx, error):
 @bot.command(name="balance")
 async def balance(ctx, member: discord.Member = None):
     member = member or ctx.author
-    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
-    nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
-    coins = get_balance(match_key, nickname)
+    user_id = str(member.id)
+    guild_id = str(ctx.guild.id)
+    coins = get_balance(guild_id, user_id)
     await ctx.send(f"💰 {member.display_name}'s balance: `{coins}` coins.")
 
 # ========================== 🏠 Lobby Management Commands =========================
@@ -688,9 +687,8 @@ async def submitmatch(ctx, match_id: str):
     winner_ids = result["radiant"] if result["radiant_win"] else result["dire"]
     loser_ids = result["dire"] if result["radiant_win"] else result["radiant"]
     winning_team = "radiant" if result["radiant_win"] else "dire"
-    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
     adjust_mmr(winner_ids, loser_ids, ctx.guild.id, ctx.guild)
-    resolve_bets(match_key, winning_team)
+    resolve_bets(ctx.guild.id, winning_team)
     clear_guild_bets(ctx)
     await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.")
 
