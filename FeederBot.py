@@ -16,8 +16,8 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, firestore
-from mmr_manager import adjust_mmr
-from betting_manager import resolve_bets
+from mmr_manager import adjust_mmr, get_inhouse_mmr, get_top_players
+from betting_manager import get_balance, place_bet, resolve_bets
 from match_tracker import fetch_match_result
 
 load_dotenv()
@@ -321,6 +321,53 @@ async def mmr_lookup(ctx, member: discord.Member = None):
     mmr = get_mmr(user)
     await ctx.send(f"{user.display_name}'s MMR is **{mmr}**.")
 
+# Displays a user's current inhouse MMR.
+@bot.command(name="inhouse_mmr")
+async def inhouse_mmr(ctx, member: discord.Member = None):
+    member = member or ctx.author
+    mmr = get_inhouse_mmr(str(member.id))
+    await ctx.send(f"{member.display_name}'s inhouse MMR is **{mmr}**.")
+
+# Displays the top 10 inhouse MMR players in the server.
+@bot.command(name="leaderboard")
+async def leaderboard(ctx):
+    top_players = get_top_players(ctx.guild.id)
+    if not top_players:
+        await ctx.send("No leaderboard data found for this server.")
+        return
+    lines = []
+    for rank, (user_id, mmr) in enumerate(top_players, start=1):
+        member = ctx.guild.get_member(int(user_id))
+        name = member.display_name if member else f"User {user_id}"
+        lines.append(f"**#{rank}** - {name}: {mmr} MMR")
+    await ctx.send("🏆 **Top 10 Inhouse Players**\n" + "\n".join(lines))
+
+# Places a bet on Radiant or Dire for the current inhouse match in this server.
+@bot.command(name="bet")
+async def bet(ctx, team: str, amount: int):
+    team = team.lower()
+    if team not in ["radiant", "dire"]:
+        await ctx.send("❌ Invalid team. Choose `radiant` or `dire`.")
+        return
+    if amount <= 0:
+        await ctx.send("❌ Bet amount must be greater than 0.")
+        return
+    user_id = str(ctx.author.id)
+    match_key = f"guild_{ctx.guild.id}"
+    success = place_bet(user_id, team, amount, match_key)
+    if not success:
+        await ctx.send("❌ You don’t have enough balance.")
+    else:
+        await ctx.send(f"✅ You bet `{amount}` on **{team.capitalize()}** for this match.")
+
+# Displays the user's current coin balance.
+@bot.command(name="balance")
+async def balance(ctx, member: discord.Member = None):
+    member = member or ctx.author
+    user_id = str(member.id)
+    coins = get_balance(user_id)
+    await ctx.send(f"💰 {member.display_name}'s balance: `{coins}` coins.")
+
 # ========================== 🏠 Lobby Management Commands =========================
 # Adds one or more users to the current lobby for the server.
 @bot.command(name="add")
@@ -597,9 +644,25 @@ async def report_match(ctx, match_id: str):
     winner_ids = result["radiant"] if result["radiant_win"] else result["dire"]
     loser_ids = result["dire"] if result["radiant_win"] else result["radiant"]
     winning_team = "radiant" if result["radiant_win"] else "dire"
-    adjust_mmr(winner_ids, loser_ids)
+    adjust_mmr(winner_ids, loser_ids, guild_id=ctx.guild.id)
     resolve_bets(match_id, winning_team)
     await ctx.send(f"✅ Match reported. `{winning_team.capitalize()}` won. MMRs and bets have been updated.")
+
+# Admin-only: Submits and processes a match ID manually for MMR and bet resolution.
+@bot.command(name="submitmatch")
+@is_admin_or_has_role()
+async def submitmatch(ctx, match_id: str):
+    await ctx.send("📊 Processing submitted match...")
+    result = fetch_match_result(match_id)
+    if not result:
+        await ctx.send("❌ Could not fetch match result. Check the match ID.")
+        return
+    winner_ids = result["radiant"] if result["radiant_win"] else result["dire"]
+    loser_ids = result["dire"] if result["radiant_win"] else result["radiant"]
+    winning_team = "radiant" if result["radiant_win"] else "dire"
+    adjust_mmr(winner_ids, loser_ids, guild_id=ctx.guild.id)
+    resolve_bets(f"guild_{ctx.guild.id}", winning_team)
+    await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.")
 
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
