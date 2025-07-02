@@ -11,6 +11,9 @@ def fetch_match_result(match_id):
         "User-Agent": "STRATZ_API"
     }
     resp = requests.get(url, headers=headers)
+     # 🔍 DEBUG: print status and response content
+    print("STRATZ response code:", resp.status_code)
+    print("STRATZ response body:", resp.text)
     if resp.status_code == 200:
         data = resp.json()
         radiant_win = data["didRadiantWin"]
