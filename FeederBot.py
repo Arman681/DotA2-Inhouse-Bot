@@ -340,7 +340,7 @@ async def leaderboard(ctx):
 
 # Places a bet on Radiant or Dire for the current inhouse match in this server.
 @bot.command(name="bet")
-async def bet(ctx, team: str, amount: int):
+async def bet(ctx, amount: int, team: str):
     team = team.lower()
     if team not in ["radiant", "dire"]:
         await ctx.send("❌ Invalid team. Choose `radiant` or `dire`.")
@@ -358,6 +358,7 @@ async def bet(ctx, team: str, amount: int):
     entry_ref = db.collection("bets").document(match_key).collection("entries").document(sanitized_nick)
     existing_bet_doc = entry_ref.get()
     previous_amount = 0
+    is_update = False
     if existing_bet_doc.exists:
         existing_bet = existing_bet_doc.to_dict()
         previous_amount = existing_bet.get("amount", 0)
@@ -366,16 +367,32 @@ async def bet(ctx, team: str, amount: int):
                 f"❌ You already bet `{previous_amount}`. You can only **increase** your bet amount."
             )
             return
+        is_update = True
     old_balance = get_balance(user_id)
     success = place_bet(user_id, team, amount, match_key, nickname)
     new_balance = get_balance(user_id)
     if not success:
         await ctx.send("❌ You don’t have enough balance.")
     else:
-        await ctx.send(
-            f"✅ You bet `{amount}` on **{team.capitalize()}** for this match. "
-            f"Your balance went from {old_balance} to {new_balance}."
-        )
+        if is_update:
+            await ctx.send(
+                f"🔁 You updated your bet from `{previous_amount}` to `{amount}` on **{team.capitalize()}**. "
+                f"Your balance went from {old_balance} to {new_balance}."
+            )
+        else:
+            await ctx.send(
+                f"✅ You bet `{amount}` on **{team.capitalize()}** for this match. "
+                f"Your balance went from {old_balance} to {new_balance}."
+            )
+
+@bet.error
+async def bet_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❗ Usage: `!bet <amount> <radiant|dire>`")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send("❗ Invalid argument. Usage: `!bet <amount> <radiant|dire>` — make sure `<amount>` is a number.")
+    else:
+        await ctx.send("⚠️ An unexpected error occurred while placing your bet.")
 
 # Displays the user's current coin balance.
 @bot.command(name="balance")
@@ -389,6 +406,11 @@ async def balance(ctx, member: discord.Member = None):
 # Adds one or more users to the current lobby for the server.
 @bot.command(name="add")
 async def add_to_lobby(ctx, *members: discord.Member):
+    # Since *members: discord.Member is being used, the command technically accepts zero or more members, 
+    # which means a missing argument won't raise a MissingRequiredArgument error
+    if not members:
+        await ctx.send("❗ Usage: `!add @player1 [@player2 ...]`")
+        return
     guild_id = ctx.guild.id
     # Initialize lobby for this guild if not already present
     if guild_id not in lobby_players:
@@ -414,6 +436,9 @@ async def add_to_lobby(ctx, *members: discord.Member):
 # Removes one or more users from the current lobby for the server.
 @bot.command(name="remove")
 async def remove_from_lobby(ctx, *members: discord.Member):
+    if not members:
+        await ctx.send("❗ Usage: `!remove @player1 [@player2 ...]`")
+        return
     guild_id = ctx.guild.id
     removed = []
     if guild_id not in lobby_players:
@@ -669,6 +694,15 @@ async def submitmatch(ctx, match_id: str):
     clear_guild_bets(ctx)
     await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.")
 
+@submitmatch.error
+async def submitmatch_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❗ Usage: `!submitmatch <match_id>`")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send("❗ Invalid match ID. It should be a numeric string like `8351234567`.")
+    else:
+        await ctx.send("⚠️ An unexpected error occurred while submitting the match.")
+
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
 @bot.command(name="help")
@@ -676,32 +710,32 @@ async def help_command(ctx):
     help_text = (
         "\n**Available Commands:**\n\n"
         "__**👥 General Commands**__\n"
-        "**!cfg `<steam_id>` `<@user>`** - 🔗 Link your Steam ID to fetch your MMR from STRATZ.\n"
-        "**!mmr `<@user>`** - 📈 Show your MMR or another user's MMR.\n"
-        "**!inhouse_mmr `[@user]`** - Show inhouse MMR for yourself or another user\n"
-        "**!leaderboard** - View top 10 inhouse MMR players in this server\n"
-        "**!balance `[@user]`** - Show your or another user's coin balance\n\n"
+        "**!cfg `steam_id` `@user`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
+        "**!mmr `@user`** - Show your MMR or another user's MMR.\n"
+        "**!inhouse_mmr `@user`** - Show inhouse MMR for yourself or another user\n"
+        "**!balance `@user`** - Show your or another user's coin balance\n"
+        "**!leaderboard** - View top 10 inhouse MMR players in this server\n\n"
         "__**🏠 Lobby Management**__\n"
+        "**!add `@user1` `@user2` ...** - Manually add one or more users to the lobby.\n"
+        "**!remove `@user1` `@user2` ...** - Manually remove one or more users from the lobby.\n"
         "**!lobby** - Create or refresh the inhouse lobby.\n"
-        "**!reset** - Clear the current lobby and start fresh.\n"
-        "**!add `<@user1>` `<@user2>` ...** - Manually add one or more users to the lobby.\n"
-        "**!remove `<@user1>` `<@user2>` ...** - Manually remove one or more users from the lobby.\n\n"
+        "**!reset** - Clear the current lobby and start fresh.\n\n"
         "__**🎲 Betting Commands**__\n"
-        "**!bet `<radiant|dire>` `<amt>`** - Bet coins on the current inhouse match\n"
-        "**!balance `[@user]`** - Show your or another user’s coin balance\n\n"
+        "**!bet `amt` `radiant|dire`** - Bet coins on the current inhouse match\n"
+        "**!balance `@user`** - Show your or another user’s coin balance\n\n"
         "__**🔐 Admin Commands**__\n"
-        "**!lobby `<mode>`** - (Admin only) Sets the lobby mode for the inhouse \n"
+        "**!lobby `mode`** - (Admin only) Sets the lobby mode for the inhouse \n"
         "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
-        "       • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
-        "**!setmmr `<mmr>` `<@user>`** - (Admin only) Manually set a user's MMR.\n"
-        "**!setpassword `<new_password>`** - (Admin only) Change the inhouse lobby password.\n"
-        "**!changeprefix `<new_prefix>`** - (Admin only) Changes the prefix of the bot commands.\n"
+        "           • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
+        "**!setmmr `mmr` `@user`** - (Admin only) Manually set a user's MMR.\n"
+        "**!setpassword `new_password`** - (Admin only) Change the inhouse lobby password.\n"
+        "**!changeprefix `new_prefix`** - (Admin only) Changes the prefix of the bot commands.\n"
+        "**!submitmatch `match_id`** - Admin-only: Report match and resolve MMR + bets\n"
         "**!alert** - (Admin only) Mention all 10 players when the lobby is full.\n"
         "**!viewlogs** - (Admin only) View recent lobby or user config logs.\n"
         "**!viewlogs --verbose** - (Admin only) View full detailed logs for this server.\n"
-        "**!submitmatch `<match_id>`** - Admin-only: Report match and resolve MMR + bets\n"
     )
-    await ctx.send(f"```{help_text}```")
+    await ctx.send(f"{help_text}")
 
 # ========================================================================================================================
 # ================================================ 🎯 Bot Event Handlers ================================================
