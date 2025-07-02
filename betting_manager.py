@@ -5,86 +5,91 @@ import re
 
 db = firestore.client()
 
-def sanitize_name(name):
-    return re.sub(r'\W+', '_', name.lower())
+# ====================================
+# 🔹 WALLET FUNCTIONS
+# ====================================
 
-def get_balance(match_key, nickname):
-    sanitized_nick = sanitize_name(nickname)
-    doc = db.collection("wallets").document(match_key).collection("users").document(sanitized_nick).get()
+def get_balance(guild_id, user_id):
+    doc = db.collection("wallets").document(str(guild_id)) \
+            .collection("users").document(str(user_id)).get()
     return doc.to_dict().get("balance", 1000) if doc.exists else 1000
 
-def update_balance(match_key, nickname, amount):
-    sanitized_nick = sanitize_name(nickname)
-    current = get_balance(match_key, nickname)
-    db.collection("wallets").document(match_key).collection("users").document(sanitized_nick).set({"balance": current + amount}, merge=True)
+def update_balance(guild_id, user_id, amount, nickname=None):
+    current = get_balance(guild_id, user_id)
+    data = {
+        "balance": current + amount
+    }
+    if nickname:
+        data["nickname"] = nickname
+    db.collection("wallets").document(str(guild_id)) \
+      .collection("users").document(str(user_id)).set(data, merge=True)
 
-def place_bet(user_id, team, amount, match_key, nickname):
-    # Sanitize nickname to be Firestore-safe
-    sanitized_nick = re.sub(r'[^\w\-]', '_', nickname.lower())
-    entry_ref = db.collection("bets").document(match_key).collection("entries").document(sanitized_nick)
-    # Check if this user already has a bet placed
+# ====================================
+# 🔹 BETTING FUNCTIONS
+# ====================================
+
+def place_bet(user_id, team, amount, guild_id, nickname):
+    entry_ref = db.collection("bets").document(str(guild_id)).collection("entries").document(str(user_id))
+    # Check existing bet and refund if necessary
     existing_bet_doc = entry_ref.get()
     previous_amount = 0
     if existing_bet_doc.exists:
         existing_bet = existing_bet_doc.to_dict()
         previous_amount = existing_bet.get("amount", 0)
-        update_balance(match_key, nickname, previous_amount)  # Refund the previous bet
-    # Now check if user has enough balance for the new amount
-    if get_balance(match_key, nickname) < amount:
+        update_balance(guild_id, user_id, previous_amount, nickname)
+    if get_balance(guild_id, user_id) < amount:
         return False
-    # Deduct the new amount
-    update_balance(match_key, nickname, -amount)
-    # Save or update the bet
+    update_balance(guild_id, user_id, -amount, nickname)
     entry_ref.set({
         "nickname": nickname,
-        "user_id": user_id,
+        "user_id": str(user_id),
         "team": team,
         "amount": amount,
         "timestamp": firestore.SERVER_TIMESTAMP
     })
     return True
 
-def resolve_bets(match_key, winning_team):
-    entries = list(db.collection("bets").document(match_key).collection("entries").stream())
-    print(f"[RESOLVE_BETS] Checking {len(entries)} bet entries for match_key: {match_key}")
+def resolve_bets(guild_id, winning_team):
+    entries = db.collection("bets").document(str(guild_id)).collection("entries").stream()
+    print(f"[RESOLVE_BETS] Resolving {sum(1 for _ in entries)} bets for guild: {guild_id}")
+    entries = db.collection("bets").document(str(guild_id)).collection("entries").stream()
     for doc in entries:
         data = doc.to_dict()
-        print(f"[DEBUG] Fetched data: {data}")
         user_id = data.get("user_id")
         nickname = data.get("nickname", "Unknown")
         team = data.get("team")
+        amount = data.get("amount", 0)
         if not user_id or not team:
-            print(f"[WARN] Missing data for doc {doc.id} -> user_id: {user_id}, team: {team}")
+            print(f"[WARN] Missing data in doc {doc.id}")
             continue
         if team == winning_team:
-            update_balance(match_key, nickname, data["amount"] * 2)
-            print(f"[RESOLVE_BETS] {nickname} ({user_id}) won {data['amount'] * 2} coins on {winning_team}")
+            update_balance(guild_id, user_id, amount * 2, nickname)
+            print(f"[RESOLVE_BETS] ✅ {nickname} ({user_id}) won {amount * 2} on {winning_team}")
         else:
-            print(f"[RESOLVE_BETS] ❌ {nickname} ({user_id}) lost {data['amount']} coins on {team}")
+            print(f"[RESOLVE_BETS] ❌ {nickname} ({user_id}) lost {amount} on {team}")
+
+# ====================================
+# 🔹 CLEANUP FUNCTIONS
+# ====================================
 
 def clear_guild_bets(ctx):
-    match_key = f"{sanitize_name(ctx.guild.name)}_{ctx.guild.id}"
-    # Delete all entries
-    entries_ref = db.collection("bets").document(match_key).collection("entries").stream()
+    guild_id = ctx.guild.id
+    entries_ref = db.collection("bets").document(str(guild_id)).collection("entries").stream()
     for entry in entries_ref:
-        db.collection("bets").document(match_key).collection("entries").document(entry.id).delete()
-    # Delete match document if empty
-    remaining = list(db.collection("bets").document(match_key).collection("entries").stream())
+        db.collection("bets").document(str(guild_id)).collection("entries").document(entry.id).delete()
+    # Clean up document if empty
+    remaining = list(db.collection("bets").document(str(guild_id)).collection("entries").stream())
     if not remaining:
-        db.collection("bets").document(match_key).delete()
-        print(f"[CLEAR] ✅ Deleted match document for guild: {match_key}")
+        db.collection("bets").document(str(guild_id)).delete()
+        print(f"[CLEAR] ✅ Deleted all bets for guild {guild_id}")
     else:
-        print(f"[CLEAR] ❌ Some entries still exist in {match_key}")
+        print(f"[CLEAR] ❌ Some entries remain in guild {guild_id}")
 
 def clear_all_bets(bot):
     for guild in bot.guilds:
-        match_key = f"{sanitize_name(guild.name)}_{guild.id}"
-        print(f"[DEBUG] 🔍 Looking for bets under: {match_key}")
-        entries_ref = db.collection("bets").document(match_key).collection("entries").stream()
-        entries = list(entries_ref)
-        print(f"[DEBUG] 🧾 Found {len(entries)} entries in: {match_key}")
-        # Delete each entry
+        guild_id = str(guild.id)
+        entries = db.collection("bets").document(guild_id).collection("entries").stream()
         for entry in entries:
-            db.collection("bets").document(match_key).collection("entries").document(entry.id).delete()
-            print(f"[CLEAR] 🗑️ Deleted entry: {entry.id} from match: {match_key}")
+            db.collection("bets").document(guild_id).collection("entries").document(entry.id).delete()
+            print(f"[CLEAR] Deleted entry {entry.id} from guild {guild_id}")
     print("[INIT] 🧹 Cleared ALL bets from Firestore on startup.")
