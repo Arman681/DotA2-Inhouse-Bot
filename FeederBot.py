@@ -6,9 +6,9 @@
 # Description: A Discord bot for managing DotA2 inhouse lobbies,
 #              including MMR tracking, team balancing, and lobby alerts.
 # ------------------------------------------------------------
+import asyncio
 import os
 import json
-import re
 import discord
 import requests
 import time
@@ -25,6 +25,7 @@ from match_tracker import fetch_match_result
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 STRATZ_TOKEN = os.getenv("STRATZ_TOKEN")
+STEAM_API_KEY = os.getenv("STEAM_API_KEY")
 
 db = firestore.client()
 
@@ -42,18 +43,71 @@ roll_count = {}            # {guild_id: int}
 team_rolls = {}            # {guild_id: list of team tuples}
 original_teams = {}        # {guild_id: team tuple}
 captain_draft_state = {}   # {guild_id: {"pairs": [...], "index": 0}}
+LIVE_CHANNEL_IDS = {}      # {guild_id: channel_id}
+previous_match_ids = {}    # Keeps track of last match ID per guild to avoid duplicates
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
+LIVE_LEAGUE_ID = None  # Replace with your actual league ID
+HERO_CACHE_FILE = "hero_id_map.json"
 
 # ========================================================================================================================
 # ============================================ ⚙️ Core Functions & Utilities ============================================
 # ========================================================================================================================
 
+previous_match_ids = {}  # Keeps track of last match ID per guild to avoid duplicates
+
+@tasks.loop(seconds=30)
+async def poll_live_match():
+    # Stream all league-guild bindings from consolidated Firestore collection
+    docs = db.collection("guild_specific_info").stream()
+    
+    for doc in docs:
+        guild_id = str(doc.id)
+        data = doc.to_dict()
+        league_id = data.get("bound_league_id")
+        
+        if not league_id:
+            continue  # Skip if no league bound
+
+        # Try to fetch the live match for this league
+        try:
+            match = fetch_live_match_from_steam(league_id)
+        except Exception as e:
+            print(f"❌ Error fetching match for league {league_id}: {e}")
+            continue
+        if not match:
+            continue
+        # Avoid reposting the same match
+        match_id = match.get("match_id")
+        if previous_match_ids.get(guild_id) == match_id:
+            continue  # Already sent this match
+        previous_match_ids[guild_id] = match_id
+        # Attach the guild ID to the match object
+        match["guild_id"] = guild_id
+        # Try to get the live channel for this guild (supporting per-guild setup)
+        if isinstance(LIVE_CHANNEL_IDS, dict):
+            channel_id = LIVE_CHANNEL_IDS.get(str(guild_id))
+        else:
+            channel_id = LIVE_CHANNEL_IDS  # fallback to global setup
+        channel = bot.get_channel(channel_id) if channel_id else None
+        # Fallback: use the channel from lobby_message
+        if not channel and guild_id in lobby_message:
+            message = lobby_message.get(guild_id)
+            if message and message.channel:
+                channel = message.channel
+        # Send embed if a valid channel was found
+        if channel:
+            embed = format_live_match_embed(match)
+            await channel.send(embed=embed)
+            print(f"✅ Live match posted for guild {guild_id} (league {league_id}) in #{channel.name}")
+        else:
+            print(f"⚠️ No valid channel found for guild {guild_id} (league {league_id})")
+
 # ============================== 🛠️ Bot Configuration ==============================
 # Resolves the correct command prefix for the bot, based on the message's guild.
 async def resolve_command_prefix(bot, message):
     if message.guild:
-        prefix = fetch_guild_prefix(str(message.guild.id))
+        prefix = load_guild_prefix(str(message.guild.id))
         return prefix
     return "!"  # fallback default for DMs
 bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_command=None)
@@ -88,59 +142,69 @@ def save_player_config(user_id, data):
     doc_ref.set(data)
 
 # Retrieves a player's saved config data from Firestore using their Discord user ID.
-def get_player_config(user_id):
+def load_player_config(user_id):
     doc = db.collection("players").document(str(user_id)).get()
     return doc.to_dict() if doc.exists else None
 
 # Stores a custom command prefix for a specific Discord server (guild) to Firestore.
-def store_guild_prefix(guild_id, prefix, server_name=None, set_by=None):
+def save_guild_prefix(guild_id, prefix, server_name=None, set_by=None):
     data = {
         "prefix": prefix,
+        "prefix_set_by": set_by,
+        "prefix_timestamp": firestore.SERVER_TIMESTAMP,
         "server_name": server_name,
-        "set_by": set_by,
-        "timestamp": firestore.SERVER_TIMESTAMP
     }
-    doc_ref = db.collection("prefixes").document(str(guild_id))
-    doc_ref.set(data, merge=True)
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"prefix": data}, merge=True)
 
-# Retrieves the stored command prefix for a Discord server from Firestore, or "!" if none is set.
-def fetch_guild_prefix(guild_id):
-    doc = db.collection("prefixes").document(str(guild_id)).get()
+def load_guild_prefix(guild_id):
+    doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
-        return doc.to_dict().get("prefix", "!")
+        data = doc.to_dict()
+        return data.get("prefix", {}).get("prefix", "!")  # nested get
     return "!"
 
 # Saves the inhouse lobby password for a Discord server (guild) to Firestore.
 def save_lobby_password_for_guild(guild_id, password, server_name=None, set_by=None):
     data = {
         "password": password,
+        "password_set_by": set_by,
+        "password_timestamp": firestore.SERVER_TIMESTAMP,
         "server_name": server_name,
-        "set_by": set_by,
-        "timestamp": firestore.SERVER_TIMESTAMP
-    }
-    doc_ref = db.collection("lobbies").document(str(guild_id))
-    doc_ref.set(data, merge=True)
+        }
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"password": data}, merge=True)
 
 # Loads the saved inhouse lobby password for a guild from Firestore; returns "penguin" if not set.
 def load_lobby_password_for_guild(guild_id):
-    doc = db.collection("lobbies").document(str(guild_id)).get()
+    doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
-        return doc.to_dict().get("password", "penguin")  # Default if not set
+        data = doc.to_dict()
+        return data.get("password", {}).get("password", "penguin")
     return "penguin"
 
 def save_inhouse_mode_for_guild(guild_id, mode, server_name=None, set_by=None):
-    db.collection("inhouse_modes").document(str(guild_id)).set({
+    data = {
         "mode": mode,
+        "mode_set_by": str(set_by),
+        "mode_timestamp": firestore.SERVER_TIMESTAMP,
         "server_name": server_name,
-        "set_by": str(set_by),
-        "timestamp": firestore.SERVER_TIMESTAMP
-    })
+        }
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"inhouse_mode": data}, merge=True)
 
 def load_inhouse_mode_for_guild(guild_id):
-    doc = db.collection("inhouse_modes").document(str(guild_id)).get()
+    doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
-        return doc.to_dict().get("mode", "regular")
+        return doc.to_dict().get("inhouse_mode", {}).get("mode", "regular")
     return "regular"
+
+def save_league_guild_mapping(league_id: int, guild_id: int):
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({
+        "bound_league_id": str(league_id),
+        "league_bind_timestamp": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
 
 # ============================ 🎯 MMR & STRATZ Integration ============================
 # Maps Dota 2 STRATZ seasonRank values to estimated MMR values.
@@ -199,10 +263,63 @@ def fetch_mmr_from_stratz(steam_id, max_retries=5):
             return None, None
     return None, None
 
+def fetch_live_match_from_steam(league_id: int):
+    url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
+    params = {"key": STEAM_API_KEY}
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            matches = data.get("result", {}).get("games", [])
+            for match in matches:
+                if match.get("league_id") == league_id:
+                    # 🔄 Fetch guild_id from new Firestore structure
+                    docs = db.collection("guild_specific_info").stream()
+                    for doc in docs:
+                        doc_data = doc.to_dict()
+                        if str(doc_data.get("bound_league_id")) == str(league_id):
+                            guild_id = doc.id
+                            match["guild_id"] = guild_id
+                            return match
+                    
+                    print(f"⚠️ No guild_id found bound to league_id {league_id} in guild_specific_info")
+        return None
+    except Exception as e:
+        print(f"Steam API error: {e}")
+        return None
+
+def fetch_hero_id_to_name_map(api_key):
+    # Try loading from local cache first
+    if os.path.exists(HERO_CACHE_FILE):
+        with open(HERO_CACHE_FILE, "r") as f:
+            return json.load(f)
+
+    # Otherwise, fetch from Steam API
+    url = "https://api.steampowered.com/IEconDOTA2_570/GetHeroes/v1/"
+    params = {
+        "language": "en_us",
+        "key": api_key
+    }
+
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        heroes = response.json().get("result", {}).get("heroes", [])
+        hero_map = {str(hero["id"]): hero["localized_name"] for hero in heroes}
+
+        # Save to cache
+        with open(HERO_CACHE_FILE, "w") as f:
+            json.dump(hero_map, f)
+
+        return hero_map
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching hero data: {e}")
+        return {}
+
 # Gets the stored MMR value for a given Discord user, or returns 0 if not found.
 def get_mmr(user):
     user_id = str(user.id)
-    info = get_player_config(user_id)
+    info = load_player_config(user_id)
     if info and isinstance(info, dict):
         return info.get("mmr", 0)
     return 0
@@ -351,7 +468,7 @@ async def bet(ctx, amount: int, team: str):
     guild_id = str(ctx.guild.id)
     nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
     # Check for existing bet
-    entry_ref = db.collection("bets").document(guild_id).collection("entries").document(str(ctx.author.id))
+    entry_ref = db.collection("guild_specific_info").document(guild_id).collection("bets").document(str(ctx.author.id))
     existing_bet_doc = entry_ref.get()
     previous_amount = 0
     is_update = False
@@ -599,8 +716,7 @@ async def set_password_error(ctx, error):
 @bot.command(name="changeprefix")
 @is_admin_or_has_role()
 async def change_prefix(ctx, new_prefix: str):
-    store_guild_prefix(ctx.guild.id, new_prefix, server_name=ctx.guild.name, set_by=str(ctx.author)
-)
+    save_guild_prefix(ctx.guild.id, new_prefix, server_name=ctx.guild.name, set_by=str(ctx.author))
     await ctx.send(f"✅ Command prefix changed to `{new_prefix}` for this server.")
 
 @change_prefix.error
@@ -618,51 +734,42 @@ async def viewlogs(ctx, *, flags: str = ""):
     guild_id = ctx.guild.id
     guild_name = ctx.guild.name
     verbose = '--verbose' in (flags or "").lower()
-    prefix_doc = db.collection("prefixes").document(str(guild_id)).get()
-    password_doc = db.collection("lobbies").document(str(guild_id)).get()
-    mode_doc = db.collection("inhouse_modes").document(str(guild_id)).get()
+    # ✅ Unified Firestore document for this guild
+    doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     lines = []
     if verbose:
         lines.append(f"📜 **Admin Logs (Verbose)** for `{guild_name}` (Guild ID: `{guild_id}`)\n")
     else:
         lines.append(f"📜 **Admin Logs for `{guild_name}`**\n")
-    # PREFIX LOG
-    if prefix_doc.exists:
-        data = prefix_doc.to_dict()
+    if doc.exists:
+        data = doc.to_dict()
+        # PREFIX LOG
         prefix = data.get("prefix", "Unknown")
-        set_by = data.get("set_by", "Unknown")
-        timestamp = data.get("timestamp", "Unknown")
+        prefix_set_by = data.get("prefix_set_by", "Unknown")
+        prefix_time = data.get("prefix_timestamp", "Unknown")
         if verbose:
-            lines.append(f"🔧 **Prefix**:\n  • Value: `{prefix}`\n  • Set by: {set_by}\n  • Timestamp: `{timestamp}`\n  • Full Doc: `{data}`")
+            lines.append(f"🔧 **Prefix**:\n  • Value: `{prefix}`\n  • Set by: {prefix_set_by}\n  • Timestamp: `{prefix_time}`\n  • Full Doc: `{data}`")
         else:
-            lines.append(f"🔧 **Prefix**: `{prefix}`\nSet by: {set_by}\nTime: {timestamp}")
-    else:
-        lines.append("🔧 **Prefix**: No record found.")
-    # PASSWORD LOG
-    if password_doc.exists:
-        data = password_doc.to_dict()
+            lines.append(f"🔧 **Prefix**: `{prefix}`\nSet by: {prefix_set_by}\nTime: {prefix_time}")
+        # PASSWORD LOG
         password = data.get("password", "Unknown")
-        set_by = data.get("set_by", "Unknown")
-        timestamp = data.get("timestamp", "Unknown")
+        password_set_by = data.get("password_set_by", "Unknown")
+        password_time = data.get("password_timestamp", "Unknown")
         if verbose:
-            lines.append(f"\n🔐 **Lobby Password**:\n  • Value: `{password}`\n  • Set by: {set_by}\n  • Timestamp: `{timestamp}`\n  • Full Doc: `{data}`")
+            lines.append(f"\n🔐 **Lobby Password**:\n  • Value: `{password}`\n  • Set by: {password_set_by}\n  • Timestamp: `{password_time}`\n  • Full Doc: `{data}`")
         else:
-            lines.append(f"\n🔐 **Lobby Password**: `{password}`\nSet by: {set_by}\nTime: {timestamp}")
-    else:
-        lines.append("\n🔐 **Lobby Password**: No record found.")
-    await ctx.send("\n".join(lines))
-    # MODE LOG
-    if mode_doc.exists:
-        data = mode_doc.to_dict()
+            lines.append(f"\n🔐 **Lobby Password**: `{password}`\nSet by: {password_set_by}\nTime: {password_time}")
+        # INHOUSE MODE LOG
         mode = data.get("mode", "Unknown")
-        set_by = data.get("set_by", "Unknown")
-        timestamp = data.get("timestamp", "Unknown")
+        mode_set_by = data.get("mode_set_by", "Unknown")
+        mode_time = data.get("mode_timestamp", "Unknown")
         if verbose:
-            lines.append(f"\n🛠️ **Inhouse Mode**:\n • Value: `{mode}`\n • Set by: {set_by}\n • Timestamp: `{timestamp}`\n • Full Doc: `{data}`")
+            lines.append(f"\n🛠️ **Inhouse Mode**:\n  • Value: `{mode}`\n  • Set by: {mode_set_by}\n  • Timestamp: `{mode_time}`\n  • Full Doc: `{data}`")
         else:
-            lines.append(f"\n🛠️ **Inhouse Mode**: `{mode}`\nSet by: {set_by}\nTime: {timestamp}")
+            lines.append(f"\n🛠️ **Inhouse Mode**: `{mode}`\nSet by: {mode_set_by}\nTime: {mode_time}")
     else:
-        lines.append("\n🛠️ **Inhouse Mode**: No record found.")
+        lines.append("❌ No Firestore data found for this guild.")
+    await ctx.send("\n".join(lines))
 
 # Admin-only: Submits and processes a match ID manually for MMR and bet resolution.
 @bot.command(name="submitmatch")
@@ -692,6 +799,27 @@ async def submitmatch_error(ctx, error):
         await ctx.send("❗ Invalid match ID. It should be a numeric string like `8351234567`.")
     else:
         await ctx.send("⚠️ An unexpected error occurred while submitting the match.")
+
+@bot.command(name="bindleague")
+@is_admin_or_has_role()
+async def bind_league_to_guild(ctx, league_id: str):
+    save_league_guild_mapping(league_id, ctx.guild.id)
+    await ctx.send(f"✅ League `{league_id}` bound to this server (Guild ID: `{ctx.guild.id}`).")
+
+@bot.command(name="setlivechannel")
+@commands.has_permissions(administrator=True)
+async def set_live_channel(ctx):
+    guild_id = str(ctx.guild.id)
+    channel_id = ctx.channel.id
+    # Save to Firestore
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({
+        "live_channel_id": str(channel_id),
+        "live_channel_timestamp": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+    # Update local cache
+    LIVE_CHANNEL_IDS[guild_id] = channel_id
+    await ctx.send(f"✅ This channel has been set to receive live match updates.")
 
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
@@ -735,10 +863,22 @@ async def help_command(ctx):
 @bot.event
 async def on_ready():
     global player_data
+    global hero_id_to_name
     player_data = {}  # still fine to cache this in memory
     print(f"{bot.user} is online!")
     refresh_all_mmrs.start()
     clear_all_bets(bot)
+    if not poll_live_match.is_running():
+        poll_live_match.start()
+    # Cache hero IDs
+    hero_id_to_name = fetch_hero_id_to_name_map(STEAM_API_KEY)
+    # Load LIVE_CHANNEL_IDS from Firestore
+    docs = db.collection("guild_specific_info").stream()
+    for doc in docs:
+        data = doc.to_dict()
+        live_channel_id = data.get("live_channel_id")
+        if live_channel_id:
+            LIVE_CHANNEL_IDS[doc.id] = live_channel_id
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
@@ -974,6 +1114,39 @@ def build_immortal_embed(captains, pool, guild, reroll_count):
     )
     password = load_lobby_password_for_guild(guild.id)
     embed.add_field(name="**Password**", value=password, inline=False)
+    return embed
+
+def format_live_match_embed(match_data):
+    radiant_players = []
+    dire_players = []
+    radiant_heroes = []
+    dire_heroes = []
+    for player in match_data.get("players", []):
+        name = player.get("name", "Unknown")
+        hero_id = player.get("hero_id")
+        hero = hero_id_to_name.get(str(hero_id), f"Hero {hero_id}")
+
+        team = player.get("team", 0)
+        if team == 0:
+            radiant_players.append(name)
+            radiant_heroes.append(hero)
+        else:
+            dire_players.append(name)
+            dire_heroes.append(hero)
+    radiant_score = match_data.get("radiant_score", 0)
+    dire_score = match_data.get("dire_score", 0)
+    duration_seconds = match_data.get("duration", 0)
+    minutes = duration_seconds // 60
+    seconds = duration_seconds % 60
+    formatted_time = f"{minutes}:{seconds:02}"
+    pot_value = 1301  # replace with actual pot logic if tracked elsewhere
+    embed = discord.Embed(title="Inhouse Match", description=f"⏱ {formatted_time}", color=discord.Color.red())
+    embed.add_field(name="Radiant", value="\n".join(radiant_players), inline=True)
+    embed.add_field(name="Radiant", value="\n".join([str(hero) for hero in radiant_heroes]), inline=True)
+    embed.add_field(name="Score", value=str(radiant_score), inline=True)
+    embed.add_field(name="Dire", value="\n".join(dire_players), inline=True)
+    embed.add_field(name="Dire", value="\n".join([str(hero) for hero in dire_heroes]), inline=True)
+    embed.add_field(name="Score", value=str(dire_score), inline=True)
     return embed
 
 bot.run(TOKEN)
