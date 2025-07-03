@@ -209,7 +209,7 @@ def save_league_guild_mapping(guild_id: int, league_id: int, server_name=None, b
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"league_id": data}, merge=True)
 
-# ============================ 🎯 MMR & STRATZ Integration ============================
+# ============================ 🎯 MMR, STRATZ, and Steam Integration ============================
 # Maps Dota 2 STRATZ seasonRank values to estimated MMR values.
 season_rank_to_mmr = {
     11: 77, 12: 231, 13: 385, 14: 539, 15: 693,
@@ -855,8 +855,8 @@ async def help_command(ctx, *, category: str = ""):
             "**!alert** - (Admin only) Mention all 10 players when the lobby is full.\n"
             "**!viewlogs** - (Admin only) View recent lobby or user config logs.\n"
             "**!viewlogs --verbose** - (Admin only) View full detailed logs for this server.\n"
-            "**!bindleague `league_id`** - (Admin only) Binds a Steam league ID to the current Discord server for live match tracking."
-            "**!setlivechannel** - (Admin only) Sets the current text channel as the destination for live match embed updates."
+            "**!bindleague `league_id`** - (Admin only) Binds a Steam league ID to the current Discord server for live match tracking.\n"
+            "**!setlivechannel** - (Admin only) Sets the current text channel as the destination for live match embed updates.\n"
     )
     else:
         help_text = "❌ Unknown help category. Try `!help` or `!help admin`."
