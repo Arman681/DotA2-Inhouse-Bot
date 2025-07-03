@@ -199,12 +199,15 @@ def load_inhouse_mode_for_guild(guild_id):
         return doc.to_dict().get("inhouse_mode", {}).get("mode", "regular")
     return "regular"
 
-def save_league_guild_mapping(league_id: int, guild_id: int):
-    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
-    doc_ref.set({
+def save_league_guild_mapping(guild_id: int, league_id: int, server_name=None, bound_by=None):
+    data = {
         "bound_league_id": str(league_id),
+        "league_id_bound_by": str(bound_by),
         "league_bind_timestamp": firestore.SERVER_TIMESTAMP,
-        }, merge=True)
+        "server_name": server_name,
+    }
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"league_id": data}, merge=True)
 
 # ============================ 🎯 MMR & STRATZ Integration ============================
 # Maps Dota 2 STRATZ seasonRank values to estimated MMR values.
@@ -795,7 +798,7 @@ async def submitmatch_error(ctx, error):
 @bot.command(name="bindleague")
 @is_admin_or_has_role()
 async def bind_league_to_guild(ctx, league_id: str):
-    save_league_guild_mapping(league_id, ctx.guild.id)
+    save_league_guild_mapping(ctx.guild.id, league_id, server_name=ctx.guild.name, bound_by=str(ctx.author))
     await ctx.send(f"✅ League `{league_id}` bound to this server (Guild ID: `{ctx.guild.id}`).")
 
 # Admin-only: Sets the current text channel as the destination for live match embed updates.
