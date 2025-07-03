@@ -420,7 +420,6 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
         await ctx.send(f"{target.mention}, your Steam ID `{steam32}` has been linked with an estimated MMR of **{mmr}**.")
     else:
         await ctx.send(f"{target.mention}, Steam ID linked, but MMR could not be determined.")
-
 @cfg_cmd.error
 async def cfg_cmd_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
@@ -504,7 +503,6 @@ async def bet(ctx, amount: int, team: str):
                 f"✅ You bet `{amount}` on **{team.capitalize()}** for this match. "
                 f"Your balance went from {old_balance} to {new_balance}."
             )
-
 @bet.error
 async def bet_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
@@ -575,7 +573,6 @@ async def remove_from_lobby(ctx, *members: discord.Member):
         # Re-fetch message to get updated reaction state
         channel = ctx.channel
         message = await channel.fetch_message(lobby_message[guild_id].id)
-
         # Clear special reactions if lobby is no longer full
         if len(lobby_players[guild_id]) < 10:
             # Clear reactions only after embed update to prevent race conditions
@@ -583,7 +580,6 @@ async def remove_from_lobby(ctx, *members: discord.Member):
             for reaction in message.reactions:
                 if str(reaction.emoji) in ["🚀", "♻️"]:  # clear both rocket and re-roll reactions
                     await message.clear_reaction(reaction.emoji)
-
             await ctx.send(f"Removed from lobby: {', '.join(removed)}")
     else:
         await ctx.send("None of the specified members were in the lobby.")
@@ -665,7 +661,6 @@ async def setmmr(ctx, mmr: int, member: discord.Member):
         await ctx.send(f"{member.mention}'s MMR has been manually set to **{mmr}**.")
     except Exception as e:
         await ctx.send(f"Failed to set MMR due to an error: {e}")
-
 @setmmr.error
 async def set_mmr_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
@@ -691,7 +686,6 @@ async def alert(ctx):
         await ctx.send(f"{' '.join(mentions)} lobby up.")
     else:
         await ctx.send("Could not find any users to alert.")
-
 @alert.error
 async def alert_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
@@ -704,7 +698,6 @@ async def set_password(ctx, *, new_password: str):
     save_lobby_password_for_guild(ctx.guild.id, new_password, server_name=ctx.guild.name, set_by=str(ctx.author))
     await update_lobby_embed(ctx.guild)
     await ctx.send(f"Password updated to: `{new_password}`")
-
 @set_password.error
 async def set_password_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
@@ -718,7 +711,6 @@ async def set_password_error(ctx, error):
 async def change_prefix(ctx, new_prefix: str):
     save_guild_prefix(ctx.guild.id, new_prefix, server_name=ctx.guild.name, set_by=str(ctx.author))
     await ctx.send(f"✅ Command prefix changed to `{new_prefix}` for this server.")
-
 @change_prefix.error
 async def change_prefix_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
@@ -790,7 +782,6 @@ async def submitmatch(ctx, match_id: str):
     resolve_bets(ctx.guild.id, winning_team)
     clear_guild_bets(ctx)
     await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.")
-
 @submitmatch.error
 async def submitmatch_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
@@ -800,14 +791,16 @@ async def submitmatch_error(ctx, error):
     else:
         await ctx.send("⚠️ An unexpected error occurred while submitting the match.")
 
+# Admin-only: Binds a Steam league ID to the current Discord server for live match tracking.
 @bot.command(name="bindleague")
 @is_admin_or_has_role()
 async def bind_league_to_guild(ctx, league_id: str):
     save_league_guild_mapping(league_id, ctx.guild.id)
     await ctx.send(f"✅ League `{league_id}` bound to this server (Guild ID: `{ctx.guild.id}`).")
 
+# Admin-only: Sets the current text channel as the destination for live match embed updates.
 @bot.command(name="setlivechannel")
-@commands.has_permissions(administrator=True)
+@is_admin_or_has_role()
 async def set_live_channel(ctx):
     guild_id = str(ctx.guild.id)
     channel_id = ctx.channel.id
@@ -824,35 +817,46 @@ async def set_live_channel(ctx):
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
 @bot.command(name="help")
-async def help_command(ctx):
-    help_text = (
-        "\n**Available Commands:**\n\n"
-        "__**👥 General Commands**__\n"
-        "**!cfg `steam_id` `@user`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
-        "**!mmr `@user`** - Show your MMR or another user's MMR.\n"
-        "**!inhouse_mmr `@user`** - Show inhouse MMR for yourself or another user\n"
-        "**!balance `@user`** - Show your or another user's coin balance\n"
-        "**!leaderboard** - View top 10 inhouse MMR players in this server\n\n"
-        "__**🏠 Lobby Management**__\n"
-        "**!add `@user1` `@user2` ...** - Manually add one or more users to the lobby.\n"
-        "**!remove `@user1` `@user2` ...** - Manually remove one or more users from the lobby.\n"
-        "**!lobby** - Create or refresh the inhouse lobby.\n"
-        "**!reset** - Clear the current lobby and start fresh.\n\n"
-        "__**🎲 Betting Commands**__\n"
-        "**!bet `amt` `radiant|dire`** - Bet coins on the current inhouse match\n"
-        "**!balance `@user`** - Show your or another user’s coin balance\n\n"
-        "__**🔐 Admin Commands**__\n"
-        "**!lobby `mode`** - (Admin only) Sets the lobby mode for the inhouse \n"
-        "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
-        "           • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
-        "**!setmmr `mmr` `@user`** - (Admin only) Manually set a user's MMR.\n"
-        "**!setpassword `new_password`** - (Admin only) Change the inhouse lobby password.\n"
-        "**!changeprefix `new_prefix`** - (Admin only) Changes the prefix of the bot commands.\n"
-        "**!submitmatch `match_id`** - Admin-only: Report match and resolve MMR + bets\n"
-        "**!alert** - (Admin only) Mention all 10 players when the lobby is full.\n"
-        "**!viewlogs** - (Admin only) View recent lobby or user config logs.\n"
-        "**!viewlogs --verbose** - (Admin only) View full detailed logs for this server.\n"
+async def help_command(ctx, *, category: str = ""):
+    category = category.lower().strip()
+    if category == "":
+        help_text = (
+            "\n**📜 Available Commands:**\n\n"
+            "__**👥 General Commands**__\n"
+            "**!cfg `steam_id` `@user`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
+            "**!mmr `@user`** - Show your MMR or another user's MMR.\n"
+            "**!inhouse_mmr `@user`** - Show inhouse MMR for yourself or another user\n"
+            "**!balance `@user`** - Show your or another user's coin balance\n"
+            "**!leaderboard** - View top 10 inhouse MMR players in this server\n\n"
+            "__**🏠 Lobby Management**__\n"
+            "**!add `@user1` `@user2` ...** - Manually add one or more users to the lobby.\n"
+            "**!remove `@user1` `@user2` ...** - Manually remove one or more users from the lobby.\n"
+            "**!lobby** - Create or refresh the inhouse lobby.\n"
+            "**!reset** - Clear the current lobby and start fresh.\n\n"
+            "__**🎲 Betting Commands**__\n"
+            "**!bet `amt` `radiant|dire`** - Bet coins on the current inhouse match\n"
+            "**!balance `@user`** - Show your or another user’s coin balance\n\n"
+            "__**🔐 Admin Commands**__\n"
+            "Use `!help admin` to see the list of admin-only commands.\n"
+        )
+    elif category == "admin":
+        help_text = (
+            "\n__**🔐 Admin Commands**__\n"
+            "**!lobby `mode`** - (Admin only) Sets the lobby mode for the inhouse \n"
+            "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
+            "           • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
+            "**!setmmr `mmr` `@user`** - (Admin only) Manually set a user's MMR.\n"
+            "**!setpassword `new_password`** - (Admin only) Change the inhouse lobby password.\n"
+            "**!changeprefix `new_prefix`** - (Admin only) Changes the prefix of the bot commands.\n"
+            "**!submitmatch `match_id`** - Admin-only: Report match and resolve MMR + bets\n"
+            "**!alert** - (Admin only) Mention all 10 players when the lobby is full.\n"
+            "**!viewlogs** - (Admin only) View recent lobby or user config logs.\n"
+            "**!viewlogs --verbose** - (Admin only) View full detailed logs for this server.\n"
+            "**!bindleague `league_id`** - (Admin only) Binds a Steam league ID to the current Discord server for live match tracking."
+            "**!setlivechannel** - (Admin only) Sets the current text channel as the destination for live match embed updates."
     )
+    else:
+        help_text = "❌ Unknown help category. Try `!help` or `!help admin`."
     await ctx.send(f"{help_text}")
 
 # ========================================================================================================================
