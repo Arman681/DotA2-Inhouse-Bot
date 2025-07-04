@@ -340,10 +340,15 @@ def get_active_user_ids():
     return user_ids
 
 def get_discord_id_from_steam(steam_id: str) -> Optional[str]:
+    try:
+        steam_id_int = int(steam_id)
+    except ValueError:
+        print(f"[ERROR] Invalid Steam ID input: {steam_id}")
+        return None
     players_ref = db.collection("players")
-    query = players_ref.where("steam_id", "==", steam_id).stream()
+    query = players_ref.where("steam_id", "==", steam_id_int).stream()
     for doc in query:
-        return doc.id  # doc.id is the Discord user ID (used as document ID)
+        return doc.id  # Discord ID is stored as the doc ID
     return None
 
 # Periodic background task that updates all players' MMR values from STRATZ in Firebase,
