@@ -772,16 +772,16 @@ async def viewlogs(ctx, *, flags: str = ""):
 async def submitmatch(ctx, match_id: str):
     await ctx.send("📊 Processing submitted match...")
     result = fetch_match_result(match_id)
-    if not result:
-        await ctx.send("❌ Could not fetch match result. Check the match ID.")
-        return
     if not match_id.isdigit():
         await ctx.send("❗ Match ID must be a number.")
+        return
+    if not result:
+        await ctx.send("❌ Could not fetch match result. Check the match ID.")
         return
     winner_ids = result["radiant"] if result["radiant_win"] else result["dire"]
     loser_ids = result["dire"] if result["radiant_win"] else result["radiant"]
     winning_team = "radiant" if result["radiant_win"] else "dire"
-    adjust_mmr(winner_ids, loser_ids, ctx.guild.id, ctx.guild)
+    await adjust_mmr(winner_ids, loser_ids, ctx.guild.id, ctx.guild)
     resolve_bets(ctx.guild.id, winning_team)
     clear_guild_bets(ctx)
     await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.")
