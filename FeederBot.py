@@ -9,6 +9,7 @@
 import asyncio
 import os
 import json
+from typing import Optional
 import discord
 import requests
 import time
@@ -337,6 +338,13 @@ def get_active_user_ids():
             if not member.bot:
                 user_ids.add(str(member.id))
     return user_ids
+
+def get_discord_id_from_steam(steam_id: str) -> Optional[str]:
+    players_ref = db.collection("players")
+    query = players_ref.where("steam_id", "==", steam_id).stream()
+    for doc in query:
+        return doc.id  # doc.id is the Discord user ID (used as document ID)
+    return None
 
 # Periodic background task that updates all players' MMR values from STRATZ in Firebase,
 # and refreshes lobby embeds across all servers.
@@ -778,8 +786,19 @@ async def submitmatch(ctx, match_id: str):
     if not result:
         await ctx.send("❌ Could not fetch match result. Check the match ID.")
         return
-    winner_ids = result["radiant"] if result["radiant_win"] else result["dire"]
-    loser_ids = result["dire"] if result["radiant_win"] else result["radiant"]
+    def map_steam_ids_to_discord_ids(steam_ids):
+        discord_ids = []
+
+        for steam_id in steam_ids:
+            discord_id = get_discord_id_from_steam(steam_id)
+            if discord_id:
+                discord_ids.append(discord_id)
+            else:
+                print(f"[WARN] No Discord user found for Steam ID {steam_id}")
+        print(f"[INFO] Mapped {len(discord_ids)}/{len(steam_ids)} Steam IDs to Discord IDs")
+        return discord_ids
+    winner_ids = map_steam_ids_to_discord_ids(result["radiant"] if result["radiant_win"] else result["dire"])
+    loser_ids = map_steam_ids_to_discord_ids(result["dire"] if result["radiant_win"] else result["radiant"])
     winning_team = "radiant" if result["radiant_win"] else "dire"
     await adjust_mmr(winner_ids, loser_ids, ctx.guild.id, ctx.guild)
     resolve_bets(ctx.guild.id, winning_team)
