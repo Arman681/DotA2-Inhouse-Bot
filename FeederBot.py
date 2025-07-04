@@ -66,13 +66,15 @@ async def poll_live_match():
         guild_id = str(doc.id)
         data = doc.to_dict()
         league_id = data.get("league_id", {}).get("bound_league_id")
-        
+        print(f"[DEBUG] League ID: {league_id} | Guild ID: {guild_id}")
+
         if not league_id:
             continue  # Skip if no league bound
 
         # Try to fetch the live match for this league
         try:
             match = fetch_live_match_from_steam(league_id)
+            print(f"[DEBUG] Match fetched: {match}")
         except Exception as e:
             print(f"❌ Error fetching match for league {league_id}: {e}")
             continue
@@ -273,6 +275,7 @@ def fetch_live_match_from_steam(league_id: int):
     try:
         response = requests.get(url, params=params, timeout=5)
         if response.status_code == 200:
+            print("[DEBUG] Full Steam API response:", response.text)  # 🔍 Log raw JSON response
             data = response.json()
             matches = data.get("result", {}).get("games", [])
             for match in matches:
@@ -281,7 +284,8 @@ def fetch_live_match_from_steam(league_id: int):
                     docs = db.collection("guild_specific_info").stream()
                     for doc in docs:
                         doc_data = doc.to_dict()
-                        if str(doc_data.get("bound_league_id")) == str(league_id):
+                        bound_league_id = doc_data.get("league_id", {}).get("bound_league_id")
+                        if str(bound_league_id) == str(league_id):
                             guild_id = doc.id
                             match["guild_id"] = guild_id
                             return match
