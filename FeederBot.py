@@ -65,7 +65,7 @@ async def poll_live_match():
     for doc in docs:
         guild_id = str(doc.id)
         data = doc.to_dict()
-        league_id = data.get("bound_league_id")
+        league_id = data.get("league_id", {}).get("bound_league_id")
         
         if not league_id:
             continue  # Skip if no league bound
@@ -339,7 +339,7 @@ def get_active_user_ids():
                 user_ids.add(str(member.id))
     return user_ids
 
-def get_discord_id_from_steam(steam_id: str) -> Optional[str]:
+def get_discord_id_from_steam_id(steam_id: str) -> Optional[str]:
     try:
         steam_id_int = int(steam_id)
     except ValueError:
@@ -795,7 +795,7 @@ async def submitmatch(ctx, match_id: str):
         discord_ids = []
 
         for steam_id in steam_ids:
-            discord_id = get_discord_id_from_steam(steam_id)
+            discord_id = get_discord_id_from_steam_id(steam_id)
             if discord_id:
                 discord_ids.append(discord_id)
             else:
@@ -832,11 +832,12 @@ async def set_live_channel(ctx):
     guild_id = str(ctx.guild.id)
     channel_id = ctx.channel.id
     # Save to Firestore
-    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
-    doc_ref.set({
+    data = {
         "live_channel_id": str(channel_id),
         "live_channel_timestamp": firestore.SERVER_TIMESTAMP,
-        }, merge=True)
+    }
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"live_channel_id": data}, merge=True)
     # Update local cache
     LIVE_CHANNEL_IDS[guild_id] = channel_id
     await ctx.send(f"✅ This channel has been set to receive live match updates.")
