@@ -9,6 +9,7 @@
 import asyncio
 import os
 import json
+import random
 from typing import Optional
 import discord
 import requests
@@ -46,10 +47,15 @@ original_teams = {}        # {guild_id: team tuple}
 captain_draft_state = {}   # {guild_id: {"pairs": [...], "index": 0}}
 LIVE_CHANNEL_IDS = {}      # {guild_id: channel_id}
 previous_match_ids = {}    # Keeps track of last match ID per guild to avoid duplicates
+live_embed_messages = {}   # {guild_id: message}
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
 LIVE_LEAGUE_ID = None  # Replace with your actual league ID
 HERO_CACHE_FILE = "hero_id_map.json"
+# Global task reference
+polling_task = None
+active_league_ids = {}     # {guild_id: league_id}
+bound_league_ids = {}      # {guild_id: league_id}
 
 # ========================================================================================================================
 # ============================================ ⚙️ Core Functions & Utilities ============================================
@@ -57,54 +63,90 @@ HERO_CACHE_FILE = "hero_id_map.json"
 
 previous_match_ids = {}  # Keeps track of last match ID per guild to avoid duplicates
 
-@tasks.loop(seconds=30)
 async def poll_live_match():
-    # Stream all league-guild bindings from consolidated Firestore collection
-    docs = db.collection("guild_specific_info").stream()
-    
-    for doc in docs:
-        guild_id = str(doc.id)
-        data = doc.to_dict()
-        league_id = data.get("league_id", {}).get("bound_league_id")
-        print(f"[DEBUG] League ID: {league_id} | Guild ID: {guild_id}")
+    global active_league_ids
+    global live_embed_messages
+    global bound_league_ids
+    global polling_guild_id
 
-        if not league_id:
-            continue  # Skip if no league bound
-
-        # Try to fetch the live match for this league
+    await bot.wait_until_ready()
+    while not bot.is_closed():
         try:
-            match = fetch_live_match_from_steam(league_id)
-            print(f"[DEBUG] Match fetched: {match}")
+            print(f"[DEBUG] polling_guild_id = {polling_guild_id} ({type(polling_guild_id)})")
+
+            # Loop through all guilds that have live channels configured
+            for guild_id_str in LIVE_CHANNEL_IDS.keys():
+                active_league_id = active_league_ids.get(guild_id_str)
+
+                if active_league_id is None:
+                    # Fetch from Steam
+                    url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
+                    params = {"key": STEAM_API_KEY}
+                    response = requests.get(url, params=params)
+                    data = response.json()
+                    matches = data.get("result", {}).get("games", [])
+                    valid_matches = [m for m in matches if m.get("scoreboard")]
+                    if not valid_matches:
+                        continue  # skip to next guild
+                    selected_match = random.choice(valid_matches)
+                    active_league_ids[guild_id_str] = selected_match["league_id"]
+                    print(f"[INFO from: def poll_live_match()] Now tracking league_id {active_league_ids[guild_id_str]} for guild {guild_id_str}")
+                    active_league_id = active_league_ids[guild_id_str]
+
+                # Fetch the current live match
+                match = fetch_live_match_from_steam(active_league_id)
+                if match is None:
+                    print(f"[INFO from: def poll_live_match()] Match for league_id {active_league_id} has ended.")
+                    active_league_ids.pop(guild_id_str, None)
+                    continue
+
+                # Guild validation
+                guild_id = match.get("guild_id")
+                if guild_id:
+                    guild_id_str = str(guild_id)
+                    current_bound = bound_league_ids.get(guild_id_str)
+                    if current_bound != str(active_league_ids[guild_id_str]):
+                        if bound_league_ids.get(guild_id_str) == str(active_league_ids[guild_id_str]):
+                            print(f"[DEBUG in: def poll_live_match()] binding skipped: already bound to {bound_league_ids[guild_id_str]}")
+                            continue
+                        print(f"[DEBUG in: def poll_live_match()] binding check passed: {current_bound} != {active_league_ids[guild_id_str]}")
+                        try:
+                            db.collection("guild_specific_info").document(guild_id_str).set({
+                                "league_id": {
+                                    "bound_league_id": str(active_league_ids[guild_id_str])
+                                }
+                            }, merge=True)
+                            bound_league_ids[guild_id_str] = str(active_league_ids[guild_id_str])
+                            print(f"[INFO from: def poll_live_match()] Bound league_id {active_league_ids[guild_id_str]} to guild {guild_id_str}")
+                        except Exception as e:
+                            print(f"[ERROR from: def poll_live_match()] Failed to bind league_id: {e}")
+                    else:
+                        print(f"[DEBUG in: def poll_live_match()] binding skipped: already bound to {current_bound}")
+
+                    # Format and update embed
+                    embed = format_live_match_embed(match)
+                    channel_info = LIVE_CHANNEL_IDS.get(guild_id_str)
+                    if isinstance(channel_info, dict):
+                        channel_id = int(channel_info.get("live_channel_id", 0))
+                        channel = bot.get_channel(channel_id)
+                        if channel:
+                            previous_message = live_embed_messages.get(guild_id_str)
+                            if previous_message:
+                                try:
+                                    await previous_message.edit(embed=embed)
+                                except discord.NotFound:
+                                    new_message = await channel.send(embed=embed)
+                                    live_embed_messages[guild_id_str] = new_message
+                            else:
+                                new_message = await channel.send(embed=embed)
+                                live_embed_messages[guild_id_str] = new_message
+                    else:
+                        print(f"[ERROR in: def poll_live_match()] LIVE_CHANNEL_IDS[{guild_id_str}] is not a dict: {channel_info}")
+                else:
+                    print("[ERROR in: def poll_live_match()] Match does not contain a valid guild_id.")
         except Exception as e:
-            print(f"❌ Error fetching match for league {league_id}: {e}")
-            continue
-        if not match:
-            continue
-        # Avoid reposting the same match
-        match_id = match.get("match_id")
-        if previous_match_ids.get(guild_id) == match_id:
-            continue  # Already sent this match
-        previous_match_ids[guild_id] = match_id
-        # Attach the guild ID to the match object
-        match["guild_id"] = guild_id
-        # Try to get the live channel for this guild (supporting per-guild setup)
-        if isinstance(LIVE_CHANNEL_IDS, dict):
-            channel_id = LIVE_CHANNEL_IDS.get(str(guild_id))
-        else:
-            channel_id = LIVE_CHANNEL_IDS  # fallback to global setup
-        channel = bot.get_channel(channel_id) if channel_id else None
-        # Fallback: use the channel from lobby_message
-        if not channel and guild_id in lobby_message:
-            message = lobby_message.get(guild_id)
-            if message and message.channel:
-                channel = message.channel
-        # Send embed if a valid channel was found
-        if channel:
-            embed = format_live_match_embed(match)
-            await channel.send(embed=embed)
-            print(f"✅ Live match posted for guild {guild_id} (league {league_id}) in #{channel.name}")
-        else:
-            print(f"⚠️ No valid channel found for guild {guild_id} (league {league_id})")
+            print(f"[ERROR in: def poll_live_match()] poll_live_match: {e}")
+        await asyncio.sleep(15)
 
 # ============================== 🛠️ Bot Configuration ==============================
 # Resolves the correct command prefix for the bot, based on the message's guild.
@@ -275,22 +317,54 @@ def fetch_live_match_from_steam(league_id: int):
     try:
         response = requests.get(url, params=params, timeout=5)
         if response.status_code == 200:
-            print("[DEBUG] Full Steam API response:", response.text)  # 🔍 Log raw JSON response
+            with open("steam_api_pretty.json", "w", encoding="utf-8") as f:
+                json.dump(response.json(), f, indent=4)
             data = response.json()
             matches = data.get("result", {}).get("games", [])
             for match in matches:
-                if match.get("league_id") == league_id:
-                    # 🔄 Fetch guild_id from new Firestore structure
+                print(f"[DEBUG in: def fetch_live_match_from_steam()] Checking match with league_id: {match.get('league_id')}")
+                if str(match.get("league_id")) == str(league_id):
+                    found_guild = None
+                    # 🔍 Check Firestore for matching league_id
                     docs = db.collection("guild_specific_info").stream()
                     for doc in docs:
                         doc_data = doc.to_dict()
-                        bound_league_id = doc_data.get("league_id", {}).get("bound_league_id")
+                        league_data = doc_data.get("league_id", {})
+                        bound_league_id = league_data.get("bound_league_id")
                         if str(bound_league_id) == str(league_id):
-                            guild_id = doc.id
-                            match["guild_id"] = guild_id
-                            return match
-                    
-                    print(f"⚠️ No guild_id found bound to league_id {league_id} in guild_specific_info")
+                            found_guild = str(doc.id)
+                            break
+                    # ✅ Found a bound guild
+                    if found_guild:
+                        match["guild_id"] = found_guild
+                        print(f"[DEBUG in: def fetch_live_match_from_steam()] Found league_id {league_id} already bound to guild {found_guild}")
+                        return match
+                    # 🔄 Auto-bind to polling_guild_id if not found
+                    global polling_guild_id
+                    if polling_guild_id:
+                        polling_guild_id_str = str(polling_guild_id)
+                        # Check if there's already a league bound to this guild
+                        existing_doc = db.collection("guild_specific_info").document(polling_guild_id_str).get()
+                        if existing_doc.exists:
+                            existing_data = existing_doc.to_dict()
+                            existing_bound = existing_data.get("league_id", {}).get("bound_league_id")
+                            if existing_bound and str(existing_bound) != str(league_id):
+                                print(f"[AUTO-BIND SKIPPED from: def fetch_live_match_from_steam()] Guild {polling_guild_id_str} already bound to league_id {existing_bound}, skipping new bind for {league_id}")
+                                continue  # skip to next match
+                        match["guild_id"] = polling_guild_id_str
+                        print(f"[AUTO-BIND from: def fetch_live_match_from_steam()] league_id {league_id} -> guild {polling_guild_id_str}")
+                        try:
+                            db.collection("guild_specific_info").document(polling_guild_id_str).set({
+                                "league_id": {
+                                    "bound_league_id": str(league_id),
+                                    "auto_bound": True
+                                }
+                            }, merge=True)
+                            bound_league_ids[polling_guild_id_str] = str(league_id)  # update cache
+                        except Exception as e:
+                            print(f"[ERROR in: def fetch_live_match_from_steam()] Failed to auto-bind league_id: {e}")
+                        return match
+                    print(f"in: def fetch_live_match_from_steam() ⚠️ No guild_id found bound to league_id {league_id} in Firestore and polling_guild_id is not set.")
         return None
     except Exception as e:
         print(f"Steam API error: {e}")
@@ -846,6 +920,27 @@ async def set_live_channel(ctx):
     LIVE_CHANNEL_IDS[guild_id] = channel_id
     await ctx.send(f"✅ This channel has been set to receive live match updates.")
 
+@bot.command(name="startpolling")
+@is_admin_or_has_role()
+async def start_polling(ctx):
+    global polling_task, polling_guild_id
+    if polling_task is None or polling_task.done():
+        polling_guild_id = ctx.guild.id  # 👈 store the guild ID
+        polling_task = asyncio.create_task(poll_live_match())
+        await ctx.send("✅ Live match polling started.")
+    else:
+        await ctx.send("⚠️ Polling is already running.")
+
+@bot.command(name="stoppolling")
+@is_admin_or_has_role()
+async def stop_polling(ctx):
+    global polling_task
+    if polling_task and not polling_task.done():
+        polling_task.cancel()
+        await ctx.send("🛑 Stopped polling live matches.")
+    else:
+        await ctx.send("ℹ️ No polling is currently running.")
+
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
 @bot.command(name="help")
@@ -904,8 +999,6 @@ async def on_ready():
     print(f"{bot.user} is online!")
     refresh_all_mmrs.start()
     clear_all_bets(bot)
-    if not poll_live_match.is_running():
-        poll_live_match.start()
     # Cache hero IDs
     hero_id_to_name = fetch_hero_id_to_name_map(STEAM_API_KEY)
     # Load LIVE_CHANNEL_IDS from Firestore
@@ -1152,37 +1245,43 @@ def build_immortal_embed(captains, pool, guild, reroll_count):
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
-def format_live_match_embed(match_data):
-    radiant_players = []
-    dire_players = []
-    radiant_heroes = []
-    dire_heroes = []
-    for player in match_data.get("players", []):
-        name = player.get("name", "Unknown")
-        hero_id = player.get("hero_id")
-        hero = hero_id_to_name.get(str(hero_id), f"Hero {hero_id}")
+def format_live_match_embed(match):
+    scoreboard = match.get("scoreboard", {})
+    radiant = scoreboard.get("radiant", {})
+    dire = scoreboard.get("dire", {})
 
-        team = player.get("team", 0)
-        if team == 0:
-            radiant_players.append(name)
-            radiant_heroes.append(hero)
-        else:
-            dire_players.append(name)
-            dire_heroes.append(hero)
-    radiant_score = match_data.get("radiant_score", 0)
-    dire_score = match_data.get("dire_score", 0)
-    duration_seconds = match_data.get("duration", 0)
-    minutes = duration_seconds // 60
-    seconds = duration_seconds % 60
-    formatted_time = f"{minutes}:{seconds:02}"
-    pot_value = 1301  # replace with actual pot logic if tracked elsewhere
-    embed = discord.Embed(title="Inhouse Match", description=f"⏱ {formatted_time}", color=discord.Color.red())
-    embed.add_field(name="Radiant", value="\n".join(radiant_players), inline=True)
-    embed.add_field(name="Radiant", value="\n".join([str(hero) for hero in radiant_heroes]), inline=True)
-    embed.add_field(name="Score", value=str(radiant_score), inline=True)
-    embed.add_field(name="Dire", value="\n".join(dire_players), inline=True)
-    embed.add_field(name="Dire", value="\n".join([str(hero) for hero in dire_heroes]), inline=True)
-    embed.add_field(name="Score", value=str(dire_score), inline=True)
+    radiant_score = radiant.get("score", 0)
+    dire_score = dire.get("score", 0)
+    duration = scoreboard.get("duration", 0)
+    minutes = int(duration // 60)
+    seconds = int(duration % 60)
+
+    embed = discord.Embed(
+        title="Live Dota 2 Match",
+        description=f"🕒 **{minutes}:{seconds:02d}** — **Radiant** {radiant_score} : {dire_score} **Dire**",
+        color=discord.Color.green()
+    )
+    # Radiant team
+    radiant_players = radiant.get("players", [])
+    for player in radiant_players:
+        account_id = player.get("account_id", "Unknown")
+        hero_id = player.get("hero_id", "Unknown")
+        embed.add_field(
+            name=f"Radiant - Hero {hero_id}",
+            value=f"SteamID: {account_id}",
+            inline=True
+        )
+    # Dire team
+    dire_players = dire.get("players", [])
+    for player in dire_players:
+        account_id = player.get("account_id", "Unknown")
+        hero_id = player.get("hero_id", "Unknown")
+        embed.add_field(
+            name=f"Dire - Hero {hero_id}",
+            value=f"SteamID: {account_id}",
+            inline=True
+        )
     return embed
+
 
 bot.run(TOKEN)
