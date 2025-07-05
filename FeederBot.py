@@ -38,14 +38,12 @@ intents.guilds = True
 intents.members = True
 
 inhouse_mode = {}          # {guild_id: "regular" or "immortal"}
-player_data = {}
 lobby_players = {}         # {guild_id: list of (user_id, name, mmr)}
 lobby_message = {}         # {guild_id: message}
 roll_count = {}            # {guild_id: int}
 team_rolls = {}            # {guild_id: list of team tuples}
 original_teams = {}        # {guild_id: team tuple}
 captain_draft_state = {}   # {guild_id: {"pairs": [...], "index": 0}}
-active_league_ids = {}     # {guild_id: league_id}
 bound_league_ids = {}      # {guild_id: league_id}
 LIVE_CHANNEL_IDS = {}      # {guild_id: channel_id}
 live_embed_messages = {}   # {guild_id: message}
@@ -54,7 +52,6 @@ active_match_ids = {}        # guild_id: match_id
 
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
-LIVE_LEAGUE_ID = None  # Replace with your actual league ID
 
 HERO_CACHE_FILE = "hero_id_map.json"
 with open("hero_id_map.json", "r") as f:
@@ -425,8 +422,7 @@ async def format_team_players(players, guild):
         # Check Firestore for player mapping
         player_doc = db.collection("players").document(steam_id).get()
         if player_doc.exists:
-            player_data = player_doc.to_dict()
-            discord_id = player_data.get("discord_id")
+            discord_id = player_doc.to_dict().get("discord_id")
             member = guild.get_member(int(discord_id)) if discord_id else None
             display_name = member.display_name if member else f"<@{discord_id}>"
         else:
@@ -1027,9 +1023,7 @@ async def help_command(ctx, *, category: str = ""):
 # Runs once when the bot starts and begins the MMR refresh task.
 @bot.event
 async def on_ready():
-    global player_data
     global hero_id_to_name
-    player_data = {}  # still fine to cache this in memory
     print(f"{bot.user} is online!")
     refresh_all_mmrs.start()
     clear_all_bets(bot)
