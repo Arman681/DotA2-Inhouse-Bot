@@ -723,7 +723,10 @@ async def lobby_cmd(ctx, mode: str = None):
 
 # Clears the current lobby list and creates a new lobby message embed.
 @bot.command(name="reset")
-async def reset(ctx):
+async def reset(ctx, *args):
+    if args:
+        await ctx.send("❗ Usage: `!reset` (no extra arguments allowed)")
+        return
     guild_id = ctx.guild.id
     lobby_players[guild_id] = []
     try:
