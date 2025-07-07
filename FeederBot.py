@@ -886,6 +886,12 @@ async def viewlogs(ctx, *, flags: str = ""):
     else:
         lines.append("❌ No Firestore data found for this guild.")
     await ctx.send("\n".join(lines))
+@viewlogs.error
+async def viewlogs_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+    else:
+        await ctx.send("⚠️ An unexpected error occurred while retrieving the logs.")
 
 # Admin-only: Submits and processes a match ID manually for MMR and bet resolution.
 @bot.command(name="submitmatch")
@@ -932,6 +938,14 @@ async def submitmatch_error(ctx, error):
 async def bind_league_to_guild(ctx, league_id: str):
     save_league_guild_mapping(ctx.guild.id, league_id, server_name=ctx.guild.name, bound_by=str(ctx.author))
     await ctx.send(f"✅ League `{league_id}` bound to this server (Guild ID: `{ctx.guild.id}`).")
+@bind_league_to_guild.error
+async def bindleague_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❗ Usage: `!bindleague <league_id>`")
+    elif isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+    else:
+        await ctx.send("⚠️ An unexpected error occurred while binding the league.")
 
 # Admin-only: Sets the current text channel as the destination for live match embed updates.
 @bot.command(name="setlivechannel")
@@ -949,6 +963,12 @@ async def set_live_channel(ctx):
     # Update local cache
     LIVE_CHANNEL_IDS[guild_id] = channel_id
     await ctx.send(f"✅ This channel has been set to receive live match updates.")
+@set_live_channel.error
+async def setlivechannel_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+    else:
+        await ctx.send("⚠️ An unexpected error occurred while setting the live channel.")
 
 @bot.command(name="startpolling")
 @is_admin_or_has_role()
