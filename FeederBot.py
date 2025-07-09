@@ -1009,6 +1009,10 @@ async def start_polling(ctx):
         task = asyncio.create_task(poll_live_match(guild_id))
         polling_tasks[guild_id] = task
         await ctx.send("✅ Started polling for live matches in this server.")
+@start_polling.error
+async def start_polling_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. Only the bot owner can use `!startpolling`.")
 
 @bot.command(name="stoppolling")
 @is_global_admin()
@@ -1019,6 +1023,10 @@ async def stop_polling(ctx):
         await ctx.send("🛑 Stopped polling for this server.")
     else:
         await ctx.send("ℹ️ No polling is currently running for this server.")
+@stop_polling.error
+async def stop_polling_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. Only the bot owner can use `!stoppolling`.")
 
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
