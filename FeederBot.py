@@ -28,6 +28,8 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 STRATZ_TOKEN = os.getenv("STRATZ_TOKEN")
 STEAM_API_KEY = os.getenv("STEAM_API_KEY")
+# Replace this with your actual Discord user ID
+GLOBAL_ADMIN_ID = 187959278949105664
 
 db = firestore.client()
 
@@ -150,6 +152,12 @@ def is_admin_or_has_role():
             return True
         admin_roles = ["Inhouse Admin"]
         return any(role.name in admin_roles for role in ctx.author.roles)
+    return commands.check(predicate)
+
+# Custom check that allows only global admin to use commands
+def is_global_admin():
+    async def predicate(ctx):
+        return ctx.author.id == GLOBAL_ADMIN_ID
     return commands.check(predicate)
 
 # Utility function version of the role check (returns True/False instead of being a decorator)
@@ -991,6 +999,27 @@ async def setlivechannel_error(ctx, error):
     else:
         await ctx.send("⚠️ An unexpected error occurred while setting the live channel.")
 
+@bot.command(name="startpolling")
+@is_global_admin()
+async def start_polling(ctx):
+    guild_id = ctx.guild.id
+    if guild_id in polling_tasks and not polling_tasks[guild_id].done():
+        await ctx.send("⚠️ Polling is already running for this server.")
+    else:
+        task = asyncio.create_task(poll_live_match(guild_id))
+        polling_tasks[guild_id] = task
+        await ctx.send("✅ Started polling for live matches in this server.")
+
+@bot.command(name="stoppolling")
+@is_global_admin()
+async def stop_polling(ctx):
+    guild_id = ctx.guild.id
+    if guild_id in polling_tasks and not polling_tasks[guild_id].done():
+        polling_tasks[guild_id].cancel()
+        await ctx.send("🛑 Stopped polling for this server.")
+    else:
+        await ctx.send("ℹ️ No polling is currently running for this server.")
+
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
 @bot.command(name="help")
@@ -1101,16 +1130,6 @@ async def on_raw_reaction_add(payload):
             display_name = user.display_name
             lobby_players[guild_id].append((user.id, display_name, mmr))
             updated = True
-        match = fetch_live_match_for_guild(guild.id)
-        if match:
-            match_id = match.get("match_id")
-            guild_id_str = str(guild.id)
-            if guild_id_str not in polling_tasks:
-                active_match_ids[guild_id_str] = match_id
-                polling_tasks[guild_id_str] = asyncio.create_task(poll_live_match(match_id, guild))
-                await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
-        else:
-            await channel.send("⚠️ No live match found for the bound league.")
     elif emoji == "👎":
         was_full = len(lobby_players[guild_id]) == 10
         for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
@@ -1148,7 +1167,7 @@ async def on_raw_reaction_add(payload):
         await message.add_reaction("♻️")
         await message.remove_reaction(payload.emoji, user)
         # Start live match polling if not already started
-        """match = fetch_live_match_for_guild(guild.id)
+        match = fetch_live_match_for_guild(guild.id)
         if match:
             match_id = match.get("match_id")
             guild_id_str = str(guild.id)
@@ -1157,7 +1176,7 @@ async def on_raw_reaction_add(payload):
                 polling_tasks[guild_id_str] = asyncio.create_task(poll_live_match(match_id, guild))
                 await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
         else:
-            await channel.send("⚠️ No live match found for the bound league.")"""
+            await channel.send("⚠️ No live match found for the bound league.")
     elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
         # Get the member object from the guild
