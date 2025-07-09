@@ -63,26 +63,17 @@ with open("hero_id_map.json", "r") as f:
 async def poll_live_match(match_id, guild):
     guild_id_str = str(guild.id)
     print(f"[MATCH] Started polling match {match_id} for guild {guild.name}")
+
+    # Poll until Steam no longer reports a live match
     while True:
         await asyncio.sleep(15)
         try:
             match = fetch_live_match_for_guild(guild.id)
-            # If match ended
+
             if not match:
-                print(f"[MATCH] Match {match_id} ended. Resolving...")
-                await resolve_bets(match_id)
-                await adjust_mmr(match_id)
-                # Send summary to same embed channel
-                channel_info = LIVE_CHANNEL_IDS.get(guild_id_str)
-                if isinstance(channel_info, dict):
-                    channel_id = int(channel_info.get("live_channel_id", 0))
-                    channel = bot.get_channel(channel_id)
-                    if channel:
-                        await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and MMR updated.")
-                active_match_ids.pop(guild_id_str, None)
-                polling_tasks.pop(guild_id_str, None)
-                live_embed_messages.pop(guild_id_str, None)
-                break
+                print(f"[MATCH] Match {match_id} no longer reported as live. Stopping Steam polling.")
+                break  # Exit polling loop and move to STRATZ result retry
+
             # Update embed every 15 seconds
             embed = await format_live_match_embed(match, guild)
             channel_info = LIVE_CHANNEL_IDS.get(guild_id_str)
@@ -100,12 +91,44 @@ async def poll_live_match(match_id, guild):
                     else:
                         new_msg = await channel.send(embed=embed)
                         live_embed_messages[guild_id_str] = new_msg
-            # Locking bets is already handled in the !bet command
-            duration = match.get("scoreboard", {}).get("duration", 0)
-            if duration >= 120:
-                pass  # Do nothing, bets already locked
+
         except Exception as e:
             print(f"[ERROR] poll_live_match() for guild {guild_id_str}: {e}")
+
+    # Match is no longer live — try STRATZ for up to ~5 minutes
+    max_retries = 10
+    retry_delay = 30  # seconds
+    result = None
+
+    for attempt in range(max_retries):
+        result = fetch_match_result(match_id)
+        if result:
+            break
+        print(f"[RETRY] No match result yet for match {match_id}. Retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
+        await asyncio.sleep(retry_delay)
+
+    if not result:
+        print(f"[ERROR] No match result found for match {match_id} after {max_retries} attempts. Skipping bet resolution.")
+        return
+
+    # Proceed with resolution
+    winning_team = "radiant" if result["radiant_win"] else "dire"
+    winner_ids = map_steam_ids_to_discord_ids(result["radiant"] if result["radiant_win"] else result["dire"])
+    loser_ids = map_steam_ids_to_discord_ids(result["dire"] if result["radiant_win"] else result["radiant"])
+    await resolve_bets(guild.id, winning_team)
+    await adjust_mmr(winner_ids, loser_ids, guild_id_str, guild)
+
+    # Send match summary
+    channel_info = LIVE_CHANNEL_IDS.get(guild_id_str)
+    if isinstance(channel_info, dict):
+        channel_id = int(channel_info.get("live_channel_id", 0))
+        channel = bot.get_channel(channel_id)
+        if channel:
+            await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.")
+
+    active_match_ids.pop(guild_id_str, None)
+    polling_tasks.pop(guild_id_str, None)
+    live_embed_messages.pop(guild_id_str, None)
 
 # ============================== 🛠️ Bot Configuration ==============================
 # Resolves the correct command prefix for the bot, based on the message's guild.
@@ -390,6 +413,18 @@ def get_discord_id_from_steam_id(steam_id: str) -> Optional[str]:
     for doc in query:
         return doc.id  # Discord ID is stored as the doc ID
     return None
+
+def map_steam_ids_to_discord_ids(steam_ids):
+        discord_ids = []
+
+        for steam_id in steam_ids:
+            discord_id = get_discord_id_from_steam_id(steam_id)
+            if discord_id:
+                discord_ids.append(discord_id)
+            else:
+                print(f"[WARN] No Discord user found for Steam ID {steam_id}")
+        print(f"[INFO] Mapped {len(discord_ids)}/{len(steam_ids)} Steam IDs to Discord IDs")
+        return discord_ids
 
 async def format_team_players(players, guild):
     formatted = []
@@ -902,17 +937,6 @@ async def submitmatch(ctx, match_id: str):
     if not result:
         await ctx.send("❌ Could not fetch match result. Check the match ID.")
         return
-    def map_steam_ids_to_discord_ids(steam_ids):
-        discord_ids = []
-
-        for steam_id in steam_ids:
-            discord_id = get_discord_id_from_steam_id(steam_id)
-            if discord_id:
-                discord_ids.append(discord_id)
-            else:
-                print(f"[WARN] No Discord user found for Steam ID {steam_id}")
-        print(f"[INFO] Mapped {len(discord_ids)}/{len(steam_ids)} Steam IDs to Discord IDs")
-        return discord_ids
     winner_ids = map_steam_ids_to_discord_ids(result["radiant"] if result["radiant_win"] else result["dire"])
     loser_ids = map_steam_ids_to_discord_ids(result["dire"] if result["radiant_win"] else result["radiant"])
     winning_team = "radiant" if result["radiant_win"] else "dire"
@@ -1077,6 +1101,16 @@ async def on_raw_reaction_add(payload):
             display_name = user.display_name
             lobby_players[guild_id].append((user.id, display_name, mmr))
             updated = True
+        match = fetch_live_match_for_guild(guild.id)
+        if match:
+            match_id = match.get("match_id")
+            guild_id_str = str(guild.id)
+            if guild_id_str not in polling_tasks:
+                active_match_ids[guild_id_str] = match_id
+                polling_tasks[guild_id_str] = asyncio.create_task(poll_live_match(match_id, guild))
+                await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
+        else:
+            await channel.send("⚠️ No live match found for the bound league.")
     elif emoji == "👎":
         was_full = len(lobby_players[guild_id]) == 10
         for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
@@ -1114,7 +1148,7 @@ async def on_raw_reaction_add(payload):
         await message.add_reaction("♻️")
         await message.remove_reaction(payload.emoji, user)
         # Start live match polling if not already started
-        match = await fetch_live_match_for_guild(guild.id)
+        """match = fetch_live_match_for_guild(guild.id)
         if match:
             match_id = match.get("match_id")
             guild_id_str = str(guild.id)
@@ -1123,7 +1157,7 @@ async def on_raw_reaction_add(payload):
                 polling_tasks[guild_id_str] = asyncio.create_task(poll_live_match(match_id, guild))
                 await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
         else:
-            await channel.send("⚠️ No live match found for the bound league.")
+            await channel.send("⚠️ No live match found for the bound league.")"""
     elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
         # Get the member object from the guild
