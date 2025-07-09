@@ -26,7 +26,10 @@ async def adjust_mmr(winner_ids, loser_ids, guild_id, guild, gain=50, loss=50):
             nickname = member.display_name
         except:
             nickname = "Unknown"
-        set_inhouse_mmr(guild_id, uid, nickname, current + gain)
+        new_mmr = current + gain
+        set_inhouse_mmr(guild_id, uid, nickname, new_mmr)
+        print(f"[MMR+] ✅ {nickname} ({uid}) gained {gain} MMR (now {new_mmr})")
+
     for uid in loser_ids:
         current = get_inhouse_mmr(guild_id, uid)
         try:
@@ -34,7 +37,9 @@ async def adjust_mmr(winner_ids, loser_ids, guild_id, guild, gain=50, loss=50):
             nickname = member.display_name
         except:
             nickname = "Unknown"
-        set_inhouse_mmr(guild_id, uid, nickname, current - loss)
+        new_mmr = current - loss
+        set_inhouse_mmr(guild_id, uid, nickname, new_mmr)
+        print(f"[MMR-] ❌ {nickname} ({uid}) lost {loss} MMR (now {new_mmr})")
 
 def get_top_players(guild_id, limit=10):
     docs = db.collection("inhouse_mmr").document(str(guild_id)) \
