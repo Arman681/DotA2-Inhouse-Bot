@@ -1002,16 +1002,18 @@ async def setlivechannel_error(ctx, error):
 @bot.command(name="startpolling")
 @is_global_admin()
 async def start_polling(ctx):
-    match = fetch_live_match_for_guild(ctx.guild.id)
+    guild = ctx.guild
+    channel = ctx.channel
+    match = fetch_live_match_for_guild(guild.id)
     if match:
         match_id = match.get("match_id")
-        guild_id_str = str(ctx.guild.id)
+        guild_id_str = str(guild.id)
         if guild_id_str not in polling_tasks:
             active_match_ids[guild_id_str] = match_id
-            polling_tasks[guild_id_str] = asyncio.create_task(poll_live_match(match_id, ctx.guild.id))
-            await ctx.send(f"[🚀] Started match polling for match ID {match_id} in guild {ctx.guild.name}")
+            polling_tasks[guild_id_str] = asyncio.create_task(poll_live_match(match_id, guild))
+            await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
     else:
-        await ctx.send("⚠️ No live match found for the bound league.")
+        await channel.send("⚠️ No live match found for the bound league.")
 @start_polling.error
 async def start_polling_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
