@@ -481,7 +481,7 @@ async def refresh_all_mmrs():
         if "steam_id" in data:
             mmr, season_rank = fetch_mmr_from_stratz(data["steam_id"])
             if mmr:
-                db.collection("players").document(user_id).update({
+                db.collection("players").document(str(user_id)).update({
                     "mmr": mmr,
                     "seasonRank": season_rank
                 })
@@ -612,7 +612,7 @@ async def bet(ctx, amount: int, team: str):
         await ctx.send("⏳ Bets are closed. The match has passed the 2:00 mark.")
         return
     # Existing Firestore bet logic
-    entry_ref = db.collection("guild_specific_info").document(ctx.guild.id).collection("bets").document(str(ctx.author.id))
+    entry_ref = db.collection("guild_specific_info").document(str(ctx.guild.id)).collection("bets").document(str(ctx.author.id))
     existing_bet_doc = entry_ref.get()
     previous_amount = 0
     is_update = False
@@ -804,7 +804,7 @@ async def setmmr(ctx, mmr: int, member: discord.Member):
     user_id = str(member.id)
     # Update Firestore document
     try:
-        user_ref = db.collection("players").document(user_id)
+        user_ref = db.collection("players").document(str(user_id))
         user_ref.set({"mmr": mmr}, merge=True)
         await ctx.send(f"{member.mention}'s MMR has been manually set to **{mmr}**.")
     except Exception as e:
@@ -967,10 +967,10 @@ async def set_live_channel(ctx):
     channel_id = ctx.channel.id
     # Save to Firestore
     data = {
-        "live_channel_id": (channel_id),
+        "live_channel_id": str(channel_id),
         "live_channel_timestamp": firestore.SERVER_TIMESTAMP,
     }
-    doc_ref = db.collection("guild_specific_info").document(ctx.guild.id)
+    doc_ref = db.collection("guild_specific_info").document(str(ctx.guild.id))
     doc_ref.set({"live_channel_id": data}, merge=True)
     # Update local cache
     live_channel_ids[ctx.guild.id] = channel_id
