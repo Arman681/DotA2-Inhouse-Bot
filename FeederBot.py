@@ -1076,12 +1076,14 @@ async def on_ready():
     for doc in docs:
         data = doc.to_dict()
         live_channel_id = data.get("live_channel_id", {}).get("live_channel_id", 0)
-        
         try: 
             live_channel_ids[doc.id] = int(live_channel_id)
             print(f"[DEBUG] Guild {doc.id} → Channel {live_channel_id} (type: {type(live_channel_id).__name__})")
         except (ValueError, TypeError):
             print(f"[WARNING] Skipping guild {doc.id} due to invalid live_channel_id: {live_channel_id}")
+    print("[DEBUG] Full live_channel_ids dict with types:")
+    for guild_id, channel_id in live_channel_ids.items():
+        print(f"  {guild_id} → {channel_id} (type: {type(channel_id).__name__})")
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
