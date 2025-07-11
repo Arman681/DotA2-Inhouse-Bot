@@ -363,11 +363,13 @@ def fetch_hero_id_to_name_map():
         with open(HERO_CACHE_FILE, "r") as f:
             data = json.load(f)
             if isinstance(data, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
+                print("[INFO] ✅ Loaded hero ID cache from local file.")
                 return data
             else:
                 print("[WARN] Invalid hero cache format. Refetching from API...")
 
     # Otherwise, fetch from Steam API
+    print("[INFO] 📡 Fetching hero data from Steam API...")
     url = "https://api.steampowered.com/IEconDOTA2_570/GetHeroes/v1/"
     params = {
         "language": "en_us",
@@ -383,6 +385,7 @@ def fetch_hero_id_to_name_map():
         # Save to cache
         with open(HERO_CACHE_FILE, "w") as f:
             json.dump(hero_map, f)
+        print("[INFO] 💾 Saved hero ID map to cache.")
 
         return hero_map
     except requests.exceptions.RequestException as e:
