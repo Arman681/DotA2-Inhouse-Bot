@@ -1078,6 +1078,10 @@ async def on_ready():
         live_channel_id = data.get("live_channel_id")
         if live_channel_id:
             live_channel_ids[doc.id] = live_channel_id
+            print(f"[DEBUG] Guild {doc.id} → Channel {live_channel_id} (type: {type(live_channel_id).__name__})")
+    # Print final state of live_channel_ids
+    print("[DEBUG] Full live_channel_ids dict:")
+    print(live_channel_ids)
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
