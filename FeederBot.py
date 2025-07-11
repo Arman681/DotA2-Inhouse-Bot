@@ -82,16 +82,16 @@ async def poll_live_match(match_id, guild):
                 channel_id = int(channel_info.get("live_channel_id", 0))
                 channel = bot.get_channel(channel_id)
                 if channel:
-                    prev_msg = live_embed_messages.get(str(guild.id))
+                    prev_msg = live_embed_messages.get(guild.id)
                     if prev_msg:
                         try:
                             await prev_msg.edit(embed=embed)
                         except discord.NotFound:
                             new_msg = await channel.send(embed=embed)
-                            live_embed_messages[str(guild.id)] = new_msg
+                            live_embed_messages[guild.id] = new_msg
                     else:
                         new_msg = await channel.send(embed=embed)
-                        live_embed_messages[str(guild.id)] = new_msg
+                        live_embed_messages[guild.id] = new_msg
 
         except Exception as e:
             print(f"[ERROR] poll_live_match() for guild {str(guild.id)}: {e}")
@@ -120,14 +120,14 @@ async def poll_live_match(match_id, guild):
     await adjust_mmr(winner_ids, loser_ids, str(guild.id), guild)
 
     # Send match summary
-    channel_id = live_channel_ids.get(str(guild.id))
+    channel_id = live_channel_ids.get(guild.id)
     channel = bot.get_channel(channel_id)
     if channel:
         await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.")
 
     # Clean up memory
     active_match_ids.pop(guild.id, None)
-    polling_tasks.pop(str(guild.id), None)
+    polling_tasks.pop(guild.id, None)
     live_embed_messages.pop(str(guild.id), None)
 
     # Final notice
@@ -357,17 +357,21 @@ def fetch_live_match_for_guild(guild_id):
         print(f"[fetch_live_match_for_guild()] Steam API error: {e}")
         return None
 
-def fetch_hero_id_to_name_map(api_key):
+def fetch_hero_id_to_name_map():
     # Try loading from local cache first
     if os.path.exists(HERO_CACHE_FILE):
         with open(HERO_CACHE_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+            if isinstance(data, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
+                return data
+            else:
+                print("[WARN] Invalid hero cache format. Refetching from API...")
 
     # Otherwise, fetch from Steam API
     url = "https://api.steampowered.com/IEconDOTA2_570/GetHeroes/v1/"
     params = {
         "language": "en_us",
-        "key": api_key
+        "key": STEAM_API_KEY
     }
 
     try:
@@ -1070,20 +1074,20 @@ async def on_ready():
     refresh_all_mmrs.start()
     clear_all_bets(bot)
     # Cache hero IDs
-    hero_id_to_name = fetch_hero_id_to_name_map(STEAM_API_KEY)
+    hero_id_to_name = fetch_hero_id_to_name_map()
     # Load live_channel_ids from Firestore
     docs = db.collection("guild_specific_info").stream()
     for doc in docs:
         data = doc.to_dict()
         live_channel_id = data.get("live_channel_id", {}).get("live_channel_id", 0)
         try: 
-            live_channel_ids[doc.id] = int(live_channel_id)
-            print(f"[DEBUG] Guild {doc.id} → Channel {live_channel_id} (type: {type(live_channel_id).__name__})")
+            live_channel_ids[int(doc.id)] = int(live_channel_id)
+            print(f"[DEBUG] Guild {doc.id} (type: {type(doc.id).__name__}) → Channel {live_channel_id} (type: {type(live_channel_id).__name__})")
         except (ValueError, TypeError):
             print(f"[WARNING] Skipping guild {doc.id} due to invalid live_channel_id: {live_channel_id}")
     print("[DEBUG] Full live_channel_ids dict with types:")
     for guild_id, channel_id in live_channel_ids.items():
-        print(f"  {guild_id} → {channel_id} (type: {type(channel_id).__name__})")
+        print(f"  {guild_id} (type: {type(guild_id).__name__}) → {channel_id} (type: {type(channel_id).__name__})")
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
@@ -1169,10 +1173,9 @@ async def on_raw_reaction_add(payload):
         match = fetch_live_match_for_guild(guild.id)
         if match:
             match_id = match.get("match_id")
-            guild_id_str = str(guild.id)
-            if guild_id_str not in polling_tasks:
-                active_match_ids[guild_id_str] = match_id
-                polling_tasks[guild_id_str] = asyncio.create_task(poll_live_match(match_id, guild))
+            if guild_id not in polling_tasks:
+                active_match_ids[guild_id] = match_id
+                polling_tasks[guild_id] = asyncio.create_task(poll_live_match(match_id, guild))
                 await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
         else:
             await channel.send("⚠️ No live match found for the bound league.")
