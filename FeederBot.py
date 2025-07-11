@@ -46,10 +46,10 @@ roll_count = {}            # {guild_id: int}
 team_rolls = {}            # {guild_id: list of team tuples}
 original_teams = {}        # {guild_id: team tuple}
 captain_draft_state = {}   # {guild_id: {"pairs": [...], "index": 0}}
-LIVE_CHANNEL_IDS = {}      # {guild_id: channel_id}
+live_channel_ids = {}      # {guild_id: channel_id}
+active_match_ids = {}      # {guild_id: match_id}
 live_embed_messages = {}   # {guild_id: message}
 polling_tasks = {}         # {guild_id: asyncio.Task} for per-server polling
-active_match_ids = {}        # guild_id: match_id
 
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
@@ -63,7 +63,6 @@ with open("hero_id_map.json", "r") as f:
 # ========================================================================================================================
 
 async def poll_live_match(match_id, guild):
-    guild_id_str = str(guild.id)
     print(f"[MATCH] Started polling match {match_id} for guild {guild.name}")
 
     # Poll until Steam no longer reports a live match
@@ -78,24 +77,24 @@ async def poll_live_match(match_id, guild):
 
             # Update embed every 15 seconds
             embed = await format_live_match_embed(match, guild)
-            channel_info = LIVE_CHANNEL_IDS.get(guild_id_str)
+            channel_info = live_channel_ids.get(guild.id)
             if isinstance(channel_info, dict):
                 channel_id = int(channel_info.get("live_channel_id", 0))
                 channel = bot.get_channel(channel_id)
                 if channel:
-                    prev_msg = live_embed_messages.get(guild_id_str)
+                    prev_msg = live_embed_messages.get(str(guild.id))
                     if prev_msg:
                         try:
                             await prev_msg.edit(embed=embed)
                         except discord.NotFound:
                             new_msg = await channel.send(embed=embed)
-                            live_embed_messages[guild_id_str] = new_msg
+                            live_embed_messages[str(guild.id)] = new_msg
                     else:
                         new_msg = await channel.send(embed=embed)
-                        live_embed_messages[guild_id_str] = new_msg
+                        live_embed_messages[str(guild.id)] = new_msg
 
         except Exception as e:
-            print(f"[ERROR] poll_live_match() for guild {guild_id_str}: {e}")
+            print(f"[ERROR] poll_live_match() for guild {str(guild.id)}: {e}")
 
     # Match is no longer live — try STRATZ for up to ~5 minutes
     max_retries = 10
@@ -118,19 +117,23 @@ async def poll_live_match(match_id, guild):
     winner_ids = map_steam_ids_to_discord_ids(result["radiant"] if result["radiant_win"] else result["dire"])
     loser_ids = map_steam_ids_to_discord_ids(result["dire"] if result["radiant_win"] else result["radiant"])
     await resolve_bets(guild.id, winning_team)
-    await adjust_mmr(winner_ids, loser_ids, guild_id_str, guild)
+    await adjust_mmr(winner_ids, loser_ids, str(guild.id), guild)
 
     # Send match summary
-    channel_info = LIVE_CHANNEL_IDS.get(guild_id_str)
-    if isinstance(channel_info, dict):
-        channel_id = int(channel_info.get("live_channel_id", 0))
-        channel = bot.get_channel(channel_id)
-        if channel:
-            await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.")
+    channel_id = live_channel_ids.get(str(guild.id))
+    channel = bot.get_channel(channel_id)
+    if channel:
+        await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.")
 
-    active_match_ids.pop(guild_id_str, None)
-    polling_tasks.pop(guild_id_str, None)
-    live_embed_messages.pop(guild_id_str, None)
+    # Clean up memory
+    active_match_ids.pop(guild.id, None)
+    polling_tasks.pop(str(guild.id), None)
+    live_embed_messages.pop(str(guild.id), None)
+
+    # Final notice
+    if channel:
+        await channel.send("Polling for this server has ended.")
+
 
 # ============================== 🛠️ Bot Configuration ==============================
 # Resolves the correct command prefix for the bot, based on the message's guild.
@@ -303,17 +306,16 @@ def fetch_mmr_from_stratz(steam_id, max_retries=5):
 
 def fetch_live_match_for_guild(guild_id):
     """Fetches a live match for the manually bound league_id in this guild."""
-    guild_id_str = str(guild_id)
     # ✅ Step 1: Fetch bound_league_id from Firestore
-    doc_ref = db.collection("guild_specific_info").document(guild_id_str)
+    doc_ref = db.collection("guild_specific_info").document(guild_id)
     doc = doc_ref.get()
     if not doc.exists:
-        print(f"[WARN] No guild_specific_info found for guild {guild_id_str}")
+        print(f"[WARN] No guild_specific_info found for guild {guild_id}")
         return None
     league_info = doc.to_dict().get("league_id", {})
     bound_league_id = league_info.get("bound_league_id")
     if not bound_league_id:
-        print(f"[WARN] No bound_league_id found in Firestore for guild {guild_id_str}")
+        print(f"[WARN] No bound_league_id found in Firestore for guild {guild_id}")
         return None
     # ✅ Step 2: Fetch matches from Steam API
     url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
@@ -325,23 +327,23 @@ def fetch_live_match_for_guild(guild_id):
         matches = response.json().get("result", {}).get("games", [])
         valid_matches = [m for m in matches if m.get("scoreboard")]
         if not valid_matches:
-            if guild_id_str in active_match_ids:
-                print(f"[INFO] Clearing expired match for guild {guild_id_str}")
-                del active_match_ids[guild_id_str]
+            if guild_id in active_match_ids:
+                print(f"[INFO] Clearing expired match for guild {guild_id}")
+                del active_match_ids[guild_id]
             return None
         # ✅ Step 3: Find match from bound league
         bound_matches = [m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)]
         if not bound_matches:
-            print(f"[INFO] No live matches found for bound league_id {bound_league_id} in guild {guild_id_str}")
+            print(f"[INFO] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
             return None
         # ✅ Step 4: Reuse match if already tracked
-        last_match_id = active_match_ids.get(guild_id_str)
+        last_match_id = active_match_ids.get(guild_id)
         selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
         if not selected_match:
             selected_match = random.choice(bound_matches)
-            active_match_ids[guild_id_str] = selected_match["match_id"]
-            print(f"[INFO] Now tracking match_id {selected_match['match_id']} for guild {guild_id_str}")
-        selected_match["guild_id"] = guild_id_str
+            active_match_ids[guild_id] = selected_match["match_id"]
+            print(f"[INFO] Now tracking match_id {selected_match['match_id']} for guild {guild_id}")
+        selected_match["guild_id"] = guild_id
         return selected_match
     except Exception as e:
         print(f"[fetch_live_match_for_guild()] Steam API error: {e}")
@@ -611,14 +613,11 @@ async def bet(ctx, amount: int, team: str):
         await ctx.send("❌ Bet amount must be greater than 0.")
         return
     user_id = str(ctx.author.id)
-    guild_id = str(ctx.guild.id)
-    guild_id_str = guild_id
     nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
     # Check if a match is active and < 2 min duration
-    if guild_id_str not in active_match_ids:
+    if ctx.guild.id not in active_match_ids:
         await ctx.send("❌ There is no active match in progress to bet on.")
         return
-    match_id = active_match_ids[guild_id_str]
     match = fetch_live_match_for_guild(ctx.guild.id)
     if not match:
         await ctx.send("⚠️ Could not retrieve live match info. Betting may be closed.")
@@ -628,7 +627,7 @@ async def bet(ctx, amount: int, team: str):
         await ctx.send("⏳ Bets are closed. The match has passed the 2:00 mark.")
         return
     # Existing Firestore bet logic
-    entry_ref = db.collection("guild_specific_info").document(guild_id).collection("bets").document(str(ctx.author.id))
+    entry_ref = db.collection("guild_specific_info").document(ctx.guild.id).collection("bets").document(str(ctx.author.id))
     existing_bet_doc = entry_ref.get()
     previous_amount = 0
     is_update = False
@@ -648,9 +647,9 @@ async def bet(ctx, amount: int, team: str):
             )
             return
         is_update = True
-    old_balance = get_balance(guild_id, ctx.author.id)
-    success = place_bet(user_id, team, amount, guild_id, nickname)
-    new_balance = get_balance(guild_id, ctx.author.id)
+    old_balance = get_balance(ctx.guild.id, ctx.author.id)
+    success = place_bet(user_id, team, amount, ctx.guild.id, nickname)
+    new_balance = get_balance(ctx.guild.id, ctx.author.id)
     if not success:
         await ctx.send("❌ You don’t have enough balance.")
     else:
@@ -980,17 +979,16 @@ async def bindleague_error(ctx, error):
 @bot.command(name="setlivechannel")
 @is_admin_or_has_role()
 async def set_live_channel(ctx):
-    guild_id = str(ctx.guild.id)
     channel_id = ctx.channel.id
     # Save to Firestore
     data = {
-        "live_channel_id": str(channel_id),
+        "live_channel_id": (channel_id),
         "live_channel_timestamp": firestore.SERVER_TIMESTAMP,
     }
-    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref = db.collection("guild_specific_info").document(ctx.guild.id)
     doc_ref.set({"live_channel_id": data}, merge=True)
     # Update local cache
-    LIVE_CHANNEL_IDS[guild_id] = channel_id
+    live_channel_ids[ctx.guild.id] = channel_id
     await ctx.send(f"✅ This channel has been set to receive live match updates.")
 @set_live_channel.error
 async def setlivechannel_error(ctx, error):
@@ -1002,16 +1000,14 @@ async def setlivechannel_error(ctx, error):
 @bot.command(name="startpolling")
 @is_global_admin()
 async def start_polling(ctx):
-    guild = ctx.guild
     channel = ctx.channel
-    match = fetch_live_match_for_guild(guild.id)
+    match = fetch_live_match_for_guild(ctx.guild.id)
     if match:
         match_id = match.get("match_id")
-        guild_id_str = str(guild.id)
-        if guild_id_str not in polling_tasks:
-            active_match_ids[guild_id_str] = match_id
-            polling_tasks[guild_id_str] = asyncio.create_task(poll_live_match(match_id, guild))
-            await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
+        if ctx.guild.id not in polling_tasks:
+            active_match_ids[ctx.guild.id] = match_id
+            polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild))
+            await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {ctx.guild.name}")
     else:
         await channel.send("⚠️ No live match found for the bound league.")
 @start_polling.error
@@ -1022,9 +1018,8 @@ async def start_polling_error(ctx, error):
 @bot.command(name="stoppolling")
 @is_global_admin()
 async def stop_polling(ctx):
-    guild_id = ctx.guild.id
-    if guild_id in polling_tasks and not polling_tasks[guild_id].done():
-        polling_tasks[guild_id].cancel()
+    if ctx.guild.id in polling_tasks and not polling_tasks[ctx.guild.id].done():
+        polling_tasks[ctx.guild.id].cancel()
         await ctx.send("🛑 Stopped polling for this server.")
     else:
         await ctx.send("ℹ️ No polling is currently running for this server.")
@@ -1091,13 +1086,13 @@ async def on_ready():
     clear_all_bets(bot)
     # Cache hero IDs
     hero_id_to_name = fetch_hero_id_to_name_map(STEAM_API_KEY)
-    # Load LIVE_CHANNEL_IDS from Firestore
+    # Load live_channel_ids from Firestore
     docs = db.collection("guild_specific_info").stream()
     for doc in docs:
         data = doc.to_dict()
         live_channel_id = data.get("live_channel_id")
         if live_channel_id:
-            LIVE_CHANNEL_IDS[doc.id] = live_channel_id
+            live_channel_ids[doc.id] = live_channel_id
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
@@ -1144,16 +1139,16 @@ async def on_raw_reaction_add(payload):
             lobby_players[guild_id].append((user.id, display_name, mmr))
             updated = True
     elif emoji == "👎":
-        was_full = len(lobby_players[guild_id]) == 10
+        was_nine = len(lobby_players[guild_id]) == 9
         for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
             if uid == user.id:
                 del lobby_players[guild_id][i]
                 updated = True
-                if was_full and len(lobby_players[guild_id]) == 9:
+                if was_nine and len(lobby_players[guild_id]) == 8:
                     await channel.send(f"Wow, so nice of you to leave at 9/10, {user.mention}")
                 break
         # Remove 🚀 and ♻️ if needed
-        if was_full and len(lobby_players[guild_id]) == 9:
+        if was_nine and len(lobby_players[guild_id]) == 9:
             for reaction in message.reactions:
                 if str(reaction.emoji) in ["🚀", "♻️"]:
                     await message.clear_reaction(reaction.emoji)
