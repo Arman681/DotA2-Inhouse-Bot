@@ -307,7 +307,7 @@ def fetch_mmr_from_stratz(steam_id, max_retries=5):
 def fetch_live_match_for_guild(guild_id):
     """Fetches a live match for the manually bound league_id in this guild."""
     # ✅ Step 1: Fetch bound_league_id from Firestore
-    doc_ref = db.collection("guild_specific_info").document(guild_id)
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc = doc_ref.get()
     if not doc.exists:
         print(f"[WARN] No guild_specific_info found for guild {guild_id}")
@@ -338,11 +338,19 @@ def fetch_live_match_for_guild(guild_id):
             return None
         # ✅ Step 4: Reuse match if already tracked
         last_match_id = active_match_ids.get(guild_id)
+        if last_match_id:
+            print(f"[DEBUG] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
+        else:
+            print(f"[DEBUG] Step 4 skipped: No active match found for guild {guild_id}")
+
         selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
-        if not selected_match:
+        if selected_match:
+            print(f"[DEBUG] Reusing existing match_id {last_match_id} for guild {guild_id}")
+        else:
             selected_match = random.choice(bound_matches)
             active_match_ids[guild_id] = selected_match["match_id"]
-            print(f"[INFO] Now tracking match_id {selected_match['match_id']} for guild {guild_id}")
+            print(f"[DEBUG] Picked new match_id {selected_match['match_id']} for guild {guild_id}")
+
         selected_match["guild_id"] = guild_id
         return selected_match
     except Exception as e:
@@ -435,29 +443,6 @@ def map_steam_ids_to_discord_ids(steam_ids):
                 print(f"[WARN] No Discord user found for Steam ID {steam_id}")
         print(f"[INFO] Mapped {len(discord_ids)}/{len(steam_ids)} Steam IDs to Discord IDs")
         return discord_ids
-
-async def format_team_players(players, guild):
-    formatted = []
-    for p in players:
-        hero_id = str(p.get("hero_id", 0))
-        if hero_id == "0":
-            print(f"[WARN] Skipping player with hero_id 0: {p}")
-            continue  # Skip if no hero assigned
-
-        steam_id = str(p.get("account_id", "Unknown"))
-        hero_name = hero_id_map.get(hero_id, f"Hero {hero_id}")
-
-        # Check Firestore for player mapping
-        player_doc = db.collection("players").document(steam_id).get()
-        if player_doc.exists:
-            discord_id = player_doc.to_dict().get("discord_id")
-            member = guild.get_member(int(discord_id)) if discord_id else None
-            display_name = member.display_name if member else f"<@{discord_id}>"
-        else:
-            display_name = get_steam_display_name(steam_id)
-
-        formatted.append(f"**{display_name}**\n{hero_name}")
-    return formatted
 
 def get_steam_display_name(account_id_32):
     try:
