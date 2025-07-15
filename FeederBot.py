@@ -1405,8 +1405,8 @@ def build_immortal_embed(captains, pool, guild, reroll_count):
     return embed
 
 async def format_live_match_embed(match, guild):
-    radiant_score = match["scoreboard"]["radiant"]["score"]
-    dire_score = match["scoreboard"]["dire"]["score"]
+    radiant_kills = match["scoreboard"]["radiant"]["kills"]
+    dire_kills = match["scoreboard"]["dire"]["kills"]
     match_time = match["scoreboard"]["duration"]
     minutes = int(match_time) // 60
     seconds = int(match_time) % 60
@@ -1414,15 +1414,15 @@ async def format_live_match_embed(match, guild):
     league_id = match.get("league_id", "N/A")
     match_id = match.get("match_id", "N/A")
     # Determine embed color
-    if radiant_score > dire_score:
+    if radiant_kills > dire_kills:
         color = discord.Color.green()
-    elif dire_score > radiant_score:
+    elif dire_kills > radiant_kills:
         color = discord.Color.red()
     else:
         color = discord.Color.blurple()
     embed = discord.Embed(
         title="🏆 Live League Match",
-        description=f"⏱️ **{timer}** — **Radiant {radiant_score} : {dire_score} Dire**",
+        description=f"⏱️ **{timer}** — **Radiant {radiant_kills} : {dire_kills} Dire**",
         color=color
     )
     radiant_players = []
