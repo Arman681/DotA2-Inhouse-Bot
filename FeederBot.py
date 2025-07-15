@@ -83,7 +83,7 @@ bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_
 
 async def poll_live_match(match_id, guild, random_mode=False):
     print(f"[MATCH] Started polling match {match_id} for guild {guild.name} (random_mode={random_mode})")
-
+    channel_id = live_channel_ids.get(guild.id)
     # Poll until Steam no longer reports a live match
     while True:
         await asyncio.sleep(15)
@@ -96,7 +96,6 @@ async def poll_live_match(match_id, guild, random_mode=False):
 
             # Update embed every 15 seconds
             embed = await format_live_match_embed(match, guild)
-            channel_id = live_channel_ids.get(guild.id)
             channel = bot.get_channel(channel_id) if channel_id else None
             if channel:
                 prev_msg = live_embed_messages.get(guild.id)
@@ -133,7 +132,6 @@ async def poll_live_match(match_id, guild, random_mode=False):
         match_tracking_start_times.pop(guild.id, None)
         live_embed_messages.pop(str(guild.id), None)
 
-        channel_id = live_channel_ids.get(guild.id)
         channel = bot.get_channel(channel_id)
         if channel:
             await channel.send("⚠️ Match ended but no result was found. Polling has been stopped.")
@@ -143,22 +141,19 @@ async def poll_live_match(match_id, guild, random_mode=False):
     winning_team = "radiant" if result["radiant_win"] else "dire"
     winner_ids = map_steam_ids_to_discord_ids(result["radiant"] if result["radiant_win"] else result["dire"])
     loser_ids = map_steam_ids_to_discord_ids(result["dire"] if result["radiant_win"] else result["radiant"])
-    await resolve_bets(guild.id, winning_team)
+    resolve_bets(guild.id, winning_team)
     if not random_mode:
         try:
-            await adjust_mmr(bot, winner_ids, loser_ids, str(guild.id), guild)
+            adjust_mmr(bot, winner_ids, loser_ids, str(guild.id), guild)
         except Exception as e:
             print(f"[ERROR] Failed to adjust MMR: {e}")
 
     # Send match summary
-    channel_id = live_channel_ids.get(guild.id)
-    if not channel_id:
-        print(f"[WARN] No channel_id found for guild {guild.id}")
-    channel = bot.get_channel(channel_id)
-    if not channel:
-        print(f"[WARN] Could not resolve channel from ID: {channel_id} in guild {guild.id}")
-    else:
+    try:
         await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.")
+        print(f"[DEBUG] Match summary sent to channel ID: {channel.id}")
+    except Exception as e:
+        print(f"[ERROR] Failed to send match summary: {e}")
 
     # Clean up memory
     active_match_ids.pop(guild.id, None)
