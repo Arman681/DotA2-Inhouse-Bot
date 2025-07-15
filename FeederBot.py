@@ -116,6 +116,17 @@ async def poll_live_match(match_id, guild, random_mode=False):
 
     if not result:
         print(f"[ERROR] No match result found for match {match_id} after {max_retries} attempts. Skipping bet resolution.")
+        # Clean up memory even if result is missing
+        active_match_ids.pop(guild.id, None)
+        polling_tasks.pop(guild.id, None)
+        random_polling_flags.pop(guild.id, None)
+        match_tracking_start_times.pop(guild.id, None)
+        live_embed_messages.pop(str(guild.id), None)
+
+        channel_id = live_channel_ids.get(guild.id)
+        channel = bot.get_channel(channel_id)
+        if channel:
+            await channel.send("⚠️ Match ended but no result was found. Polling has been stopped.")
         return
 
     # Proceed with resolution
