@@ -359,6 +359,9 @@ def fetch_live_match_for_guild(guild_id, random_mode=False):
                 del active_match_ids[guild_id]
             return None
 
+        print(f"[DEBUG] Checked {len(matches)} total live matches from Steam API.")
+        print(f"[DEBUG] {len(valid_matches)} passed scoreboard and duration filters.")
+
         # ✅ Step 3: Find matches from bound league
         bound_matches = valid_matches if random_mode else [
             m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
