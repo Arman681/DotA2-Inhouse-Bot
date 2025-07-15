@@ -82,6 +82,8 @@ bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_
 
 async def poll_live_match(match_id, guild, random_mode=False):
     print(f"[MATCH] Started polling match {match_id} for guild {guild.name} (random_mode={random_mode})")
+    # 💡 Prevent using any previous embed
+    live_embed_messages.pop(guild.id, None)
     channel_id = live_channel_ids.get(guild.id)
     # Poll until Steam no longer reports a live match
     while True:
