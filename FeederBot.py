@@ -586,6 +586,11 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
     # If MMR is None but seasonRank is high, set MMR manually
     if mmr is None and season_rank and season_rank >= 80:
         mmr = 5650
+        await ctx.send(
+            f"⚠️ STRATZ does not provide season rank values beyond 80.\n"
+            f"Your estimated MMR has been capped at **5650** based on your season rank ({season_rank}).\n"
+            f"If your actual MMR is higher, please have an admin or inhouse admin to manually update it using `!setmmr`."
+        )
     config_data = {
         "steam_id": steam32,
         "steam_name": target.name,
