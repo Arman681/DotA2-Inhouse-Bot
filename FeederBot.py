@@ -67,6 +67,16 @@ HERO_CACHE_FILE = "hero_id_map.json"
 with open("hero_id_map.json", "r") as f:
     hero_id_map = json.load(f)
 
+# ============================== 🛠️ Bot Configuration ==============================
+# Resolves the correct command prefix for the bot, based on the message's guild.
+async def resolve_command_prefix(bot, message):
+    if message.guild:
+        prefix = load_guild_prefix(str(message.guild.id))
+        return prefix
+    return "!"  # fallback default for DMs
+
+bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_command=None)
+
 # ========================================================================================================================
 # ============================================ ⚙️ Core Functions & Utilities ============================================
 # ========================================================================================================================
@@ -134,7 +144,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
     winner_ids = map_steam_ids_to_discord_ids(result["radiant"] if result["radiant_win"] else result["dire"])
     loser_ids = map_steam_ids_to_discord_ids(result["dire"] if result["radiant_win"] else result["radiant"])
     await resolve_bets(guild.id, winning_team)
-    await adjust_mmr(winner_ids, loser_ids, str(guild.id), guild)
+    await adjust_mmr(bot, winner_ids, loser_ids, str(guild.id), guild)
 
     # Send match summary
     channel_id = live_channel_ids.get(guild.id)
@@ -152,16 +162,6 @@ async def poll_live_match(match_id, guild, random_mode=False):
     # Final notice
     if channel:
         await channel.send("Polling for this server has ended.")
-
-
-# ============================== 🛠️ Bot Configuration ==============================
-# Resolves the correct command prefix for the bot, based on the message's guild.
-async def resolve_command_prefix(bot, message):
-    if message.guild:
-        prefix = load_guild_prefix(str(message.guild.id))
-        return prefix
-    return "!"  # fallback default for DMs
-bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_command=None)
 
 # =============================== 🔐 Permission Checks ===============================
 # Custom check that allows admins or specific roles to use commands
@@ -986,7 +986,7 @@ async def submitmatch(ctx, match_id: str):
     winner_ids = map_steam_ids_to_discord_ids(result["radiant"] if result["radiant_win"] else result["dire"])
     loser_ids = map_steam_ids_to_discord_ids(result["dire"] if result["radiant_win"] else result["radiant"])
     winning_team = "radiant" if result["radiant_win"] else "dire"
-    await adjust_mmr(winner_ids, loser_ids, ctx.guild.id, ctx.guild)
+    await adjust_mmr(bot, winner_ids, loser_ids, ctx.guild.id, ctx.guild)
     resolve_bets(ctx.guild.id, winning_team)
     clear_guild_bets(ctx)
     await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.")
