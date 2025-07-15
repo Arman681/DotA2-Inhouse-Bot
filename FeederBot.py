@@ -632,6 +632,7 @@ async def bet(ctx, amount: int, team: str):
     if amount <= 0:
         await ctx.send("❌ Bet amount must be greater than 0.")
         return
+    
     user_id = str(ctx.author.id)
     nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
 
@@ -639,13 +640,15 @@ async def bet(ctx, amount: int, team: str):
     if ctx.guild.id not in active_match_ids:
         await ctx.send("❌ There is no active match in progress to bet on.")
         return
-    match = fetch_live_match_for_guild(ctx.guild.id)
+    
+    is_random = random_polling_flags.get(ctx.guild.id, False)
+    match = fetch_live_match_for_guild(ctx.guild.id, random_mode=is_random)
     if not match:
         await ctx.send("⚠️ Could not retrieve live match info. Betting may be closed.")
         return
+    
     duration = match.get("scoreboard", {}).get("duration", 0)
 
-    is_random = random_polling_flags.get(ctx.guild.id, False)
     if is_random:
         start_time = match_tracking_start_times.get(ctx.guild.id)
         if start_time and (time.time() - start_time > 180):  # 3 min
