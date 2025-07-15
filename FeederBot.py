@@ -129,7 +129,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
         polling_tasks.pop(guild.id, None)
         random_polling_flags.pop(guild.id, None)
         match_tracking_start_times.pop(guild.id, None)
-        live_embed_messages.pop(str(guild.id), None)
+        live_embed_messages.pop(guild.id, None)
 
         channel = bot.get_channel(channel_id)
         if channel:
@@ -159,7 +159,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
     polling_tasks.pop(guild.id, None)
     random_polling_flags.pop(guild.id, None)
     match_tracking_start_times.pop(guild.id, None)
-    live_embed_messages.pop(str(guild.id), None)
+    live_embed_messages.pop(guild.id, None)
 
     # Final notice
     if channel:
