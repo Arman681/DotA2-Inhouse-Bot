@@ -13,6 +13,7 @@ warnings.filterwarnings(
     message="Detected filter using positional arguments",
     module="google.cloud.firestore_v1.base_collection"
 )
+import aiohttp
 import asyncio
 import os
 import json
@@ -88,7 +89,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
     while True:
         await asyncio.sleep(15)
         try:
-            match = fetch_live_match_for_guild(guild.id, random_mode=random_mode)
+            match = await fetch_live_match_for_guild(guild.id, random_mode=random_mode)
 
             if not match:
                 print(f"[MATCH] Match {match_id} no longer reported as live. Stopping Steam polling.")
@@ -292,7 +293,7 @@ def convert_to_steam32(steam_id_str):
         return None
 
 # Sends a GraphQL query to STRATZ to fetch a user's seasonRank and maps it to an estimated MMR.
-def fetch_mmr_from_stratz(steam_id, max_retries=5):
+async def fetch_mmr_from_stratz(steam_id, max_retries=5):
     url = "https://api.stratz.com/graphql"
     headers = {
         "Authorization": f"Bearer {STRATZ_TOKEN}",
@@ -310,23 +311,27 @@ def fetch_mmr_from_stratz(steam_id, max_retries=5):
         }}
         """
     }
+
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, json=query, headers=headers, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                season_rank = data["data"]["player"]["steamAccount"]["seasonRank"]
-                mmr = season_rank_to_mmr.get(season_rank, None)
-                return mmr, season_rank
-            elif response.status_code == 429:
-                time.sleep(2 ** attempt)
-            else:
-                return None, None
-        except Exception:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=query, headers=headers, timeout=5) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        season_rank = data["data"]["player"]["steamAccount"]["seasonRank"]
+                        mmr = season_rank_to_mmr.get(season_rank, None)
+                        return mmr, season_rank
+                    elif response.status == 429:
+                        await asyncio.sleep(2 ** attempt)
+                    else:
+                        return None, None
+        except Exception as e:
+            print(f"[ERROR] fetch_mmr_from_stratz(): {e}")
             return None, None
+
     return None, None
 
-def fetch_live_match_for_guild(guild_id, random_mode=False):
+async def fetch_live_match_for_guild(guild_id, random_mode=False):
     """Fetches a live match for the manually bound league_id in this guild."""
     # ✅ Step 1: Fetch bound_league_id from Firestore
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
@@ -345,71 +350,76 @@ def fetch_live_match_for_guild(guild_id, random_mode=False):
     # ✅ Step 2: Fetch matches from Steam API
     url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
     params = {"key": STEAM_API_KEY}
+
     try:
-        response = requests.get(url, params=params, timeout=5)
-        if response.status_code != 200:
-            return None
-        
-        matches = response.json().get("result", {}).get("games", [])
-        valid_matches = [
-            m for m in matches 
-            if m.get("scoreboard") and (not random_mode or m["scoreboard"].get("duration", 0) >= 1800)
-        ]
-        if not valid_matches:
-            if guild_id in active_match_ids:
-                print(f"[INFO] Clearing expired match for guild {guild_id}")
-                del active_match_ids[guild_id]
-            return None
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=5) as response:
+                if response.status != 200:
+                    print(f"[ERROR] Steam API returned {response.status}")
+                    return None
 
-        print(f"[DEBUG] Checked {len(matches)} total live matches from Steam API.")
-        print(f"[DEBUG] {len(valid_matches)} passed scoreboard and duration filters.")
+                result = await response.json()
+                matches = result.get("result", {}).get("games", [])
+                valid_matches = [
+                    m for m in matches 
+                    if m.get("scoreboard") and (not random_mode or m["scoreboard"].get("duration", 0) >= 1800)
+                ]
+                if not valid_matches:
+                    if guild_id in active_match_ids:
+                        print(f"[INFO] Clearing expired match for guild {guild_id}")
+                        del active_match_ids[guild_id]
+                    return None
 
-        # ✅ Step 3: Find matches from bound league
-        bound_matches = valid_matches if random_mode else [
-            m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
-        ]
-        if not bound_matches:
-            print(f"[INFO] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
-            return None
+                print(f"[DEBUG] Checked {len(matches)} total live matches from Steam API.")
+                print(f"[DEBUG] {len(valid_matches)} passed scoreboard and duration filters.")
 
-        # ✅ Step 4: Reuse match if already tracked
-        last_match_id = active_match_ids.get(guild_id)
-        if last_match_id:
-            print(f"[DEBUG] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
-        else:
-            print(f"[DEBUG] Step 4 skipped: No active match found for guild {guild_id}")
+                # ✅ Step 3: Filter by league ID
+                bound_matches = valid_matches if random_mode else [
+                    m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
+                ]
+                if not bound_matches:
+                    print(f"[INFO] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
+                    return None
 
-        selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
-        if selected_match:
-            print(f"[DEBUG] Reusing existing match_id {last_match_id} for guild {guild_id}")
-        elif random_mode and last_match_id:
-            # Do not pick a new random match — allow match resolution to occur
-            print(f"[INFO] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
-            return None
-        else:
-            selected_match = random.choice(bound_matches)
-            active_match_ids[guild_id] = selected_match["match_id"]
-            print(f"[DEBUG] Picked new match_id {selected_match['match_id']} for guild {guild_id}")
+                # ✅ Step 4: Reuse previous match ID if still valid
+                last_match_id = active_match_ids.get(guild_id)
+                if last_match_id:
+                    print(f"[DEBUG] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
+                else:
+                    print(f"[DEBUG] Step 4 skipped: No active match found for guild {guild_id}")
 
-        selected_match["guild_id"] = guild_id
-        return selected_match
-    
+                selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
+                if selected_match:
+                    print(f"[DEBUG] Reusing existing match_id {last_match_id} for guild {guild_id}")
+                elif random_mode and last_match_id:
+                    print(f"[INFO] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
+                    return None
+                else:
+                    selected_match = random.choice(bound_matches)
+                    active_match_ids[guild_id] = selected_match["match_id"]
+                    print(f"[DEBUG] Picked new match_id {selected_match['match_id']} for guild {guild_id}")
+
+                selected_match["guild_id"] = guild_id
+                return selected_match
+
     except Exception as e:
-        print(f"[fetch_live_match_for_guild()] Steam API error: {e}")
+        print(f"[ERROR] fetch_live_match_for_guild() Steam API error: {e}")
         return None
 
-def fetch_hero_id_to_name_map():
+async def fetch_hero_id_to_name_map():
     # Try loading from local cache first
     if os.path.exists(HERO_CACHE_FILE):
-        with open(HERO_CACHE_FILE, "r") as f:
-            data = json.load(f)
-            if isinstance(data, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
-                print("[INFO] ✅ Loaded hero ID cache from local file.")
-                return data
-            else:
-                print("[WARN] Invalid hero cache format. Refetching from API...")
+        try:
+            with open(HERO_CACHE_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
+                    print("[INFO] ✅ Loaded hero ID cache from local file.")
+                    return data
+                else:
+                    print("[WARN] Invalid hero cache format. Refetching from API...")
+        except Exception as e:
+            print(f"[ERROR] Failed to load local hero cache: {e}")
 
-    # Otherwise, fetch from Steam API
     print("[INFO] 📡 Fetching hero data from Steam API...")
     url = "https://api.steampowered.com/IEconDOTA2_570/GetHeroes/v1/"
     params = {
@@ -418,36 +428,21 @@ def fetch_hero_id_to_name_map():
     }
 
     try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        heroes = response.json().get("result", {}).get("heroes", [])
-        hero_map = {str(hero["id"]): hero["localized_name"] for hero in heroes}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as response:
+                response.raise_for_status()
+                data = await response.json()
+                heroes = data.get("result", {}).get("heroes", [])
+                hero_map = {str(hero["id"]): hero["localized_name"] for hero in heroes}
 
-        # Save to cache
-        with open(HERO_CACHE_FILE, "w") as f:
-            json.dump(hero_map, f)
-        print("[INFO] 💾 Saved hero ID map to cache.")
+                with open(HERO_CACHE_FILE, "w") as f:
+                    json.dump(hero_map, f)
+                print("[INFO] 💾 Saved hero ID map to cache.")
 
-        return hero_map
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching hero data: {e}")
-        return {}
-    
-def is_league_live(league_id):
-    """Returns match data if a live match for league_id is found, else None."""
-    url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
-    params = {"key": STEAM_API_KEY}
-    try:
-        response = requests.get(url, params=params, timeout=5)
-        if response.status_code == 200:
-            matches = response.json().get("result", {}).get("games", [])
-            for match in matches:
-                if str(match.get("league_id")) == str(league_id) and match.get("scoreboard"):
-                    return match
-        return None
+                return hero_map
     except Exception as e:
-        print(f"[ERROR in is_league_live()] Steam API error: {e}")
-        return None
+        print(f"[ERROR] Failed to fetch hero data from Steam API: {e}")
+        return {}
 
 # Gets the stored MMR value for a given Discord user, or returns 0 if not found.
 def get_mmr(user):
@@ -492,22 +487,24 @@ def map_steam_ids_to_discord_ids(steam_ids):
         print(f"[INFO] Mapped {len(discord_ids)}/{len(steam_ids)} Steam IDs to Discord IDs")
         return discord_ids
 
-def get_steam_display_name(account_id_32):
+async def get_steam_display_name(account_id_32):
     try:
         steam_id_64 = str(int(account_id_32) + 76561197960265728)
-        url = f"https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/"
+        url = "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/"
         params = {
             "key": STEAM_API_KEY,
             "steamids": steam_id_64
         }
-        response = requests.get(url, params=params)
-        data = response.json()
-        players = data.get("response", {}).get("players", [])
-        if players:
-            return players[0].get("personaname", f"SteamID {account_id_32}")
-    except:
-        pass
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as response:
+                data = await response.json()
+                players = data.get("response", {}).get("players", [])
+                if players:
+                    return players[0].get("personaname", f"SteamID {account_id_32}")
+    except Exception as e:
+        print(f"[ERROR] get_steam_display_name: {e}")
     return f"SteamID {account_id_32}"
+
 
 async def get_display_name_or_steam(account_id_32, guild):
     discord_id = get_discord_id_from_steam_id(account_id_32)
@@ -515,7 +512,7 @@ async def get_display_name_or_steam(account_id_32, guild):
         member = guild.get_member(int(discord_id))
         if member:
             return member.display_name
-    return get_steam_display_name(account_id_32)
+    return await get_steam_display_name(account_id_32)
 
 # Periodic background task that updates all players' MMR values from STRATZ in Firebase,
 # and refreshes lobby embeds across all servers.
@@ -527,7 +524,7 @@ async def refresh_all_mmrs():
         user_id = doc.id
         data = doc.to_dict()
         if "steam_id" in data:
-            mmr, season_rank = fetch_mmr_from_stratz(data["steam_id"])
+            mmr, season_rank = await fetch_mmr_from_stratz(data["steam_id"])
             if mmr:
                 db.collection("players").document(str(user_id)).update({
                     "mmr": mmr,
@@ -585,7 +582,7 @@ async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
             await ctx.send("❌ You do not have permission to configure another user. Only admins or users with the 'Inhouse Admin' role may do that.")
             return
     user_id = str(target.id)
-    mmr, season_rank = fetch_mmr_from_stratz(steam32)
+    mmr, season_rank = await fetch_mmr_from_stratz(steam32)
     # If MMR is None but seasonRank is high, set MMR manually
     if mmr is None and season_rank and season_rank >= 80:
         mmr = 5650
@@ -655,7 +652,7 @@ async def bet(ctx, amount: int, team: str):
         return
     
     is_random = random_polling_flags.get(ctx.guild.id, False)
-    match = fetch_live_match_for_guild(ctx.guild.id, random_mode=is_random)
+    match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=is_random)
     if not match:
         await ctx.send("⚠️ Could not retrieve live match info. Betting may be closed.")
         return
@@ -668,7 +665,6 @@ async def bet(ctx, amount: int, team: str):
             await ctx.send("⏳ Bets are closed. More than 3 minutes have passed since this random match began tracking.")
             return
     else:
-        duration = match.get("scoreboard", {}).get("duration", 0)
         if duration >= 120:
             await ctx.send("⏳ Bets are closed. The match has passed the 2:00 mark.")
             return
@@ -1048,7 +1044,7 @@ async def setlivechannel_error(ctx, error):
 @is_global_admin()
 async def start_polling(ctx):
     channel = ctx.channel
-    match = fetch_live_match_for_guild(ctx.guild.id, random_mode=False)
+    match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=False)
     if match:
         match_id = match.get("match_id")
         if ctx.guild.id not in polling_tasks:
@@ -1080,7 +1076,7 @@ async def stop_polling_error(ctx, error):
 @is_global_admin()
 async def random_poll(ctx):
     channel = ctx.channel
-    match = fetch_live_match_for_guild(ctx.guild.id, random_mode=True)
+    match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=True)
     if match:
         match_id = match.get("match_id")
         if ctx.guild.id not in polling_tasks:
@@ -1159,7 +1155,7 @@ async def on_ready():
     refresh_all_mmrs.start()
     clear_all_bets(bot)
     # Cache hero IDs
-    hero_id_to_name = fetch_hero_id_to_name_map()
+    hero_id_to_name = await fetch_hero_id_to_name_map()
     # Load live_channel_ids from Firestore
     docs = db.collection("guild_specific_info").stream()
     for doc in docs:
@@ -1255,7 +1251,7 @@ async def on_raw_reaction_add(payload):
         await message.add_reaction("♻️")
         await message.remove_reaction(payload.emoji, user)
         # Start live match polling if not already started
-        match = fetch_live_match_for_guild(guild.id)
+        match = await fetch_live_match_for_guild(guild.id)
         if match:
             match_id = match.get("match_id")
             if guild_id not in polling_tasks:
