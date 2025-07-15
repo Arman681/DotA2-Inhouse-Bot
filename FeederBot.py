@@ -62,14 +62,14 @@ with open("hero_id_map.json", "r") as f:
 # ============================================ ⚙️ Core Functions & Utilities ============================================
 # ========================================================================================================================
 
-async def poll_live_match(match_id, guild):
-    print(f"[MATCH] Started polling match {match_id} for guild {guild.name}")
+async def poll_live_match(match_id, guild, random_mode=False):
+    print(f"[MATCH] Started polling match {match_id} for guild {guild.name} (random_mode={random_mode})")
 
     # Poll until Steam no longer reports a live match
     while True:
         await asyncio.sleep(15)
         try:
-            match = fetch_live_match_for_guild(guild.id)
+            match = fetch_live_match_for_guild(guild.id, random_mode=random_mode)
 
             if not match:
                 print(f"[MATCH] Match {match_id} no longer reported as live. Stopping Steam polling.")
@@ -1035,7 +1035,7 @@ async def random_poll(ctx):
         match_id = match.get("match_id")
         if ctx.guild.id not in polling_tasks:
             active_match_ids[ctx.guild.id] = match_id
-            polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild))
+            polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild, random_mode=True))
             await channel.send(f"[🎲] Started random match polling for match ID {match_id} in guild {ctx.guild.name}")
         else:
             await channel.send("⚠️ Polling is already running for this server.")
