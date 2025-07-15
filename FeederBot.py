@@ -658,6 +658,7 @@ async def bet(ctx, amount: int, team: str):
     
     is_random = random_polling_flags.get(ctx.guild.id, False)
     match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=is_random)
+
     if not match:
         await ctx.send("⚠️ Could not retrieve live match info. Betting may be closed.")
         return
@@ -672,6 +673,24 @@ async def bet(ctx, amount: int, team: str):
     else:
         if duration >= 120:
             await ctx.send("⏳ Bets are closed. The match has passed the 2:00 mark.")
+            return
+    
+    # Check if user is playing in the match
+    player_team = None
+    for player in match.get("players", []):
+        steam_id = player.get("account_id")
+        discord_id = get_discord_id_from_steam_id(str(steam_id))
+        if discord_id == str(ctx.author.id):
+            player_team = player.get("team")  # 0 = Radiant, 1 = Dire
+            break
+
+    # Block bet on opposite team if user is playing
+    if player_team is not None:
+        if (player_team == 0 and team == "dire") or (player_team == 1 and team == "radiant"):
+            await ctx.send(
+                f"❌ You are currently playing on the **{'Radiant' if player_team == 0 else 'Dire'}** team.\n"
+                f"You cannot place a bet on the **opposing team** during a match you are in."
+            )
             return
         
     # Existing Firestore bet logic
