@@ -6,6 +6,13 @@
 # Description: A Discord bot for managing DotA2 inhouse lobbies,
 #              including MMR tracking, team balancing, and lobby alerts.
 # ------------------------------------------------------------
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message="Detected filter using positional arguments",
+    module="google.cloud.firestore_v1.base_collection"
+)
 import asyncio
 import os
 import json
