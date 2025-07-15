@@ -1405,8 +1405,8 @@ def build_immortal_embed(captains, pool, guild, reroll_count):
     return embed
 
 async def format_live_match_embed(match, guild):
-    radiant_kills = match["scoreboard"]["radiant"]["kills"]
-    dire_kills = match["scoreboard"]["dire"]["kills"]
+    radiant_kills = sum(player.get("kills", 0) for player in match["scoreboard"]["radiant"]["players"])
+    dire_kills = sum(player.get("kills", 0) for player in match["scoreboard"]["dire"]["players"])
     match_time = match["scoreboard"]["duration"]
     minutes = int(match_time) // 60
     seconds = int(match_time) % 60
