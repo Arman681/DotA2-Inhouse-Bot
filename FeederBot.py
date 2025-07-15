@@ -144,7 +144,8 @@ async def poll_live_match(match_id, guild, random_mode=False):
     winner_ids = map_steam_ids_to_discord_ids(result["radiant"] if result["radiant_win"] else result["dire"])
     loser_ids = map_steam_ids_to_discord_ids(result["dire"] if result["radiant_win"] else result["radiant"])
     await resolve_bets(guild.id, winning_team)
-    await adjust_mmr(bot, winner_ids, loser_ids, str(guild.id), guild)
+    if not random_mode:
+        await adjust_mmr(bot, winner_ids, loser_ids, str(guild.id), guild)
 
     # Send match summary
     channel_id = live_channel_ids.get(guild.id)
