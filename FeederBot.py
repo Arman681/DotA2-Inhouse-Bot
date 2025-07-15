@@ -301,7 +301,7 @@ def fetch_mmr_from_stratz(steam_id, max_retries=5):
             return None, None
     return None, None
 
-def fetch_live_match_for_guild(guild_id):
+def fetch_live_match_for_guild(guild_id, random_mode=False):
     """Fetches a live match for the manually bound league_id in this guild."""
     # ✅ Step 1: Fetch bound_league_id from Firestore
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
@@ -309,11 +309,14 @@ def fetch_live_match_for_guild(guild_id):
     if not doc.exists:
         print(f"[WARN] No guild_specific_info found for guild {guild_id}")
         return None
+    
     league_info = doc.to_dict().get("league_id", {})
     bound_league_id = league_info.get("bound_league_id")
-    if not bound_league_id:
+
+    if not random_mode and not bound_league_id:
         print(f"[WARN] No bound_league_id found in Firestore for guild {guild_id}")
         return None
+    
     # ✅ Step 2: Fetch matches from Steam API
     url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
     params = {"key": STEAM_API_KEY}
@@ -321,18 +324,24 @@ def fetch_live_match_for_guild(guild_id):
         response = requests.get(url, params=params, timeout=5)
         if response.status_code != 200:
             return None
+        
         matches = response.json().get("result", {}).get("games", [])
         valid_matches = [m for m in matches if m.get("scoreboard")]
+
         if not valid_matches:
             if guild_id in active_match_ids:
                 print(f"[INFO] Clearing expired match for guild {guild_id}")
                 del active_match_ids[guild_id]
             return None
+
         # ✅ Step 3: Find match from bound league
-        bound_matches = [m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)]
+        bound_matches = valid_matches if random_mode else [
+            m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
+        ]
         if not bound_matches:
             print(f"[INFO] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
             return None
+
         # ✅ Step 4: Reuse match if already tracked
         last_match_id = active_match_ids.get(guild_id)
         if last_match_id:
@@ -1016,6 +1025,29 @@ async def stop_polling(ctx):
 async def stop_polling_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.send("❌ You do not have permission to use this command. Only the bot owner can use `!stoppolling`.")
+
+@bot.command(name="randompoll")
+@is_global_admin()
+async def random_poll(ctx):
+    channel = ctx.channel
+    match = fetch_live_match_for_guild(ctx.guild.id, random_mode=True)
+    if match:
+        match_id = match.get("match_id")
+        if ctx.guild.id not in polling_tasks:
+            active_match_ids[ctx.guild.id] = match_id
+            polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild))
+            await channel.send(f"[🎲] Started random match polling for match ID {match_id} in guild {ctx.guild.name}")
+        else:
+            await channel.send("⚠️ Polling is already running for this server.")
+    else:
+        await channel.send("⚠️ No valid random live match found.")
+@random_poll.error
+async def random_poll_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. Only the bot owner can use `!randompoll`.")
+    else:
+        await ctx.send("⚠️ An unexpected error occurred while starting random match polling.")
+        print(f"[ERROR] random_poll command: {error}")
 
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
