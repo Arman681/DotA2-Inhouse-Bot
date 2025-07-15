@@ -356,7 +356,7 @@ def fetch_live_match_for_guild(guild_id, random_mode=False):
                 del active_match_ids[guild_id]
             return None
 
-        # ✅ Step 3: Find match from bound league
+        # ✅ Step 3: Find matches from bound league
         bound_matches = valid_matches if random_mode else [
             m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
         ]
@@ -374,6 +374,10 @@ def fetch_live_match_for_guild(guild_id, random_mode=False):
         selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
         if selected_match:
             print(f"[DEBUG] Reusing existing match_id {last_match_id} for guild {guild_id}")
+        elif random_mode and last_match_id:
+            # Do not pick a new random match — allow match resolution to occur
+            print(f"[INFO] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
+            return None
         else:
             selected_match = random.choice(bound_matches)
             active_match_ids[guild_id] = selected_match["match_id"]
@@ -381,6 +385,7 @@ def fetch_live_match_for_guild(guild_id, random_mode=False):
 
         selected_match["guild_id"] = guild_id
         return selected_match
+    
     except Exception as e:
         print(f"[fetch_live_match_for_guild()] Steam API error: {e}")
         return None
