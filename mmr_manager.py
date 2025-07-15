@@ -5,11 +5,15 @@ from firebase_admin import firestore
 db = firestore.client()
 
 def get_inhouse_mmr(guild_id, user_id):
-    doc = db.collection("inhouse_mmr").document(str(guild_id)).collection("users").document(str(user_id)).get()
+    doc_ref = db.collection("inhouse_mmr").document(str(guild_id)).collection("users").document(str(user_id))
+    doc = doc_ref.get()
+
     if doc.exists:
-        return doc.to_dict().get("mmr", 1000)
+        return doc.to_dict().get("mmr", 2500)
     else:
-        return 1000
+        # Initialize new user with 2500 MMR
+        doc_ref.set({"mmr": 2500, "nickname": "Unknown"})
+        return 2500
 
 def set_inhouse_mmr(guild_id, user_id, nickname, mmr):
     data = {
