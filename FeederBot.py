@@ -77,22 +77,19 @@ async def poll_live_match(match_id, guild):
 
             # Update embed every 15 seconds
             embed = await format_live_match_embed(match, guild)
-            channel_info = live_channel_ids.get(guild.id)
-            if isinstance(channel_info, dict):
-                channel_id = int(channel_info.get("live_channel_id", 0))
-                channel = bot.get_channel(channel_id)
-                if channel:
-                    prev_msg = live_embed_messages.get(guild.id)
-                    if prev_msg:
-                        try:
-                            await prev_msg.edit(embed=embed)
-                        except discord.NotFound:
-                            new_msg = await channel.send(embed=embed)
-                            live_embed_messages[guild.id] = new_msg
-                    else:
+            channel_id = live_channel_ids.get(guild.id)
+            channel = bot.get_channel(channel_id) if channel_id else None
+            if channel:
+                prev_msg = live_embed_messages.get(guild.id)
+                if prev_msg:
+                    try:
+                        await prev_msg.edit(embed=embed)
+                    except discord.NotFound:
                         new_msg = await channel.send(embed=embed)
                         live_embed_messages[guild.id] = new_msg
-
+                else:
+                    new_msg = await channel.send(embed=embed)
+                    live_embed_messages[guild.id] = new_msg
         except Exception as e:
             print(f"[ERROR] poll_live_match() for guild {str(guild.id)}: {e}")
 
@@ -1074,6 +1071,7 @@ async def help_command(ctx, *, category: str = ""):
 async def on_ready():
     global hero_id_to_name
     print(f"{bot.user} is online!")
+    active_match_ids.clear()
     refresh_all_mmrs.start()
     clear_all_bets(bot)
     # Cache hero IDs
