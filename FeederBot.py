@@ -349,8 +349,10 @@ def fetch_live_match_for_guild(guild_id, random_mode=False):
             return None
         
         matches = response.json().get("result", {}).get("games", [])
-        valid_matches = [m for m in matches if m.get("scoreboard")]
-
+        valid_matches = [
+            m for m in matches 
+            if m.get("scoreboard") and (not random_mode or m["scoreboard"].get("duration", 0) >= 1800)
+        ]
         if not valid_matches:
             if guild_id in active_match_ids:
                 print(f"[INFO] Clearing expired match for guild {guild_id}")
