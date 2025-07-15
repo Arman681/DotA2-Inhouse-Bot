@@ -20,10 +20,8 @@ import json
 import random
 from typing import Optional
 import discord
-import requests
 import time
 import itertools
-import betting_manager
 import firebase_setup  # ensures Firebase is initialized before anything else
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
@@ -504,7 +502,6 @@ async def get_steam_display_name(account_id_32):
     except Exception as e:
         print(f"[ERROR] get_steam_display_name: {e}")
     return f"SteamID {account_id_32}"
-
 
 async def get_display_name_or_steam(account_id_32, guild):
     discord_id = get_discord_id_from_steam_id(account_id_32)
