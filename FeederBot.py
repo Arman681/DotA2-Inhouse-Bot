@@ -145,12 +145,19 @@ async def poll_live_match(match_id, guild, random_mode=False):
     loser_ids = map_steam_ids_to_discord_ids(result["dire"] if result["radiant_win"] else result["radiant"])
     await resolve_bets(guild.id, winning_team)
     if not random_mode:
-        await adjust_mmr(bot, winner_ids, loser_ids, str(guild.id), guild)
+        try:
+            await adjust_mmr(bot, winner_ids, loser_ids, str(guild.id), guild)
+        except Exception as e:
+            print(f"[ERROR] Failed to adjust MMR: {e}")
 
     # Send match summary
     channel_id = live_channel_ids.get(guild.id)
+    if not channel_id:
+        print(f"[WARN] No channel_id found for guild {guild.id}")
     channel = bot.get_channel(channel_id)
-    if channel:
+    if not channel:
+        print(f"[WARN] Could not resolve channel from ID: {channel_id} in guild {guild.id}")
+    else:
         await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.")
 
     # Clean up memory
