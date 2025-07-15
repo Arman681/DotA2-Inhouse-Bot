@@ -293,7 +293,7 @@ def convert_to_steam32(steam_id_str):
         return None
 
 # Sends a GraphQL query to STRATZ to fetch a user's seasonRank and maps it to an estimated MMR.
-async def fetch_mmr_from_stratz(steam_id, max_retries=5):
+async def fetch_mmr_from_stratz(steam_id, max_retries=5, user_id=None):
     url = "https://api.stratz.com/graphql"
     headers = {
         "Authorization": f"Bearer {STRATZ_TOKEN}",
@@ -318,18 +318,25 @@ async def fetch_mmr_from_stratz(steam_id, max_retries=5):
                 async with session.post(url, json=query, headers=headers, timeout=5) as response:
                     if response.status == 200:
                         data = await response.json()
-                        season_rank = data["data"]["player"]["steamAccount"]["seasonRank"]
-                        mmr = season_rank_to_mmr.get(season_rank, None)
-                        return mmr, season_rank
+                        player_data = data.get("data", {}).get("player", {})
+                        if player_data and player_data.get("steamAccount"):
+                            season_rank = player_data["steamAccount"].get("seasonRank")
+                            mmr = season_rank_to_mmr.get(season_rank, None)
+                            return mmr, season_rank
+                        else:
+                            print(f"[WARN] No STRATZ data for user_id={user_id}, steam_id={steam_id}")
+                            return None, None
                     elif response.status == 429:
                         await asyncio.sleep(2 ** attempt)
                     else:
+                        print(f"[ERROR] STRATZ API error {response.status} for user_id={user_id}, steam_id={steam_id}")
                         return None, None
         except Exception as e:
-            print(f"[ERROR] fetch_mmr_from_stratz(): {e}")
+            print(f"[ERROR] fetch_mmr_from_stratz(user_id={user_id}): {e}")
             return None, None
 
     return None, None
+
 
 async def fetch_live_match_for_guild(guild_id, random_mode=False):
     """Fetches a live match for the manually bound league_id in this guild."""
@@ -523,7 +530,7 @@ async def refresh_all_mmrs():
         user_id = doc.id
         data = doc.to_dict()
         if "steam_id" in data:
-            mmr, season_rank = await fetch_mmr_from_stratz(data["steam_id"])
+            mmr, season_rank = await fetch_mmr_from_stratz(data["steam_id"], user_id=user_id)
             if mmr:
                 db.collection("players").document(str(user_id)).update({
                     "mmr": mmr,
