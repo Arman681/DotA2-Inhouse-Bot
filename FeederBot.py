@@ -1035,12 +1035,12 @@ async def setlivechannel_error(ctx, error):
 @is_global_admin()
 async def start_polling(ctx):
     channel = ctx.channel
-    match = fetch_live_match_for_guild(ctx.guild.id)
+    match = fetch_live_match_for_guild(ctx.guild.id, random_mode=False)
     if match:
         match_id = match.get("match_id")
         if ctx.guild.id not in polling_tasks:
             active_match_ids[ctx.guild.id] = match_id
-            polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild))
+            polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild, random_mode=False))
             await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {ctx.guild.name}")
             random_polling_flags[ctx.guild.id] = False
     else:
