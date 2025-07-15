@@ -57,6 +57,8 @@ live_channel_ids = {}      # {guild_id: channel_id}
 active_match_ids = {}      # {guild_id: match_id}
 live_embed_messages = {}   # {guild_id: message}
 polling_tasks = {}         # {guild_id: asyncio.Task} for per-server polling
+match_tracking_start_times = {}  # {guild_id: unix_timestamp}
+random_polling_flags = {}        # {guild_id: True/False}
 
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
@@ -132,6 +134,8 @@ async def poll_live_match(match_id, guild, random_mode=False):
     # Clean up memory
     active_match_ids.pop(guild.id, None)
     polling_tasks.pop(guild.id, None)
+    random_polling_flags.pop(guild.id, None)
+    match_tracking_start_times.pop(guild.id, None)
     live_embed_messages.pop(str(guild.id), None)
 
     # Final notice
@@ -619,6 +623,7 @@ async def bet(ctx, amount: int, team: str):
         return
     user_id = str(ctx.author.id)
     nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
+
     # Check if a match is active and < 2 min duration
     if ctx.guild.id not in active_match_ids:
         await ctx.send("❌ There is no active match in progress to bet on.")
@@ -628,9 +633,19 @@ async def bet(ctx, amount: int, team: str):
         await ctx.send("⚠️ Could not retrieve live match info. Betting may be closed.")
         return
     duration = match.get("scoreboard", {}).get("duration", 0)
-    if duration >= 120:
-        await ctx.send("⏳ Bets are closed. The match has passed the 2:00 mark.")
-        return
+
+    is_random = random_polling_flags.get(ctx.guild.id, False)
+    if is_random:
+        start_time = match_tracking_start_times.get(ctx.guild.id)
+        if start_time and (time.time() - start_time > 180):  # 3 min
+            await ctx.send("⏳ Bets are closed. More than 3 minutes have passed since this random match began tracking.")
+            return
+    else:
+        duration = match.get("scoreboard", {}).get("duration", 0)
+        if duration >= 120:
+            await ctx.send("⏳ Bets are closed. The match has passed the 2:00 mark.")
+            return
+        
     # Existing Firestore bet logic
     entry_ref = db.collection("guild_specific_info").document(str(ctx.guild.id)).collection("bets").document(str(ctx.author.id))
     existing_bet_doc = entry_ref.get()
@@ -1013,6 +1028,7 @@ async def start_polling(ctx):
             active_match_ids[ctx.guild.id] = match_id
             polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild))
             await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {ctx.guild.name}")
+            random_polling_flags[ctx.guild.id] = False
     else:
         await channel.send("⚠️ No live match found for the bound league.")
 @start_polling.error
@@ -1044,6 +1060,8 @@ async def random_poll(ctx):
             active_match_ids[ctx.guild.id] = match_id
             polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild, random_mode=True))
             await channel.send(f"[🎲] Started random match polling for match ID {match_id} in guild {ctx.guild.name}")
+            random_polling_flags[ctx.guild.id] = True
+            match_tracking_start_times[ctx.guild.id] = time.time()
         else:
             await channel.send("⚠️ Polling is already running for this server.")
     else:
