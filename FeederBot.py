@@ -326,17 +326,23 @@ async def fetch_mmr_from_stratz(steam_id, max_retries=5, user_id=None):
                         else:
                             print(f"[WARN] No STRATZ data for user_id={user_id}, steam_id={steam_id}")
                             return None, None
-                    elif response.status == 429:
+                    elif response.status in [403, 429, 500]:
+                        error_text = await response.text()
+                        print(f"[ERROR] STRATZ API error {response.status} for user_id={user_id}, steam_id={steam_id}")
+                        print("[RESPONSE BODY]")
+                        print(error_text)  # this could be HTML if Cloudflare blocks you
                         await asyncio.sleep(2 ** attempt)
                     else:
-                        print(f"[ERROR] STRATZ API error {response.status} for user_id={user_id}, steam_id={steam_id}")
+                        error_text = await response.text()
+                        print(f"[ERROR] Unexpected STRATZ response {response.status} for user_id={user_id}, steam_id={steam_id}")
+                        print("[RESPONSE BODY]")
+                        print(error_text)
                         return None, None
         except Exception as e:
             print(f"[ERROR] fetch_mmr_from_stratz(user_id={user_id}): {e}")
             return None, None
 
     return None, None
-
 
 async def fetch_live_match_for_guild(guild_id, random_mode=False):
     """Fetches a live match for the manually bound league_id in this guild."""
@@ -1184,7 +1190,7 @@ async def on_ready():
     global hero_id_to_name
     print(f"{bot.user} is online!")
     active_match_ids.clear()
-    refresh_all_mmrs.start()
+    #refresh_all_mmrs.start()
     clear_all_bets(bot)
     # Cache hero IDs
     hero_id_to_name = await fetch_hero_id_to_name_map()
