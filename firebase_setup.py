@@ -3,6 +3,8 @@ import firebase_admin
 from firebase_admin import credentials
 import os
 import json
+from dotenv import load_dotenv
+load_dotenv()
 
 # Initialize Firebase if not already initialized
 if not firebase_admin._apps:
