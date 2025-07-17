@@ -536,6 +536,8 @@ async def refresh_all_mmrs():
                     "mmr": mmr,
                     "seasonRank": season_rank
                 })
+            # 🛡️ Add throttle delay to avoid exceeding 20 requests/sec
+            await asyncio.sleep(0.1)
     # Refresh lobby embeds across all servers
     await update_all_lobbies()
 
