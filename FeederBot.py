@@ -293,7 +293,7 @@ def convert_to_steam32(steam_id_str):
         return None
 
 # Sends a GraphQL query to STRATZ to fetch a user's seasonRank and maps it to an estimated MMR.
-async def fetch_mmr_from_stratz(steam_id, max_retries=5, user_id=None):
+async def fetch_mmr_from_stratz(steam_id, max_retries=2, user_id=None):
     url = "https://api.stratz.com/graphql"
     headers = {
         "Authorization": f"Bearer {STRATZ_TOKEN}",
