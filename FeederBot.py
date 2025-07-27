@@ -270,6 +270,31 @@ def save_league_guild_mapping(guild_id: int, league_id: int, server_name=None, b
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"league_id": data}, merge=True)
 
+def save_lobby_message_id(guild_id, message_id):
+    data = {
+        "lobby_message_id": message_id
+    }
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"lobby_message_id": data}, merge=True)
+
+def load_lobby_message_id(guild_id):
+    doc = db.collection("guild_specific_info").document(str(guild_id)).get()
+    if doc.exists:
+        return doc.to_dict().get("lobby_message_id", {}).get("lobby_message_id", 0)
+    return None
+
+def save_lobby_players(guild_id, players):
+    formatted = [{"id": uid, "name": name, "mmr": mmr} for uid, name, mmr in players]
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"lobby_players": formatted}, merge=True)
+
+def load_lobby_players(guild_id):
+    doc = db.collection("guild_specific_info").document(str(guild_id)).get()
+    if doc.exists:
+        raw = doc.to_dict().get("lobby_players", [])
+        return [(p["id"], p["name"], p["mmr"]) for p in raw if "id" in p and "name" in p and "mmr" in p]
+    return []
+
 # ============================ 🎯 MMR, STRATZ, and Steam Integration ============================
 # Maps Dota 2 STRATZ seasonRank values to estimated MMR values.
 season_rank_to_mmr = {
@@ -862,6 +887,8 @@ async def lobby_cmd(ctx, mode: str = None):
     embed = build_lobby_embed(ctx.guild, mode)
     message = await ctx.send(embed=embed)
     lobby_message[guild_id] = message
+    save_lobby_message_id(guild_id, message.id)
+    save_lobby_players(guild_id, lobby_players[guild_id])
     # Add reactions
     await message.add_reaction("👍")
     await message.add_reaction("👎")
@@ -884,6 +911,8 @@ async def reset(ctx, *args):
     embed = build_lobby_embed(ctx.guild)
     message = await ctx.send(embed=embed)
     lobby_message[guild_id] = message
+    save_lobby_message_id(guild_id, message.id)
+    save_lobby_players(guild_id, lobby_players[guild_id])
     await message.add_reaction("👍")
     await message.add_reaction("👎")
     await ctx.send("Lobby has been cleared and refreshed.")
@@ -1198,12 +1227,35 @@ async def on_ready():
     docs = db.collection("guild_specific_info").stream()
     for doc in docs:
         data = doc.to_dict()
+        guild_id = int(doc.id)
+        guild = bot.get_guild(guild_id)
+        if not guild:
+            print(f"[WARN] Could not find guild object for guild ID {guild_id}")
+            continue
+        # Load live channel ID
         live_channel_id = data.get("live_channel_id", {}).get("live_channel_id", 0)
         try: 
             live_channel_ids[int(doc.id)] = int(live_channel_id)
             print(f"[DEBUG] Guild {doc.id} (type: {type(doc.id).__name__}) → Channel {live_channel_id} (type: {type(live_channel_id).__name__})")
         except (ValueError, TypeError):
             print(f"[WARNING] Skipping guild {doc.id} due to invalid live_channel_id: {live_channel_id}")
+        # Restore lobby players
+        restored_players = load_lobby_players(guild_id)
+        if restored_players:
+            lobby_players[guild_id] = restored_players
+            print(f"[INIT] Restored {len(restored_players)} players in lobby for guild {guild_id}")
+        # Restore lobby message
+        lobby_msg_id = load_lobby_message_id(guild_id)
+        if lobby_msg_id:
+            for channel in guild.text_channels:
+                try:
+                    msg = await channel.fetch_message(int(lobby_msg_id))
+                    if msg.author.id == bot.user.id:
+                        lobby_message[guild_id] = msg
+                        print(f"[INIT] Restored lobby message for guild {guild_id}")
+                        break
+                except:
+                    continue
     print("[DEBUG] Full live_channel_ids dict with types:")
     for guild_id, channel_id in live_channel_ids.items():
         print(f"  {guild_id} (type: {type(guild_id).__name__}) → {channel_id} (type: {type(channel_id).__name__})")
