@@ -811,6 +811,7 @@ async def add_to_lobby(ctx, *members: discord.Member):
         mmr = get_mmr(member)
         display_name = member.display_name  # prefers nickname if available
         lobby_players[guild_id].append((member.id, display_name, mmr))
+        save_lobby_players(guild_id, lobby_players[guild_id])
         added.append(display_name)
     if added:
         await update_lobby_embed(ctx.guild)
@@ -833,6 +834,7 @@ async def remove_from_lobby(ctx, *members: discord.Member):
         for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
             if uid == member.id:
                 del lobby_players[guild_id][i]
+                save_lobby_players(guild_id, lobby_players[guild_id])
                 removed.append(member.display_name)
                 break
     if removed:
@@ -1236,7 +1238,7 @@ async def on_ready():
         live_channel_id = data.get("live_channel_id", {}).get("live_channel_id", 0)
         try: 
             live_channel_ids[int(doc.id)] = int(live_channel_id)
-            print(f"[DEBUG] Guild {doc.id} (type: {type(doc.id).__name__}) → Channel {live_channel_id} (type: {type(live_channel_id).__name__})")
+            """print(f"[DEBUG] Guild {doc.id} (type: {type(doc.id).__name__}) → Channel {live_channel_id} (type: {type(live_channel_id).__name__})")"""
         except (ValueError, TypeError):
             print(f"[WARNING] Skipping guild {doc.id} due to invalid live_channel_id: {live_channel_id}")
         # Restore lobby players
@@ -1256,9 +1258,9 @@ async def on_ready():
                         break
                 except:
                     continue
-    print("[DEBUG] Full live_channel_ids dict with types:")
+    """print("[DEBUG] Full live_channel_ids dict with types:")
     for guild_id, channel_id in live_channel_ids.items():
-        print(f"  {guild_id} (type: {type(guild_id).__name__}) → {channel_id} (type: {type(channel_id).__name__})")
+        print(f"  {guild_id} (type: {type(guild_id).__name__}) → {channel_id} (type: {type(channel_id).__name__})")"""
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
@@ -1304,12 +1306,14 @@ async def on_raw_reaction_add(payload):
             display_name = user.display_name
             lobby_players[guild_id].append((user.id, display_name, mmr))
             updated = True
+            save_lobby_players(guild_id, lobby_players[guild_id])
     elif emoji == "👎":
         was_nine = len(lobby_players[guild_id]) == 9
         for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
             if uid == user.id:
                 del lobby_players[guild_id][i]
                 updated = True
+                save_lobby_players(guild_id, lobby_players[guild_id])
                 if was_nine and len(lobby_players[guild_id]) == 8:
                     await channel.send(f"Wow, so nice of you to leave at 9/10, {user.mention}")
                 break
