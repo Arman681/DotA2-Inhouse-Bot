@@ -1481,7 +1481,7 @@ def build_team_embed(team1, team2, guild):
     avg2 = sum(p[2] for p in team2) / 5
     embed = discord.Embed(
         title="DotA2 Inhouse",
-        description=f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count}/{MAX_ROLLS}",
+        description=f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count.get(guild.id, 1)}/{MAX_ROLLS}",
         color=discord.Color.gold()
     )
     team1_sorted = sorted(team1, key=lambda x: x[2], reverse=True)
