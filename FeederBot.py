@@ -796,6 +796,34 @@ async def balance(ctx, member: discord.Member = None):
     coins = get_balance(guild_id, user_id)
     await ctx.send(f"💰 {member.display_name}'s balance: `{coins}` coins.")
 
+# Sends coins to another user in the server, deducting from the sender's balance.
+@bot.command(name="send")
+async def send_coins(ctx, amount: int, member: discord.Member):
+    if amount <= 0:
+        await ctx.send("❌ Amount must be greater than 0.")
+        return
+    sender_id = str(ctx.author.id)
+    receiver_id = str(member.id)
+    guild_id = str(ctx.guild.id)
+    sender_balance = get_balance(guild_id, sender_id)
+    if sender_id == receiver_id:
+        await ctx.send("❌ You cannot send coins to yourself.")
+        return
+    if sender_balance < amount:
+        await ctx.send(f"❌ You do not have enough coins. Your balance is `{sender_balance}`.")
+        return
+    update_balance(guild_id, sender_id, -amount)
+    update_balance(guild_id, receiver_id, amount)
+    await ctx.send(f"💸 {ctx.author.display_name} sent `{amount}` coins to {member.display_name}.\nYour new balance: `{get_balance(guild_id, sender_id)}`.")
+@send_coins.error
+async def send_coins_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❗ Usage: `!send <amount> <@user>`")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send("❗ Invalid argument. Usage: `!send <amount> <@user>` — make sure `<amount>` is a number and `<@user>` is a valid user.")
+    else:
+        await ctx.send("⚠️ An unexpected error occurred while sending coins.")
+
 # ========================== 🏠 Lobby Management Commands =========================
 # Adds one or more users to the current lobby for the server.
 @bot.command(name="add")
