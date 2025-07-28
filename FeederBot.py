@@ -1369,7 +1369,10 @@ async def on_raw_reaction_add(payload):
             else:
                 roll_count[guild_id] += 1
             team_rolls[guild_id] = calculate_balanced_teams(lobby_players[guild_id])
-            original_teams[guild_id] = team_rolls[guild_id][0]
+            index = roll_count[guild_id] - 1
+            if index >= len(team_rolls[guild_id]):
+                index = 0
+            original_teams[guild_id] = team_rolls[guild_id][index]
             embed = build_team_embed(*original_teams[guild_id], guild)
         # IMMORTAL INHOUSE REROLL
         elif mode == "immortal":
