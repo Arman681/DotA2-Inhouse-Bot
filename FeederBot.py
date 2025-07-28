@@ -1347,14 +1347,22 @@ async def on_raw_reaction_add(payload):
         # Start live match polling if not already started
         match = None
         timeout = 15 * 60  # 15 minutes
-        interval = 30  # seconds
+        interval = 30  # polling interval
         elapsed = 0
+        low_lobby_time = 0  # tracks how long lobby is underfilled
         await channel.send("⌛ Waiting for the in-game match to appear on Steam... (up to 15 minutes)")
         while elapsed < timeout:
-            # 🛑 Abort if lobby drops below 10
-            if len(lobby_players.get(guild_id, [])) < 10:
-                await channel.send("❌ Lobby is no longer full. Match polling cancelled.")
-                return
+            current_lobby = lobby_players.get(guild_id, [])
+            if len(current_lobby) < 10:
+                low_lobby_time += interval
+                print(f"[INFO] Lobby underfilled ({len(current_lobby)}/10) for {low_lobby_time} seconds")
+                if low_lobby_time >= 30:  # now 30 seconds
+                    await channel.send("❌ Lobby has not been full for 30 seconds. Match polling cancelled.")
+                    return
+            else:
+                if low_lobby_time > 0:
+                    print("[INFO] Lobby refilled to 10/10 — resetting grace timer.")
+                low_lobby_time = 0
             match = await fetch_live_match_for_guild(guild.id)
             if match:
                 break
