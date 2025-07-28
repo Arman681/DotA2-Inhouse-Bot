@@ -145,7 +145,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
     resolve_bets(guild.id, winning_team)
     if not random_mode:
         try:
-            await adjust_mmr(bot, winner_ids, loser_ids, str(guild.id), guild)
+            await adjust_mmr(bot, winner_ids, loser_ids, guild.id)
         except Exception as e:
             print(f"[ERROR] Failed to adjust MMR: {e}")
 
