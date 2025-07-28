@@ -1516,7 +1516,7 @@ def build_lobby_embed(guild, mode="regular"):
         inhouse_mode[guild_id] = load_inhouse_mode_for_guild(guild.id)
     mode = inhouse_mode[guild_id]
     embed = discord.Embed(
-        title="DotA2 Inhouse",
+        title="DotA2 Inhouse Lobby",
         description=f"**Mode:** `{mode.capitalize()}`\n({len(lobby_players[guild.id])}/10)",
         color=discord.Color.purple()
     )
@@ -1549,7 +1549,7 @@ def build_team_embed(team1, team2, guild):
     avg1 = sum(p[2] for p in team1) / 5
     avg2 = sum(p[2] for p in team2) / 5
     embed = discord.Embed(
-        title="DotA2 Inhouse",
+        title="DotA2 Inhouse Lobby",
         description=f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count.get(guild.id, 1)}/{MAX_ROLLS}",
         color=discord.Color.gold()
     )
@@ -1564,7 +1564,7 @@ def build_team_embed(team1, team2, guild):
 def build_immortal_embed(captains, pool, guild, reroll_count):
     c1, c2 = captains
     embed = discord.Embed(
-        title="🛡️ Immortal Draft Inhouse",
+        title="🛡️ Immortal Draft Inhouse Lobby",
         description=f"Captains: {c1[1]} ({c1[2]}) vs {c2[1]} ({c2[2]})\nRoll #{reroll_count}/{IMMORTAL_MAX_ROLLS}",
         color=discord.Color.orange()
     )
