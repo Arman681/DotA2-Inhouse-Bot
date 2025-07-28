@@ -1347,10 +1347,14 @@ async def on_raw_reaction_add(payload):
         # Start live match polling if not already started
         match = None
         timeout = 15 * 60  # 15 minutes
-        interval = 30  # every 30 seconds
+        interval = 30  # seconds
         elapsed = 0
         await channel.send("⌛ Waiting for the in-game match to appear on Steam... (up to 15 minutes)")
         while elapsed < timeout:
+            # 🛑 Abort if lobby drops below 10
+            if len(lobby_players.get(guild_id, [])) < 10:
+                await channel.send("❌ Lobby is no longer full. Match polling cancelled.")
+                return
             match = await fetch_live_match_for_guild(guild.id)
             if match:
                 break
@@ -1363,7 +1367,7 @@ async def on_raw_reaction_add(payload):
                 polling_tasks[guild_id] = asyncio.create_task(poll_live_match(match_id, guild))
                 await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
         else:
-            await channel.send("⚠️ No live match was found within 15 minutes from start of match searching on Steam.")
+            await channel.send("⚠️ No live match was found within 15 minutes. Please restart the lobby.")
     elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
         # Get the member object from the guild
