@@ -27,7 +27,7 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from firebase_admin import firestore
 from mmr_manager import adjust_mmr, get_inhouse_mmr, get_top_players
-from betting_manager import clear_guild_bets, get_balance, place_bet, resolve_bets, clear_all_bets
+from betting_manager import clear_guild_bets, get_balance, place_bet, resolve_bets, clear_all_bets, update_balance
 from match_tracker import fetch_match_result
 
 load_dotenv()
@@ -148,10 +148,19 @@ async def poll_live_match(match_id, guild, random_mode=False):
             await adjust_mmr(bot, winner_ids, loser_ids, guild.id)
         except Exception as e:
             print(f"[ERROR] Failed to adjust MMR: {e}")
-
+            
+    # Award 50 coins to all players who played in the match
+    all_player_ids = winner_ids + loser_ids
+    for discord_id in all_player_ids:
+        try:
+            # Use update_balance from betting_manager
+            update_balance(guild.id, discord_id, 50)
+        except Exception as e:
+            print(f"[ERROR] Failed to award coins to user {discord_id}: {e}")
+    
     # Send match summary
     try:
-        await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.")
+        await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.\n All participants received **50 coins** for playing.")
         print(f"[DEBUG] Match summary sent to channel ID: {channel.id}")
     except Exception as e:
         print(f"[ERROR] Failed to send match summary: {e}")
@@ -1062,7 +1071,14 @@ async def submitmatch(ctx, match_id: str):
     await adjust_mmr(bot, winner_ids, loser_ids, ctx.guild.id, ctx.guild)
     resolve_bets(ctx.guild.id, winning_team)
     clear_guild_bets(ctx)
-    await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.")
+    # Award 50 coins to all players who played in the match
+    all_player_ids = winner_ids + loser_ids
+    for discord_id in all_player_ids:
+        try:
+            update_balance(ctx.guild.id, discord_id, 50)
+        except Exception as e:
+            print(f"[ERROR] Failed to award coins to user {discord_id}: {e}")
+    await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\nAll participants received **50 coins** for playing.")
 @submitmatch.error
 async def submitmatch_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
