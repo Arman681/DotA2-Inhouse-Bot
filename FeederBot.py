@@ -323,7 +323,7 @@ def save_preferred_roles_setting(guild_id, enabled, set_by=None):
 def load_preferred_roles_setting(guild_id):
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
-        return doc.to_dict().get("preferred_roles_enabled", True)  # Default: enabled
+        return doc.to_dict().get("preferred_roles_setting", {}).get("preferred_roles_enabled", True)  # Default: enabled
     return True
 
 # ============================ 🎯 MMR, STRATZ, and Steam Integration ============================
@@ -1795,10 +1795,11 @@ def build_lobby_embed(guild, mode="regular"):
         description=f"**Mode:** `{mode.capitalize()}`\n({len(lobby_players[guild.id])}/10)",
         color=discord.Color.purple()
     )
+    roles_enabled = load_preferred_roles_setting(guild.id)
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # Empty spacer
+    embed.add_field(name="**Preferred Roles**", value="✅ Enabled" if roles_enabled else "❌ Disabled", inline=True)
     for _, name, mmr in lobby_players.get(guild_id, []):
         embed.add_field(name=name, value=str(mmr), inline=True)
-    roles_enabled = load_preferred_roles_setting(guild.id)
-    embed.add_field(name="Preferred Roles", value="✅ Enabled" if roles_enabled else "❌ Disabled", inline=True)
     password = load_lobby_password_for_guild(guild.id)
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
