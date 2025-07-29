@@ -1097,9 +1097,9 @@ async def viewlogs(ctx, *, flags: str = ""):
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     lines = []
     if verbose:
-        lines.append(f"📜 **Admin Logs (Verbose)** for `{guild_name}` (Guild ID: `{guild_id}`)\n")
+        lines.append(f"📜 **Admin Logs (Verbose)** for `{guild_name}` (Guild ID: `{guild_id}`)")
     else:
-        lines.append(f"📜 **Admin Logs for `{guild_name}`**\n")
+        lines.append(f"📜 **Admin Logs for `{guild_name}`**")
     if doc.exists:
         data = doc.to_dict()
         # PREFIX LOG
