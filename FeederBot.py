@@ -23,6 +23,7 @@ import discord
 import time
 import itertools
 import firebase_setup  # ensures Firebase is initialized before anything else
+from itertools import combinations
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from firebase_admin import firestore
@@ -65,6 +66,7 @@ MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
 MMR_ROLE_OVERRULE_THRESHOLD = 1500
 MMR_TOLERANCE = 100  # adjust as needed
+ROLE_FIT_WEIGHT = 10  # You can adjust this based on how much role fit matters
 
 HERO_CACHE_FILE = "hero_id_map.json"
 with open("hero_id_map.json", "r") as f:
@@ -657,23 +659,30 @@ def get_preferred_roles(player_id):
 # ================================ ⚖️ Team Balancing ================================
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
 def calculate_balanced_teams(players):
-    """
-    players: list of 10 (user_id, display_name, mmr) tuples
-    Returns a list of (team1, team2) tuples, sorted by MMR + role fit
-    """
-    combinations_5 = list(itertools.combinations(players, 5))
-    team_pairs = []
-    for team1 in combinations_5:
-        team2 = [p for p in players if p not in team1]
-        avg1 = sum(p[2] for p in team1) / 5
-        avg2 = sum(p[2] for p in team2) / 5
-        mmr_diff = abs(avg1 - avg2)
-        if mmr_diff <= MMR_TOLERANCE:
-            role_fit_score = calculate_role_fit_score(team1) + calculate_role_fit_score(team2)
-            team_pairs.append(((list(team1), list(team2)), mmr_diff, role_fit_score))
-    # Sort by MMR diff first, then by role-fit score
-    team_pairs.sort(key=lambda x: (x[1], x[2]))
-    return [pair for pair, _, _ in team_pairs]
+    best_combos = []
+    all_players = set(players)
+
+    for team1 in itertools.combinations(players, 5):
+        team2 = tuple(all_players - set(team1))
+
+        mmr1 = sum(p[2] for p in team1) / 5
+        mmr2 = sum(p[2] for p in team2) / 5
+        mmr_diff = abs(mmr1 - mmr2)
+
+        if mmr_diff > 100:
+            continue
+
+        # Calculate role fit scores
+        score1 = calculate_role_fit_score(team1)
+        score2 = calculate_role_fit_score(team2)
+
+        total_score = mmr_diff + ROLE_FIT_WEIGHT * (score1 + score2)
+
+        best_combos.append((total_score, team1, team2))
+
+    # Sort by total_score and return the top 5 combinations
+    best_combos.sort(key=lambda x: x[0])
+    return [(combo[1], combo[2]) for combo in best_combos[:5]]
 
 def calculate_role_fit_score(team):
     """
