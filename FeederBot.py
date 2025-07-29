@@ -1142,10 +1142,11 @@ async def viewlogs(ctx, *, flags: str = ""):
         live_channel_data = data.get("live_channel_id", {})
         live_channel_id = live_channel_data.get("live_channel_id", "Unknown")
         live_channel_time = live_channel_data.get("live_channel_timestamp", "Unknown")
+        live_channel_set_by = live_channel_data.get("bound_by", "Unknown")
         if verbose:
-            lines.append(f"\n📺 **Live Channel ID**:\n  • Value: `{live_channel_id}`\n  • Timestamp: `{live_channel_time}`\n  • Full Doc: `{live_channel_data}`")
+            lines.append(f"\n📺 **Live Channel ID**:\n  • Value: `{live_channel_id}`\n  • Set by: {live_channel_set_by}\n  • Timestamp: `{live_channel_time}`\n  • Full Doc: `{live_channel_data}`")
         else:
-            lines.append(f"\n📺 **Live Channel ID**: `{live_channel_id}`\nTime: {live_channel_time}")
+            lines.append(f"\n📺 **Live Channel ID**: `{live_channel_id}`\nSet by: {live_channel_set_by}\nTime: {live_channel_time}")
     else:
         lines.append("❌ No Firestore data found for this guild.")
     await ctx.send("\n".join(lines))
@@ -1215,6 +1216,7 @@ async def set_live_channel(ctx):
     data = {
         "live_channel_id": str(channel_id),
         "live_channel_timestamp": firestore.SERVER_TIMESTAMP,
+        "bound_by": str(ctx.author),
     }
     doc_ref = db.collection("guild_specific_info").document(str(ctx.guild.id))
     doc_ref.set({"live_channel_id": data}, merge=True)
