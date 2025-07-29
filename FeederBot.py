@@ -591,7 +591,7 @@ async def refresh_all_mmrs():
 def assign_roles_with_preferences(team):
     """Assigns roles 1-5 to players in the given team using preference and MMR buffer logic."""
     assigned = {}
-    unassigned_players = team[:]
+    unassigned_players = list(team)
     role_pool = set([1, 2, 3, 4, 5])
     # Fetch preferences in advance
     preference_map = {}
