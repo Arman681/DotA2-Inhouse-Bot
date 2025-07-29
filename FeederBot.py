@@ -1017,6 +1017,10 @@ async def livematch_cmd_error(ctx, error):
 @bot.command(name="setmmr")
 @is_admin_or_has_role()
 async def setmmr(ctx, mmr: int, member: discord.Member):
+    # Validate MMR value
+    if mmr < 0 or mmr > 20000:
+        await ctx.send("❌ Invalid MMR value. Please provide a value between 0 and 20000.")
+        return
     # Safety check
     if member not in ctx.guild.members:
         await ctx.send("That user is not in this server.")
