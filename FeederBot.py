@@ -64,6 +64,7 @@ livematch_timers = {}     # {guild_id: asyncio.Task}
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
 MMR_ROLE_OVERRULE_THRESHOLD = 1500
+MMR_TOLERANCE = 100  # adjust as needed
 
 HERO_CACHE_FILE = "hero_id_map.json"
 with open("hero_id_map.json", "r") as f:
@@ -645,19 +646,53 @@ def get_all_captain_pairs(players):
     pairs.sort(key=lambda x: x[2])  # sort by diff
     return pairs  # List of (captain_pair, pool, diff)
 
+def get_preferred_roles(player_id):
+    doc = db.collection("players").document(str(player_id)).get()
+    if doc.exists:
+        data = doc.to_dict()
+        if "preferred_roles" in data and isinstance(data["preferred_roles"], list):
+            return data["preferred_roles"]
+    return None  # Neutral: no preferences set
+
 # ================================ ⚖️ Team Balancing ================================
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
 def calculate_balanced_teams(players):
-    combinations = list(itertools.combinations(players, 5))
+    """
+    players: list of 10 (user_id, display_name, mmr) tuples
+    Returns a list of (team1, team2) tuples, sorted by MMR + role fit
+    """
+    combinations_5 = list(itertools.combinations(players, 5))
     team_pairs = []
-    for team1 in combinations:
+    for team1 in combinations_5:
         team2 = [p for p in players if p not in team1]
         avg1 = sum(p[2] for p in team1) / 5
         avg2 = sum(p[2] for p in team2) / 5
-        diff = abs(avg1 - avg2)
-        team_pairs.append((diff, list(team1), team2))
-    team_pairs.sort(key=lambda x: x[0])
-    return [(t1, t2) for _, t1, t2 in team_pairs]
+        mmr_diff = abs(avg1 - avg2)
+        if mmr_diff <= MMR_TOLERANCE:
+            role_fit_score = calculate_role_fit_score(team1) + calculate_role_fit_score(team2)
+            team_pairs.append(((list(team1), list(team2)), mmr_diff, role_fit_score))
+    # Sort by MMR diff first, then by role-fit score
+    team_pairs.sort(key=lambda x: (x[1], x[2]))
+    return [pair for pair, _, _ in team_pairs]
+
+def calculate_role_fit_score(team):
+    """
+    team: list of player tuples (user_id, display_name, mmr)
+    Returns total role-fit score for the team. Lower = better fit.
+    """
+    assignments = assign_roles_with_preferences(team)
+    total_score = 0
+    for role, player in assignments.items():
+        player_id = player[0]
+        preferences = get_preferred_roles(player_id)
+        if preferences is None:
+            continue  # skip scoring if no preferences set
+        try:
+            preference_rank = preferences.index(role) + 1  # index 0 is best
+        except ValueError:
+            preference_rank = 6  # role not found in preferences (shouldn't happen)
+        total_score += preference_rank
+    return total_score
 
 # ========================================================================================================================
 # ================================================= 💬 Commands Section =================================================
@@ -1728,14 +1763,10 @@ async def update_all_lobbies():
 # Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
 def build_team_embed(team1, team2, guild):
     global roll_count
-    # Assign roles per team
-    assigned1 = assign_roles_with_preferences(team1[:])
-    assigned2 = assign_roles_with_preferences(team2[:])
-    # Create reverse map for quick lookup (player_id → role)
-    role_map_1 = {player[0]: role for role, player in assigned1.items()}
-    role_map_2 = {player[0]: role for role, player in assigned2.items()}
     avg1 = sum(p[2] for p in team1) / 5
     avg2 = sum(p[2] for p in team2) / 5
+    score1 = calculate_role_fit_score(team1)
+    score2 = calculate_role_fit_score(team2)
     embed = discord.Embed(
         title="DotA2 Inhouse Lobby",
         description=f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count.get(guild.id, 1)}/{MAX_ROLLS}",
@@ -1743,17 +1774,24 @@ def build_team_embed(team1, team2, guild):
         )
     team1_sorted = sorted(team1, key=lambda x: x[2], reverse=True)
     team2_sorted = sorted(team2, key=lambda x: x[2], reverse=True)
+    roles1 = assign_roles_with_preferences(team1_sorted)
+    roles2 = assign_roles_with_preferences(team2_sorted)
+    def format_player_list(team, assignments):
+        return ", ".join(
+            f"{p[1]} ({p[2]}) [Pos {role}]"
+            for role, p in assignments.items()
+        )
     password = load_lobby_password_for_guild(guild.id)
     embed.add_field(
         name="Team One",
-        value=", ".join(f"{p[1]} ({p[2]}) — Pos {role_map_1.get(p[0], '?')}" for p in team1_sorted),
+        value=f"{format_player_list(team1_sorted, roles1)}\n🧩 Role Fit Score: {score1}",
         inline=False
-        )
+    )
     embed.add_field(
         name="Team Two",
-        value=", ".join(f"{p[1]} ({p[2]}) — Pos {role_map_2.get(p[0], '?')}" for p in team2_sorted),
+        value=f"{format_player_list(team2_sorted, roles2)}\n🧩 Role Fit Score: {score2}",
         inline=False
-        )
+    )
     embed.add_field(
         name="**Password**",
         value=password,
