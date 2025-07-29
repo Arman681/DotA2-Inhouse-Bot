@@ -745,24 +745,18 @@ async def bet(ctx, amount: int, team: str):
     if amount <= 0:
         await ctx.send("❌ Bet amount must be greater than 0.")
         return
-    
     user_id = str(ctx.author.id)
     nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
-
     # Check if a match is active and < 2 min duration
     if ctx.guild.id not in active_match_ids:
         await ctx.send("❌ There is no active match in progress to bet on.")
         return
-    
     is_random = random_polling_flags.get(ctx.guild.id, False)
     match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=is_random)
-
     if not match:
         await ctx.send("⚠️ Could not retrieve live match info. Betting may be closed.")
         return
-    
     duration = match.get("scoreboard", {}).get("duration", 0)
-
     if is_random:
         start_time = match_tracking_start_times.get(ctx.guild.id)
         if start_time and (time.time() - start_time > 180):  # 3 min
@@ -772,7 +766,6 @@ async def bet(ctx, amount: int, team: str):
         if duration >= 120:
             await ctx.send("⏳ Bets are closed. The match has passed the 2:00 mark.")
             return
-    
     # Check if user is playing in the match
     player_team = None
     for player in match.get("players", []):
@@ -781,7 +774,6 @@ async def bet(ctx, amount: int, team: str):
         if discord_id == str(ctx.author.id):
             player_team = player.get("team")  # 0 = Radiant, 1 = Dire
             break
-
     # Block bet on opposite team if user is playing
     if player_team is not None:
         if (player_team == 0 and team == "dire") or (player_team == 1 and team == "radiant"):
@@ -790,7 +782,6 @@ async def bet(ctx, amount: int, team: str):
                 f"You cannot place a bet on the **opposing team** during a match you are in."
             )
             return
-        
     # Existing Firestore bet logic
     entry_ref = db.collection("guild_specific_info").document(str(ctx.guild.id)).collection("bets").document(str(ctx.author.id))
     existing_bet_doc = entry_ref.get()
@@ -875,14 +866,35 @@ async def send_coins_error(ctx, error):
         await ctx.send("⚠️ An unexpected error occurred while sending coins.")
 
 @bot.command(name="setpreferredroles")
-async def set_preferred_roles(ctx, *roles: int):
-    if len(roles) != 5 or sorted(roles) != [1, 2, 3, 4, 5]:
-        await ctx.send("❌ Usage: !setpreferredroles `1 2 3 4 5` (enter each role starting from most preferred going to least preferred).")
+async def set_preferred_roles(ctx, r1: int, r2: int, r3: int, r4: int, r5: int, member: discord.Member = None):
+    roles = [r1, r2, r3, r4, r5]
+    if sorted(roles) != [1, 2, 3, 4, 5]:
+        await ctx.send("❌ Usage: !setpreferredroles '1 2 3 4 5' (enter each role starting from most preferred going to least preferred).")
         return
-    user_id = str(ctx.author.id)
+    target = member or ctx.author
+    # If trying to set roles for someone else
+    if member and member != ctx.author:
+        if not await user_is_admin_or_has_role(ctx.author):
+            await ctx.send("❌ You do not have permission to set roles for other users.")
+            return
+    user_id = str(target.id)
     doc_ref = db.collection("players").document(user_id)
-    doc_ref.set({"preferred_roles": list(roles)}, merge=True)
-    await ctx.send(f"✅ {ctx.author.mention}, your preferred roles have been saved: {roles}")
+    doc_ref.set({"preferred_roles": roles}, merge=True)
+    if target == ctx.author:
+        await ctx.send(f"✅ {ctx.author.mention}, your preferred roles have been saved: {roles}")
+    else:
+        await ctx.send(f"✅ {ctx.author.mention} set preferred roles for {target.mention}: {roles}")
+@set_preferred_roles.error
+async def set_preferred_roles_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ You must provide 5 role numbers in order of preference.\nExample: `!setpreferredroles 3 2 4 5 1`")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send("❌ Invalid input. Make sure the first five values are numbers (1–5), followed optionally by a valid @user mention.")
+    elif isinstance(error, commands.UserInputError):
+        await ctx.send("❌ Incorrect usage. Try: `!setpreferredroles 1 2 3 4 5` or `!setpreferredroles 1 2 3 4 5 @user`")
+    else:
+        await ctx.send("⚠️ An unexpected error occurred while processing your preferred roles.")
+        raise error  # optional: re-raise to see full error in logs
 
 # ========================== 🏠 Lobby Management Commands =========================
 # Adds one or more users to the current lobby for the server.
@@ -1362,6 +1374,7 @@ async def help_command(ctx, *, category: str = ""):
             "\n**📜 Available Commands:**\n\n"
             "__**👥 General Commands**__\n"
             "**!cfg `steam_id` `@user`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
+            "**!setpreferredroles `1 2 3 4 5` `@user`** - Set your role preferences from most to least preferred (admin can set for others).\n"
             "**!mmr `@user`** - Show your MMR or another user's MMR.\n"
             "**!inhouse_mmr `@user`** - Show inhouse MMR for yourself or another user\n"
             "**!balance `@user`** - Show your or another user's coin balance\n"
@@ -1386,6 +1399,7 @@ async def help_command(ctx, *, category: str = ""):
             "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
             "           • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
             "**!setmmr `mmr` `@user`** - Manually set a user's MMR.\n"
+            "**!setpreferredroles `1 2 3 4 5` @user** - Set preferred roles for another user.\n"
             "**!setpassword `new_password`** - Change the inhouse lobby password.\n"
             "**!changeprefix `new_prefix`** - Changes the prefix of the bot commands.\n"
             "**!submitmatch `match_id`** - Report match and resolve MMR + bets\n"
