@@ -877,7 +877,7 @@ async def send_coins_error(ctx, error):
 @bot.command(name="setpreferredroles")
 async def set_preferred_roles(ctx, *roles: int):
     if len(roles) != 5 or sorted(roles) != [1, 2, 3, 4, 5]:
-        await ctx.send("❌ Usage: `!setpreferredroles 1 2 3 4 5` (each number from 1 to 5 exactly once).")
+        await ctx.send("❌ Usage: !setpreferredroles `1 2 3 4 5` (enter each role starting from most preferred going to least preferred).")
         return
     user_id = str(ctx.author.id)
     doc_ref = db.collection("players").document(user_id)
