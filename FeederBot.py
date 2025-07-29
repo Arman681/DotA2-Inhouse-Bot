@@ -58,6 +58,8 @@ live_embed_messages = {}   # {guild_id: message}
 polling_tasks = {}         # {guild_id: asyncio.Task} for per-server polling
 match_tracking_start_times = {}  # {guild_id: unix_timestamp}
 random_polling_flags = {}        # {guild_id: True/False}
+livematch_cooldowns = {}  # {guild_id: last_called_timestamp}
+livematch_timers = {}     # {guild_id: asyncio.Task}
 
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
@@ -956,6 +958,60 @@ async def reset(ctx, *args):
     await message.add_reaction("👎")
     await ctx.send("Lobby has been cleared and refreshed.")
 
+# Recalls and refreshes the live match embed in the Discord channel, with a 30-second cooldown and auto-expiring timer
+@bot.command(name="livematch")
+async def livematch_cmd(ctx):
+    guild_id = ctx.guild.id
+    now = time.time()
+    last_called = livematch_cooldowns.get(guild_id, 0)
+    # Check cooldown
+    if now - last_called < 30:
+        wait_time = int(30 - (now - last_called))
+        await ctx.send(f"⏳ You must wait {wait_time} seconds before using `!livematch` again.")
+        return
+    # Check if a match is active
+    match_id = active_match_ids.get(guild_id)
+    if not match_id:
+        await ctx.send("❌ There is no active match to display.")
+        return
+    # Fetch live match info
+    is_random = random_polling_flags.get(guild_id, False)
+    match = await fetch_live_match_for_guild(guild_id, random_mode=is_random)
+    if not match:
+        await ctx.send("⚠️ Could not retrieve live match info.")
+        return
+    # Delete previous live match embed if exists
+    prev_msg = live_embed_messages.get(guild_id)
+    channel = ctx.channel
+    if prev_msg:
+        try:
+            await prev_msg.delete()
+        except Exception:
+            pass
+    # Send new live match embed
+    embed = await format_live_match_embed(match, ctx.guild)
+    new_msg = await channel.send(embed=embed)
+    live_embed_messages[guild_id] = new_msg
+    # Set cooldown
+    livematch_cooldowns[guild_id] = now
+    # Cancel previous timer if running
+    if guild_id in livematch_timers:
+        livematch_timers[guild_id].cancel()
+    # Start a timer to clear cooldown after 45 seconds
+    async def clear_livematch_timer(gid):
+        try:
+            await asyncio.sleep(45)
+            # Only clear if not called again within 45 seconds
+            if time.time() - livematch_cooldowns.get(gid, 0) >= 45:
+                livematch_cooldowns.pop(gid, None)
+                livematch_timers.pop(gid, None)
+        except asyncio.CancelledError:
+            pass
+    livematch_timers[guild_id] = asyncio.create_task(clear_livematch_timer(guild_id))
+@livematch_cmd.error
+async def livematch_cmd_error(ctx, error):
+    await ctx.send("⚠️ An error occurred while recalling the live match embed.")
+
 # ============================= 🔐 Admin-Only Commands ============================
 # Admin only: manually set a user's MMR in Firebase.
 @bot.command(name="setmmr")
@@ -1153,8 +1209,9 @@ async def setlivechannel_error(ctx, error):
     else:
         await ctx.send("⚠️ An unexpected error occurred while setting the live channel.")
 
+# Admin-only: Starts polling for live matches in the bound league for the current server.
 @bot.command(name="startpolling")
-@is_global_admin()
+@is_admin_or_has_role()
 async def start_polling(ctx):
     channel = ctx.channel
     match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=False)
@@ -1170,10 +1227,11 @@ async def start_polling(ctx):
 @start_polling.error
 async def start_polling_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ You do not have permission to use this command. Only the bot owner can use `!startpolling`.")
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
+# Admin-only: Stops polling for live matches in the current server.
 @bot.command(name="stoppolling")
-@is_global_admin()
+@is_admin_or_has_role()
 async def stop_polling(ctx):
     if ctx.guild.id in polling_tasks and not polling_tasks[ctx.guild.id].done():
         polling_tasks[ctx.guild.id].cancel()
@@ -1183,10 +1241,11 @@ async def stop_polling(ctx):
 @stop_polling.error
 async def stop_polling_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ You do not have permission to use this command. Only the bot owner can use `!stoppolling`.")
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
+# Admin-only: Starts polling for random live matches in the current server.
 @bot.command(name="randompoll")
-@is_global_admin()
+@is_admin_or_has_role()
 async def random_poll(ctx):
     channel = ctx.channel
     match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=True)
@@ -1205,7 +1264,7 @@ async def random_poll(ctx):
 @random_poll.error
 async def random_poll_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("❌ You do not have permission to use this command. Only the bot owner can use `!randompoll`.")
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
     else:
         await ctx.send("⚠️ An unexpected error occurred while starting random match polling.")
         print(f"[ERROR] random_poll command: {error}")
@@ -1223,7 +1282,9 @@ async def help_command(ctx, *, category: str = ""):
             "**!mmr `@user`** - Show your MMR or another user's MMR.\n"
             "**!inhouse_mmr `@user`** - Show inhouse MMR for yourself or another user\n"
             "**!balance `@user`** - Show your or another user's coin balance\n"
-            "**!leaderboard** - View top 10 inhouse MMR players in this server\n\n"
+            "**!leaderboard** - View top 10 inhouse MMR players in this server\n"
+            "**!send `amount` `@user`** - Send coins to another user in the server\n"
+            "**!livematch** - Recall and refresh the live match embed in the channel (30s cooldown)\n\n"
             "__**🏠 Lobby Management**__\n"
             "**!add `@user1` `@user2` ...** - Manually add one or more users to the lobby.\n"
             "**!remove `@user1` `@user2` ...** - Manually remove one or more users from the lobby.\n"
@@ -1250,6 +1311,9 @@ async def help_command(ctx, *, category: str = ""):
             "**!viewlogs --verbose** - (Admin only) View full detailed logs for this server.\n"
             "**!bindleague `league_id`** - (Admin only) Binds a Steam league ID to the current Discord server for live match tracking.\n"
             "**!setlivechannel** - (Admin only) Sets the current text channel as the destination for live match embed updates.\n"
+            "**!startpolling** - (Admin only) Starts live match polling for the bound league in this server.\n"
+            "**!stoppolling** - (Admin only) Stops live match polling for this server.\n"
+            "**!randompoll** - (Admin only) Starts polling for random live matches in this server.\n"
     )
     else:
         help_text = "❌ Unknown help category. Try `!help` or `!help admin`."
