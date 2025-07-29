@@ -59,8 +59,9 @@ live_embed_messages = {}   # {guild_id: message}
 polling_tasks = {}         # {guild_id: asyncio.Task} for per-server polling
 match_tracking_start_times = {}  # {guild_id: unix_timestamp}
 random_polling_flags = {}        # {guild_id: True/False}
-livematch_cooldowns = {}  # {guild_id: last_called_timestamp}
-livematch_timers = {}     # {guild_id: asyncio.Task}
+livematch_cooldowns = {}   # {guild_id: last_called_timestamp}
+livematch_timers = {}      # {guild_id: asyncio.Task}
+valid_team_combos = {}     # {guild_id: int} for how many valid team combinations were found
 
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
@@ -661,28 +662,25 @@ def get_preferred_roles(player_id):
 def calculate_balanced_teams(players):
     best_combos = []
     all_players = set(players)
-
     for team1 in itertools.combinations(players, 5):
         team2 = tuple(all_players - set(team1))
-
         mmr1 = sum(p[2] for p in team1) / 5
         mmr2 = sum(p[2] for p in team2) / 5
         mmr_diff = abs(mmr1 - mmr2)
-
         if mmr_diff > 100:
-            continue
-
+            continue  # skip unbalanced combos
         # Calculate role fit scores
         score1 = calculate_role_fit_score(team1)
         score2 = calculate_role_fit_score(team2)
-
-        total_score = mmr_diff + ROLE_FIT_WEIGHT * (score1 + score2)
-
+        # Calculate total score
+        total_score = (mmr_diff / 5) + ROLE_FIT_WEIGHT * (score1 + score2)
         best_combos.append((total_score, team1, team2))
-
-    # Sort by total_score and return the top 5 combinations
+    # Print how many valid combinations were found
+    print(f"[INFO] Found {len(best_combos)} valid team combinations (MMR diff ≤ 100)")
+    # Sort by total score: lower is better
     best_combos.sort(key=lambda x: x[0])
-    return [(combo[1], combo[2]) for combo in best_combos[:5]]
+    top_teams = [(combo[1], combo[2]) for combo in best_combos[:5]]
+    return top_teams, len(best_combos)
 
 def calculate_role_fit_score(team):
     """
@@ -1595,7 +1593,8 @@ async def on_raw_reaction_add(payload):
     elif emoji == "🚀" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
         if mode == "regular":
-            team_rolls[guild_id] = calculate_balanced_teams(lobby_players[guild_id])
+            team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id])
+            valid_team_combos[guild_id] = valid_combo_count
             original_teams[guild_id] = team_rolls[guild_id][0]
             roll_count[guild_id] = 1
             embed = build_team_embed(*original_teams[guild_id], guild)
@@ -1655,12 +1654,13 @@ async def on_raw_reaction_add(payload):
             return
         # REGULAR INHOUSE REROLL
         if mode == "regular":
-            max_rolls = 3 if mode == "immortal" else MAX_ROLLS
+            max_rolls = MAX_ROLLS
             if roll_count[guild_id] >= max_rolls:
                 roll_count[guild_id] = 1
             else:
                 roll_count[guild_id] += 1
-            team_rolls[guild_id] = calculate_balanced_teams(lobby_players[guild_id])
+            team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id])
+            valid_team_combos[guild_id] = valid_combo_count
             index = roll_count[guild_id] - 1
             if index >= len(team_rolls[guild_id]):
                 index = 0
@@ -1776,9 +1776,12 @@ def build_team_embed(team1, team2, guild):
     avg2 = sum(p[2] for p in team2) / 5
     score1 = calculate_role_fit_score(team1)
     score2 = calculate_role_fit_score(team2)
+    description = f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count.get(guild.id, 1)}/{MAX_ROLLS}"
+    if guild.id in valid_team_combos:
+        description += f"\n🧮 Valid team combinations found: {valid_team_combos[guild.id]}"
     embed = discord.Embed(
         title="DotA2 Inhouse Lobby",
-        description=f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count.get(guild.id, 1)}/{MAX_ROLLS}",
+        description=description,
         color=discord.Color.gold()
         )
     team1_sorted = sorted(team1, key=lambda x: x[2], reverse=True)
