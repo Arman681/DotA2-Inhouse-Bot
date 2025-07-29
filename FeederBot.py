@@ -896,6 +896,26 @@ async def set_preferred_roles_error(ctx, error):
         await ctx.send("⚠️ An unexpected error occurred while processing your preferred roles.")
         raise error  # optional: re-raise to see full error in logs
 
+@bot.command(name="viewpreferredroles")
+async def view_preferred_roles(ctx, member: discord.Member = None):
+    target = member or ctx.author
+    user_id = str(target.id)
+    doc_ref = db.collection("players").document(user_id)
+    doc = doc_ref.get()
+    if not doc.exists or "preferred_roles" not in doc.to_dict():
+        await ctx.send(f"ℹ️ {target.display_name} has not set their preferred roles.")
+        return
+    preferred_roles = doc.to_dict()["preferred_roles"]
+    formatted = ", ".join(f"Pos {r}" for r in preferred_roles)
+    await ctx.send(f"📊 {target.mention}'s preferred roles (most to least preferred): {formatted}")
+@view_preferred_roles.error
+async def view_preferred_roles_error(ctx, error):
+    if isinstance(error, commands.BadArgument):
+        await ctx.send("❌ Invalid user. Make sure to mention a valid user in the server.")
+    else:
+        await ctx.send("⚠️ An unexpected error occurred while fetching preferred roles.")
+        raise error
+
 # ========================== 🏠 Lobby Management Commands =========================
 # Adds one or more users to the current lobby for the server.
 @bot.command(name="add")
@@ -1375,6 +1395,7 @@ async def help_command(ctx, *, category: str = ""):
             "__**👥 General Commands**__\n"
             "**!cfg `steam_id` `@user`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
             "**!setpreferredroles `1 2 3 4 5` `@user`** - Set your role preferences from most to least preferred (admin can set for others).\n"
+            "**!viewpreferredroles `@user`** - View preferred roles for yourself or another user.\n"
             "**!mmr `@user`** - Show your MMR or another user's MMR.\n"
             "**!inhouse_mmr `@user`** - Show inhouse MMR for yourself or another user\n"
             "**!balance `@user`** - Show your or another user's coin balance\n"
