@@ -1662,7 +1662,6 @@ async def on_raw_reaction_add(payload):
             if guild_id not in team_rolls or not team_rolls[guild_id]:
                 await message.channel.send("⚠️ No team combinations found. Please press 🚀 first.")
                 return
-            valid_team_combos[guild_id] = valid_combo_count
             index = roll_count[guild_id] - 1
             if index >= len(team_rolls[guild_id]):
                 index = 0
