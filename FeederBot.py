@@ -311,9 +311,14 @@ def load_lobby_players(guild_id):
         return [(p["id"], p["name"], p["mmr"]) for p in raw if "id" in p and "name" in p and "mmr" in p]
     return []
 
-def save_preferred_roles_setting(guild_id, enabled):
+def save_preferred_roles_setting(guild_id, enabled, set_by=None):
+    data = {
+        "preferred_roles_enabled": enabled,
+        "preferred_roles_set_by": str(set_by),
+        "preferred_roles_timestamp": firestore.SERVER_TIMESTAMP
+    }
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
-    doc_ref.set({"preferred_roles_enabled": enabled}, merge=True)
+    doc_ref.set({"preferred_roles_setting": data}, merge=True)
 
 def load_preferred_roles_setting(guild_id):
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
@@ -1297,6 +1302,15 @@ async def viewlogs(ctx, *, flags: str = ""):
             lines.append(f"\n📺 **Live Channel ID**:\n  • Value: `{live_channel_id}`\n  • Set by: {live_channel_set_by}\n  • Timestamp: `{live_channel_time}`\n  • Full Doc: `{live_channel_data}`")
         else:
             lines.append(f"\n📺 **Live Channel ID**: `{live_channel_id}`\nSet by: {live_channel_set_by}\nTime: {live_channel_time}")
+        # PREFERRED ROLES INTEGRATION LOG
+        preferred_roles_setting_data = data.get("preferred_roles_setting", {})
+        preferred_roles_enabled = preferred_roles_setting_data.get("preferred_roles_enabled", True)
+        preferred_roles_set_by = preferred_roles_setting_data.get("preferred_roles_set_by", "Unknown")
+        preferred_roles_time = preferred_roles_setting_data.get("preferred_roles_timestamp", "Unknown")
+        if verbose:
+            lines.append(f"\n🎯 **Preferred Roles Integration**:\n  • Status: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n  • Set by: {preferred_roles_set_by}\n  • Timestamp: {preferred_roles_time}\n  • Field: preferred_roles_enabled = {preferred_roles_enabled}")
+        else:
+            lines.append(f"\n🎯 **Preferred Roles Integration**: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n Set by: {preferred_roles_set_by}\n Time: {preferred_roles_time}")
     else:
         lines.append("❌ No Firestore data found for this guild.")
     await ctx.send("\n".join(lines))
@@ -1448,7 +1462,7 @@ async def toggle_preferred_roles(ctx, mode: str):
         await ctx.send("❗ Usage: `!toggle_roles on` or `!toggle_roles off`")
         return
     enabled = (mode == "on")
-    save_preferred_roles_setting(ctx.guild.id, enabled)
+    save_preferred_roles_setting(ctx.guild.id, enabled, set_by=ctx.author)
     status = "enabled ✅" if enabled else "disabled ❌"
     await ctx.send(f"Preferred roles integration is now {status} for team balancing.")
 @toggle_preferred_roles.error
@@ -1494,6 +1508,7 @@ async def help_command(ctx, *, category: str = ""):
             "**!lobby `mode`** - Sets the lobby mode for the inhouse \n"
             "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
             "           • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
+            "**!toggle_roles `on|off`** - Enable or disable preferred role usage in team balancing.\n"
             "**!setmmr `mmr` `@user`** - Manually set a user's MMR.\n"
             "**!setpreferredroles `1 2 3 4 5` @user** - Set preferred roles for another user.\n"
             "**!setpassword `new_password`** - Change the inhouse lobby password.\n"
@@ -1782,6 +1797,8 @@ def build_lobby_embed(guild, mode="regular"):
     )
     for _, name, mmr in lobby_players.get(guild_id, []):
         embed.add_field(name=name, value=str(mmr), inline=True)
+    roles_enabled = load_preferred_roles_setting(guild.id)
+    embed.add_field(name="Preferred Roles", value="✅ Enabled" if roles_enabled else "❌ Disabled", inline=True)
     password = load_lobby_password_for_guild(guild.id)
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
