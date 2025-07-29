@@ -311,6 +311,16 @@ def load_lobby_players(guild_id):
         return [(p["id"], p["name"], p["mmr"]) for p in raw if "id" in p and "name" in p and "mmr" in p]
     return []
 
+def save_preferred_roles_setting(guild_id, enabled):
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"preferred_roles_enabled": enabled}, merge=True)
+
+def load_preferred_roles_setting(guild_id):
+    doc = db.collection("guild_specific_info").document(str(guild_id)).get()
+    if doc.exists:
+        return doc.to_dict().get("preferred_roles_enabled", True)  # Default: enabled
+    return True
+
 # ============================ 🎯 MMR, STRATZ, and Steam Integration ============================
 # Maps Dota 2 STRATZ seasonRank values to estimated MMR values.
 season_rank_to_mmr = {
@@ -659,7 +669,7 @@ def get_preferred_roles(player_id):
 
 # ================================ ⚖️ Team Balancing ================================
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
-def calculate_balanced_teams(players):
+def calculate_balanced_teams(players, guild_id):
     best_combos = []
     all_players = set(players)
     for team1 in itertools.combinations(players, 5):
@@ -669,9 +679,13 @@ def calculate_balanced_teams(players):
         mmr_diff = abs(mmr1 - mmr2)
         if mmr_diff > 100:
             continue  # skip unbalanced combos
-        # Calculate role fit scores
-        score1 = calculate_role_fit_score(team1)
-        score2 = calculate_role_fit_score(team2)
+        use_roles = load_preferred_roles_setting(guild_id)
+        if use_roles:
+            score1 = calculate_role_fit_score(team1)
+            score2 = calculate_role_fit_score(team2)
+        else:
+            score1 = 0
+            score2 = 0
         # Calculate total score
         total_score = (mmr_diff / 5) + ROLE_FIT_WEIGHT * (score1 + score2)
         best_combos.append((total_score, team1, team2))
@@ -1426,6 +1440,25 @@ async def random_poll_error(ctx, error):
         await ctx.send("⚠️ An unexpected error occurred while starting random match polling.")
         print(f"[ERROR] random_poll command: {error}")
 
+@bot.command(name="toggle_roles")
+@is_admin_or_has_role()
+async def toggle_preferred_roles(ctx, mode: str):
+    mode = mode.lower()
+    if mode not in ["on", "off"]:
+        await ctx.send("❗ Usage: `!toggle_roles on` or `!toggle_roles off`")
+        return
+    enabled = (mode == "on")
+    save_preferred_roles_setting(ctx.guild.id, enabled)
+    status = "enabled ✅" if enabled else "disabled ❌"
+    await ctx.send(f"Preferred roles integration is now {status} for team balancing.")
+@toggle_preferred_roles.error
+async def toggle_preferred_roles_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+    else:
+        await ctx.send("⚠️ An unexpected error occurred while toggling preferred roles.")
+        print(f"[ERROR] toggle_preferred_roles command: {error}")
+
 # ================================ ℹ️ Help Command ================================
 # Displays a list of all bot commands and their usage.
 @bot.command(name="help")
@@ -1593,7 +1626,7 @@ async def on_raw_reaction_add(payload):
     elif emoji == "🚀" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
         if mode == "regular":
-            team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id])
+            team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id], guild_id)
             valid_team_combos[guild_id] = valid_combo_count
             original_teams[guild_id] = team_rolls[guild_id][0]
             roll_count[guild_id] = 1
