@@ -63,6 +63,7 @@ livematch_timers = {}     # {guild_id: asyncio.Task}
 
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
+MMR_ROLE_OVERRULE_THRESHOLD = 1500
 
 HERO_CACHE_FILE = "hero_id_map.json"
 with open("hero_id_map.json", "r") as f:
@@ -583,6 +584,53 @@ async def refresh_all_mmrs():
     # Refresh lobby embeds across all servers
     await update_all_lobbies()
 
+def assign_roles_with_preferences(team):
+    """Assigns roles 1-5 to players in the given team using preference and MMR buffer logic."""
+    assigned = {}
+    unassigned_players = team[:]
+    role_pool = set([1, 2, 3, 4, 5])
+    # Fetch preferences in advance
+    preference_map = {}
+    mmr_map = {}
+    for player in team:
+        uid = str(player[0])
+        mmr_map[uid] = player[2]
+        doc = db.collection("players").document(uid).get()
+        preferred = doc.to_dict().get("preferred_roles", [1, 2, 3, 4, 5])
+        preference_map[uid] = preferred
+    for role in range(1, 6):
+        best_candidate = None
+        best_rank = 999
+        best_mmr = -1
+        for player in unassigned_players:
+            uid = str(player[0])
+            prefs = preference_map.get(uid, [])
+            mmr = mmr_map.get(uid, 0)
+            if role in prefs:
+                rank = prefs.index(role)
+                # Favor players with lower rank preference, unless outclassed
+                if (rank < best_rank) or (rank == best_rank and mmr > best_mmr):
+                    best_candidate = player
+                    best_rank = rank
+                    best_mmr = mmr
+        # Check if any higher-MMR player deserves override
+        for player in unassigned_players:
+            uid = str(player[0])
+            mmr = mmr_map[uid]
+            prefs = preference_map.get(uid, [])
+            if role in prefs:
+                if best_candidate:
+                    best_uid = str(best_candidate[0])
+                    if (uid != best_uid and 
+                        mmr - mmr_map[best_uid] >= MMR_ROLE_OVERRULE_THRESHOLD and
+                        prefs.index(role) <= 2):  # prefer top 3 roles
+                        best_candidate = player
+                        break
+        if best_candidate:
+            assigned[role] = best_candidate
+            unassigned_players.remove(best_candidate)
+    return assigned  # {1: (uid, name, mmr), ..., 5: (...) }
+
 def get_all_captain_pairs(players):
     sorted_players = sorted(players, key=lambda p: p[2])  # sort by MMR
     pairs = []
@@ -825,6 +873,16 @@ async def send_coins_error(ctx, error):
         await ctx.send("❗ Invalid argument. Usage: `!send <amount> <@user>` — make sure `<amount>` is a number and `<@user>` is a valid user.")
     else:
         await ctx.send("⚠️ An unexpected error occurred while sending coins.")
+
+@bot.command(name="setpreferredroles")
+async def set_preferred_roles(ctx, *roles: int):
+    if len(roles) != 5 or sorted(roles) != [1, 2, 3, 4, 5]:
+        await ctx.send("❌ Usage: `!setpreferredroles 1 2 3 4 5` (each number from 1 to 5 exactly once).")
+        return
+    user_id = str(ctx.author.id)
+    doc_ref = db.collection("players").document(user_id)
+    doc_ref.set({"preferred_roles": list(roles)}, merge=True)
+    await ctx.send(f"✅ {ctx.author.mention}, your preferred roles have been saved: {roles}")
 
 # ========================== 🏠 Lobby Management Commands =========================
 # Adds one or more users to the current lobby for the server.
@@ -1635,19 +1693,37 @@ async def update_all_lobbies():
 # Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
 def build_team_embed(team1, team2, guild):
     global roll_count
+    # Assign roles per team
+    assigned1 = assign_roles_with_preferences(team1[:])
+    assigned2 = assign_roles_with_preferences(team2[:])
+    # Create reverse map for quick lookup (player_id → role)
+    role_map_1 = {player[0]: role for role, player in assigned1.items()}
+    role_map_2 = {player[0]: role for role, player in assigned2.items()}
     avg1 = sum(p[2] for p in team1) / 5
     avg2 = sum(p[2] for p in team2) / 5
     embed = discord.Embed(
         title="DotA2 Inhouse Lobby",
         description=f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count.get(guild.id, 1)}/{MAX_ROLLS}",
         color=discord.Color.gold()
-    )
+        )
     team1_sorted = sorted(team1, key=lambda x: x[2], reverse=True)
     team2_sorted = sorted(team2, key=lambda x: x[2], reverse=True)
     password = load_lobby_password_for_guild(guild.id)
-    embed.add_field(name="Team One", value=", ".join(f"{p[1]} ({p[2]})" for p in team1_sorted), inline=False)
-    embed.add_field(name="Team Two", value=", ".join(f"{p[1]} ({p[2]})" for p in team2_sorted), inline=False)
-    embed.add_field(name="**Password**", value=password, inline=False)
+    embed.add_field(
+        name="Team One",
+        value=", ".join(f"{p[1]} ({p[2]}) — Pos {role_map_1.get(p[0], '?')}" for p in team1_sorted),
+        inline=False
+        )
+    embed.add_field(
+        name="Team Two",
+        value=", ".join(f"{p[1]} ({p[2]}) — Pos {role_map_2.get(p[0], '?')}" for p in team2_sorted),
+        inline=False
+        )
+    embed.add_field(
+        name="**Password**",
+        value=password,
+        inline=False
+        )
     return embed
 
 def build_immortal_embed(captains, pool, guild, reroll_count):
