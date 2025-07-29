@@ -1094,7 +1094,6 @@ async def viewlogs(ctx, *, flags: str = ""):
     guild_id = ctx.guild.id
     guild_name = ctx.guild.name
     verbose = '--verbose' in (flags or "").lower()
-    # ✅ Unified Firestore document for this guild
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     lines = []
     if verbose:
@@ -1104,29 +1103,49 @@ async def viewlogs(ctx, *, flags: str = ""):
     if doc.exists:
         data = doc.to_dict()
         # PREFIX LOG
-        prefix = data.get("prefix", "Unknown")
-        prefix_set_by = data.get("prefix_set_by", "Unknown")
-        prefix_time = data.get("prefix_timestamp", "Unknown")
+        prefix_data = data.get("prefix", {})
+        prefix = prefix_data.get("prefix", "Unknown")
+        prefix_set_by = prefix_data.get("prefix_set_by", "Unknown")
+        prefix_time = prefix_data.get("prefix_timestamp", "Unknown")
         if verbose:
-            lines.append(f"🔧 **Prefix**:\n  • Value: `{prefix}`\n  • Set by: {prefix_set_by}\n  • Timestamp: `{prefix_time}`\n  • Full Doc: `{data}`")
+            lines.append(f"🔧 **Prefix**:\n  • Value: `{prefix}`\n  • Set by: {prefix_set_by}\n  • Timestamp: `{prefix_time}`\n  • Full Doc: `{prefix_data}`")
         else:
             lines.append(f"🔧 **Prefix**: `{prefix}`\nSet by: {prefix_set_by}\nTime: {prefix_time}")
         # PASSWORD LOG
-        password = data.get("password", "Unknown")
-        password_set_by = data.get("password_set_by", "Unknown")
-        password_time = data.get("password_timestamp", "Unknown")
+        password_data = data.get("password", {})
+        password = password_data.get("password", "Unknown")
+        password_set_by = password_data.get("password_set_by", "Unknown")
+        password_time = password_data.get("password_timestamp", "Unknown")
         if verbose:
-            lines.append(f"\n🔐 **Lobby Password**:\n  • Value: `{password}`\n  • Set by: {password_set_by}\n  • Timestamp: `{password_time}`\n  • Full Doc: `{data}`")
+            lines.append(f"\n🔐 **Lobby Password**:\n  • Value: `{password}`\n  • Set by: {password_set_by}\n  • Timestamp: `{password_time}`\n  • Full Doc: `{password_data}`")
         else:
             lines.append(f"\n🔐 **Lobby Password**: `{password}`\nSet by: {password_set_by}\nTime: {password_time}")
         # INHOUSE MODE LOG
-        mode = data.get("mode", "Unknown")
-        mode_set_by = data.get("mode_set_by", "Unknown")
-        mode_time = data.get("mode_timestamp", "Unknown")
+        inhouse_mode_data = data.get("inhouse_mode", {})
+        mode = inhouse_mode_data.get("mode", "Unknown")
+        mode_set_by = inhouse_mode_data.get("mode_set_by", "Unknown")
+        mode_time = inhouse_mode_data.get("mode_timestamp", "Unknown")
         if verbose:
-            lines.append(f"\n🛠️ **Inhouse Mode**:\n  • Value: `{mode}`\n  • Set by: {mode_set_by}\n  • Timestamp: `{mode_time}`\n  • Full Doc: `{data}`")
+            lines.append(f"\n🛠️ **Inhouse Mode**:\n  • Value: `{mode}`\n  • Set by: {mode_set_by}\n  • Timestamp: `{mode_time}`\n  • Full Doc: `{inhouse_mode_data}`")
         else:
             lines.append(f"\n🛠️ **Inhouse Mode**: `{mode}`\nSet by: {mode_set_by}\nTime: {mode_time}")
+        # LEAGUE ID LOG
+        league_id_data = data.get("league_id", {})
+        bound_league_id = league_id_data.get("bound_league_id", "Unknown")
+        league_bind_by = league_id_data.get("league_id_bound_by", "Unknown")
+        league_bind_time = league_id_data.get("league_bind_timestamp", "Unknown")
+        if verbose:
+            lines.append(f"\n🏆 **League ID**:\n  • Value: `{bound_league_id}`\n  • Bound by: {league_bind_by}\n  • Timestamp: `{league_bind_time}`\n  • Full Doc: `{league_id_data}`")
+        else:
+            lines.append(f"\n🏆 **League ID**: `{bound_league_id}`\nBound by: {league_bind_by}\nTime: {league_bind_time}")
+        # LIVE CHANNEL ID LOG
+        live_channel_data = data.get("live_channel_id", {})
+        live_channel_id = live_channel_data.get("live_channel_id", "Unknown")
+        live_channel_time = live_channel_data.get("live_channel_timestamp", "Unknown")
+        if verbose:
+            lines.append(f"\n📺 **Live Channel ID**:\n  • Value: `{live_channel_id}`\n  • Timestamp: `{live_channel_time}`\n  • Full Doc: `{live_channel_data}`")
+        else:
+            lines.append(f"\n📺 **Live Channel ID**: `{live_channel_id}`\nTime: {live_channel_time}")
     else:
         lines.append("❌ No Firestore data found for this guild.")
     await ctx.send("\n".join(lines))
