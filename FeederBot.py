@@ -1797,16 +1797,16 @@ def build_lobby_embed(guild, mode="regular"):
     )
     roles_enabled = load_preferred_roles_setting(guild.id)
     embed.add_field(
-        name="**Mode**",
-        value=f"`{mode.capitalize()}`\n({len(lobby_players[guild.id])}/10)",
+        name=f"**Mode** `{mode.capitalize()}`",
+        value=f"\n({len(lobby_players[guild.id])}/10)",
         inline=True
         )
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # Empty field
     embed.add_field(
         name="**Preferred Roles**",
         value="✅ Enabled" if roles_enabled else "❌ Disabled",
         inline=True
         )
-    embed.add_field(name="\u200b", value="\u200b", inline=True)  # Empty field to force top row
     for _, name, mmr in lobby_players.get(guild_id, []):
         embed.add_field(name=name, value=str(mmr), inline=True)
     password = load_lobby_password_for_guild(guild.id)
