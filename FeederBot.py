@@ -1645,7 +1645,7 @@ async def on_raw_reaction_add(payload):
             valid_team_combos[guild_id] = valid_combo_count
             original_teams[guild_id] = team_rolls[guild_id][0]
             roll_count[guild_id] = 1
-            embed = build_team_embed(*original_teams[guild_id], guild)
+            embed = await build_team_embed(*original_teams[guild_id], guild)
         elif mode == "immortal":
             all_pairs = get_all_captain_pairs(lobby_players[guild_id])
             captain_draft_state[guild_id] = {
@@ -1714,7 +1714,7 @@ async def on_raw_reaction_add(payload):
             if index >= len(team_rolls[guild_id]):
                 index = 0
             original_teams[guild_id] = team_rolls[guild_id][index]
-            embed = build_team_embed(*original_teams[guild_id], guild)
+            embed = await build_team_embed(*original_teams[guild_id], guild)
         # IMMORTAL INHOUSE REROLL
         elif mode == "immortal":
             max_rolls = IMMORTAL_MAX_ROLLS
@@ -1831,7 +1831,7 @@ async def update_all_lobbies():
 
 # ============================== ⚔️ Team Embed Function ==============================
 # Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
-def build_team_embed(team1, team2, guild):
+async def build_team_embed(team1, team2, guild):
     global roll_count
     roles_enabled = load_preferred_roles_setting(guild.id)
     avg1 = sum(p[2] for p in team1) / 5
@@ -1854,13 +1854,13 @@ def build_team_embed(team1, team2, guild):
         score2 = calculate_role_fit_score(team2)
         roles1 = assign_roles_with_preferences(team1_sorted)
         roles2 = assign_roles_with_preferences(team2_sorted)
-        def format_player_list(team, assignments):
+        async def format_player_list(team, assignments):
             return ", ".join(
                 f"{get_display_name_or_steam(p[1], guild)} ({p[2]}) [Pos {role}]"
                 for role, p in assignments.items()
             )
     else:
-        def format_player_list(team, _assignments=None):
+        async def format_player_list(team, _assignments=None):
             return ", ".join(
                 f"{get_display_name_or_steam(p[1], guild)} ({p[2]})"
                 for p in team
