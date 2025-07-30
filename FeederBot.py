@@ -1854,15 +1854,17 @@ def build_team_embed(team1, team2, guild):
         score2 = calculate_role_fit_score(team2)
         roles1 = assign_roles_with_preferences(team1_sorted)
         roles2 = assign_roles_with_preferences(team2_sorted)
-
         def format_player_list(team, assignments):
             return ", ".join(
-                f"{p[0]} ({p[2]}) [Pos {role}]" 
+                f"{get_display_name_or_steam(p[1], guild)} ({p[2]}) [Pos {role}]"
                 for role, p in assignments.items()
             )
     else:
         def format_player_list(team, _assignments=None):
-            return ", ".join(f"{p[0]} ({p[2]})" for p in team)
+            return ", ".join(
+                f"{get_display_name_or_steam(p[1], guild)} ({p[2]})"
+                for p in team
+            )
     password = load_lobby_password_for_guild(guild.id)
     team1_desc = format_player_list(team1_sorted, roles1)
     team2_desc = format_player_list(team2_sorted, roles2)
