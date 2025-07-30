@@ -1833,6 +1833,7 @@ async def update_all_lobbies():
 # Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
 def build_team_embed(team1, team2, guild):
     global roll_count
+    roles_enabled = load_preferred_roles_setting(guild.id)
     avg1 = sum(p[2] for p in team1) / 5
     avg2 = sum(p[2] for p in team2) / 5
     score1 = calculate_role_fit_score(team1)
@@ -1847,24 +1848,29 @@ def build_team_embed(team1, team2, guild):
         )
     team1_sorted = sorted(team1, key=lambda x: x[2], reverse=True)
     team2_sorted = sorted(team2, key=lambda x: x[2], reverse=True)
-    roles1 = assign_roles_with_preferences(team1_sorted)
-    roles2 = assign_roles_with_preferences(team2_sorted)
-    def format_player_list(team, assignments):
-        return ", ".join(
-            f"{p[1]} ({p[2]}) [Pos {role}]"
-            for role, p in assignments.items()
-        )
+    roles1, roles2, score1, score2 = None, None, 0, 0
+    if roles_enabled:
+        score1 = calculate_role_fit_score(team1)
+        score2 = calculate_role_fit_score(team2)
+        roles1 = assign_roles_with_preferences(team1_sorted)
+        roles2 = assign_roles_with_preferences(team2_sorted)
+
+        def format_player_list(team, assignments):
+            return ", ".join(
+                f"{p[0]} ({p[2]}) [Pos {role}]" 
+                for role, p in assignments.items()
+            )
+    else:
+        def format_player_list(team, _assignments=None):
+            return ", ".join(f"{p[0]} ({p[2]})" for p in team)
     password = load_lobby_password_for_guild(guild.id)
-    embed.add_field(
-        name="Team One",
-        value=f"{format_player_list(team1_sorted, roles1)}\n🧩 Role Fit Score: {score1}",
-        inline=False
-    )
-    embed.add_field(
-        name="Team Two",
-        value=f"{format_player_list(team2_sorted, roles2)}\n🧩 Role Fit Score: {score2}",
-        inline=False
-    )
+    team1_desc = format_player_list(team1_sorted, roles1)
+    team2_desc = format_player_list(team2_sorted, roles2)
+    if roles_enabled:
+        team1_desc += f"\n🍀 Role Fit Score: {score1}"
+        team2_desc += f"\n🍀 Role Fit Score: {score2}"
+    embed.add_field(name="Team One", value=team1_desc, inline=False)
+    embed.add_field(name="Team Two", value=team2_desc, inline=False)
     embed.add_field(
         name="**Password**",
         value=password,
