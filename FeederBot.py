@@ -1856,13 +1856,13 @@ async def build_team_embed(team1, team2, guild):
         roles2 = assign_roles_with_preferences(team2_sorted)
         async def format_player_list(team, assignments):
             return ", ".join(
-                f"{await get_display_name_or_steam(p[1], guild)} ({p[2]}) [Pos {role}]"
+                f"{p[1]} ({p[2]}) [Pos {role}]"
                 for role, p in assignments.items()
             )
     else:
         async def format_player_list(team, _assignments=None):
             return ", ".join(
-                f"{await get_display_name_or_steam(p[1], guild)} ({p[2]})"
+                f"{p[1]} ({p[2]})"
                 for p in team
             )
     password = load_lobby_password_for_guild(guild.id)
