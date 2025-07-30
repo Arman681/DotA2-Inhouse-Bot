@@ -75,6 +75,7 @@ with open("hero_id_map.json", "r") as f:
     hero_id_map = json.load(f)
 
 # ============================== 🛠️ Bot Configuration ==============================
+
 # Resolves the correct command prefix for the bot, based on the message's guild.
 async def resolve_command_prefix(bot, message):
     if message.guild:
@@ -88,6 +89,7 @@ bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_
 # ============================================ ⚙️ Core Functions & Utilities ============================================
 # ========================================================================================================================
 
+# Polls a live Dota 2 match, updates Discord with status, and resolves bets/MMR after the match ends
 async def poll_live_match(match_id, guild, random_mode=False):
     print(f"[MATCH] Started polling match {match_id} for guild {guild.name} (random_mode={random_mode})")
     # 💡 Prevent using any previous embed
@@ -119,19 +121,16 @@ async def poll_live_match(match_id, guild, random_mode=False):
                     live_embed_messages[guild.id] = new_msg
         except Exception as e:
             print(f"[ERROR] poll_live_match() for guild {str(guild.id)}: {e}")
-
     # Match is no longer live — try STRATZ for up to ~5 minutes
     max_retries = 10
     retry_delay = 30  # seconds
     result = None
-
     for attempt in range(max_retries):
         result = fetch_match_result(match_id)
         if result:
             break
         print(f"[RETRY] No match result yet for match {match_id}. Retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
         await asyncio.sleep(retry_delay)
-
     if not result:
         print(f"[ERROR] No match result found for match {match_id} after {max_retries} attempts. Skipping bet resolution.")
         # Clean up memory even if result is missing
@@ -140,12 +139,10 @@ async def poll_live_match(match_id, guild, random_mode=False):
         random_polling_flags.pop(guild.id, None)
         match_tracking_start_times.pop(guild.id, None)
         live_embed_messages.pop(guild.id, None)
-
         channel = bot.get_channel(channel_id)
         if channel:
             await channel.send("⚠️ Match ended but no result was found. Polling has been stopped.")
         return
-
     # Proceed with resolution
     winning_team = "radiant" if result["radiant_win"] else "dire"
     winner_ids = map_steam_ids_to_discord_ids(result["radiant"] if result["radiant_win"] else result["dire"])
@@ -156,7 +153,6 @@ async def poll_live_match(match_id, guild, random_mode=False):
             await adjust_mmr(bot, winner_ids, loser_ids, guild.id)
         except Exception as e:
             print(f"[ERROR] Failed to adjust MMR: {e}")
-            
     # Award 50 coins to all players who played in the match
     all_player_ids = winner_ids + loser_ids
     for discord_id in all_player_ids:
@@ -165,26 +161,24 @@ async def poll_live_match(match_id, guild, random_mode=False):
             update_balance(guild.id, discord_id, 50)
         except Exception as e:
             print(f"[ERROR] Failed to award coins to user {discord_id}: {e}")
-    
     # Send match summary
     try:
         await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.\n All participants received **50 coins** for playing.")
         print(f"[DEBUG] Match summary sent to channel ID: {channel.id}")
     except Exception as e:
         print(f"[ERROR] Failed to send match summary: {e}")
-
     # Clean up memory
     active_match_ids.pop(guild.id, None)
     polling_tasks.pop(guild.id, None)
     random_polling_flags.pop(guild.id, None)
     match_tracking_start_times.pop(guild.id, None)
     live_embed_messages.pop(guild.id, None)
-
     # Final notice
     if channel:
         await channel.send("Polling for this server has ended.")
 
 # =============================== 🔐 Permission Checks ===============================
+
 # Custom check that allows admins or specific roles to use commands
 def is_admin_or_has_role():
     async def predicate(ctx):
@@ -214,17 +208,18 @@ async def user_is_admin_or_has_role(member):
     return any(role.name in allowed_roles for role in member.roles)
 
 # ========================== 🔥 Firestore Access & Persistence ==========================
+
 # Saves a player's config data (Steam info, MMR, etc.) to Firestore under their Discord user ID.
 def save_player_config(user_id, data):
     doc_ref = db.collection("players").document(str(user_id))
     doc_ref.set(data)
 
-# Retrieves a player's saved config data from Firestore using their Discord user ID.
+# Loads a player's saved config data from Firestore using their Discord user ID.
 def load_player_config(user_id):
     doc = db.collection("players").document(str(user_id)).get()
     return doc.to_dict() if doc.exists else None
 
-# Stores a custom command prefix for a specific Discord server (guild) to Firestore.
+# Saves a custom command prefix for a specific Discord server (guild) to Firestore.
 def save_guild_prefix(guild_id, prefix, server_name=None, set_by=None):
     data = {
         "prefix": prefix,
@@ -235,6 +230,7 @@ def save_guild_prefix(guild_id, prefix, server_name=None, set_by=None):
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"prefix": data}, merge=True)
 
+# Loads the custom command prefix for a guild from Firestore; defaults to "!" if not set
 def load_guild_prefix(guild_id):
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
@@ -261,6 +257,7 @@ def load_lobby_password_for_guild(guild_id):
         return data.get("password", {}).get("password", "penguin")
     return "penguin"
 
+# Saves the current inhouse mode ("regular" or "immortal") for a guild to Firestore
 def save_inhouse_mode_for_guild(guild_id, mode, server_name=None, set_by=None):
     data = {
         "mode": mode,
@@ -271,12 +268,14 @@ def save_inhouse_mode_for_guild(guild_id, mode, server_name=None, set_by=None):
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"inhouse_mode": data}, merge=True)
 
+# Loads the current inhouse mode for a guild from Firestore; defaults to "regular"
 def load_inhouse_mode_for_guild(guild_id):
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
         return doc.to_dict().get("inhouse_mode", {}).get("mode", "regular")
     return "regular"
 
+# Saves the league ID bound to a Discord server for live match tracking
 def save_league_guild_mapping(guild_id: int, league_id: int, server_name=None, bound_by=None):
     data = {
         "bound_league_id": str(league_id),
@@ -287,6 +286,7 @@ def save_league_guild_mapping(guild_id: int, league_id: int, server_name=None, b
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"league_id": data}, merge=True)
 
+# Saves the lobby message ID for a guild to Firestore
 def save_lobby_message_id(guild_id, message_id):
     data = {
         "lobby_message_id": message_id
@@ -294,17 +294,20 @@ def save_lobby_message_id(guild_id, message_id):
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"lobby_message_id": data}, merge=True)
 
+# Loads the saved lobby message ID for a guild; returns 0 if not set
 def load_lobby_message_id(guild_id):
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
         return doc.to_dict().get("lobby_message_id", {}).get("lobby_message_id", 0)
     return None
 
+# Saves the list of current lobby players (ID, name, MMR) for a guild to Firestore
 def save_lobby_players(guild_id, players):
     formatted = [{"id": uid, "name": name, "mmr": mmr} for uid, name, mmr in players]
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"lobby_players": formatted}, merge=True)
 
+# Loads the list of saved lobby players for a guild from Firestore
 def load_lobby_players(guild_id):
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
@@ -312,6 +315,7 @@ def load_lobby_players(guild_id):
         return [(p["id"], p["name"], p["mmr"]) for p in raw if "id" in p and "name" in p and "mmr" in p]
     return []
 
+# Saves whether preferred roles are enabled for a guild to Firestore
 def save_preferred_roles_setting(guild_id, enabled, set_by=None):
     data = {
         "preferred_roles_enabled": enabled,
@@ -321,6 +325,7 @@ def save_preferred_roles_setting(guild_id, enabled, set_by=None):
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"preferred_roles_setting": data}, merge=True)
 
+# Loads the preferred roles setting for a guild; defaults to True if not set
 def load_preferred_roles_setting(guild_id):
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
@@ -328,6 +333,7 @@ def load_preferred_roles_setting(guild_id):
     return True
 
 # ============================ 🎯 MMR, STRATZ, and Steam Integration ============================
+
 # Maps Dota 2 STRATZ seasonRank values to estimated MMR values.
 season_rank_to_mmr = {
     11: 77, 12: 231, 13: 385, 14: 539, 15: 693,
@@ -401,6 +407,7 @@ async def fetch_mmr_from_stratz(steam_id, max_retries=2, user_id=None):
 
     return None, None
 
+# Fetches the current live Dota 2 match for a guild using Steam API, filtered by bound league ID or in random mode
 async def fetch_live_match_for_guild(guild_id, random_mode=False):
     """Fetches a live match for the manually bound league_id in this guild."""
     # ✅ Step 1: Fetch bound_league_id from Firestore
@@ -409,25 +416,20 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
     if not doc.exists:
         print(f"[WARN] No guild_specific_info found for guild {guild_id}")
         return None
-    
     league_info = doc.to_dict().get("league_id", {})
     bound_league_id = league_info.get("bound_league_id")
-
     if not random_mode and not bound_league_id:
         print(f"[WARN] No bound_league_id found in Firestore for guild {guild_id}")
         return None
-    
     # ✅ Step 2: Fetch matches from Steam API
     url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
     params = {"key": STEAM_API_KEY}
-
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, timeout=5) as response:
                 if response.status != 200:
                     print(f"[ERROR] Steam API returned {response.status}")
                     return None
-
                 result = await response.json()
                 matches = result.get("result", {}).get("games", [])
                 valid_matches = [
@@ -439,10 +441,8 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
                         print(f"[INFO] Clearing expired match for guild {guild_id}")
                         del active_match_ids[guild_id]
                     return None
-
                 print(f"[DEBUG] Checked {len(matches)} total live matches from Steam API.")
                 print(f"[DEBUG] {len(valid_matches)} passed scoreboard and duration filters.")
-
                 # ✅ Step 3: Filter by league ID
                 bound_matches = valid_matches if random_mode else [
                     m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
@@ -450,14 +450,12 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
                 if not bound_matches:
                     print(f"[INFO] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
                     return None
-
                 # ✅ Step 4: Reuse previous match ID if still valid
                 last_match_id = active_match_ids.get(guild_id)
                 if last_match_id:
                     print(f"[DEBUG] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
                 else:
                     print(f"[DEBUG] Step 4 skipped: No active match found for guild {guild_id}")
-
                 selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
                 if selected_match:
                     print(f"[DEBUG] Reusing existing match_id {last_match_id} for guild {guild_id}")
@@ -468,14 +466,13 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
                     selected_match = random.choice(bound_matches)
                     active_match_ids[guild_id] = selected_match["match_id"]
                     print(f"[DEBUG] Picked new match_id {selected_match['match_id']} for guild {guild_id}")
-
                 selected_match["guild_id"] = guild_id
                 return selected_match
-
     except Exception as e:
         print(f"[ERROR] fetch_live_match_for_guild() Steam API error: {e}")
         return None
 
+# Loads hero ID-to-name mapping from local cache or Steam API if cache is missing or invalid
 async def fetch_hero_id_to_name_map():
     # Try loading from local cache first
     if os.path.exists(HERO_CACHE_FILE):
@@ -496,7 +493,6 @@ async def fetch_hero_id_to_name_map():
         "language": "en_us",
         "key": STEAM_API_KEY
     }
-
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as response:
@@ -523,6 +519,7 @@ def get_mmr(user):
     return 0
 
 # ============================ 👥 Player & Lobby Utilities ============================
+
 # Returns a set of user IDs across all servers that the bot is currently in (non-bot members only).
 def get_active_user_ids():
     """Return a set of user IDs across all servers the bot is in."""
@@ -533,6 +530,7 @@ def get_active_user_ids():
                 user_ids.add(str(member.id))
     return user_ids
 
+# Retrieves the Discord user ID linked to a given Steam ID from Firestore
 def get_discord_id_from_steam_id(steam_id: str) -> Optional[str]:
     try:
         steam_id_int = int(steam_id)
@@ -545,6 +543,7 @@ def get_discord_id_from_steam_id(steam_id: str) -> Optional[str]:
         return doc.id  # Discord ID is stored as the doc ID
     return None
 
+# Converts a list of Steam IDs into their corresponding Discord user IDs
 def map_steam_ids_to_discord_ids(steam_ids):
         discord_ids = []
 
@@ -557,6 +556,7 @@ def map_steam_ids_to_discord_ids(steam_ids):
         print(f"[INFO] Mapped {len(discord_ids)}/{len(steam_ids)} Steam IDs to Discord IDs")
         return discord_ids
 
+# Gets a player's Steam display name using their 32-bit account ID
 async def get_steam_display_name(account_id_32):
     try:
         steam_id_64 = str(int(account_id_32) + 76561197960265728)
@@ -575,6 +575,7 @@ async def get_steam_display_name(account_id_32):
         print(f"[ERROR] get_steam_display_name: {e}")
     return f"SteamID {account_id_32}"
 
+# Gets a player's display name from Discord if mapped, otherwise fetches from Steam
 async def get_display_name_or_steam(account_id_32, guild):
     discord_id = get_discord_id_from_steam_id(account_id_32)
     if discord_id and guild:
@@ -583,8 +584,7 @@ async def get_display_name_or_steam(account_id_32, guild):
             return member.display_name
     return await get_steam_display_name(account_id_32)
 
-# Periodic background task that updates all players' MMR values from STRATZ in Firebase,
-# and refreshes lobby embeds across all servers.
+# Periodic background task that updates all players' MMR values from STRATZ in Firebase, and refreshes lobby embeds across all servers.
 @tasks.loop(hours=24)
 async def refresh_all_mmrs():
     print("Refreshing MMRs (Firebase)...")
@@ -604,6 +604,7 @@ async def refresh_all_mmrs():
     # Refresh lobby embeds across all servers
     await update_all_lobbies()
 
+# Assigns players to roles based on their preferences and MMR, prioritizing optimal fit
 def assign_roles_with_preferences(team, preference_map=None, mmr_map=None):
     assigned = {}
     unassigned_players = list(team)
@@ -645,6 +646,7 @@ def assign_roles_with_preferences(team, preference_map=None, mmr_map=None):
             unassigned_players.remove(best_candidate)
     return assigned
 
+# Generates all possible unique captain pairs from the player list, sorted by MMR difference
 def get_all_captain_pairs(players):
     sorted_players = sorted(players, key=lambda p: p[2])  # sort by MMR
     pairs = []
@@ -659,6 +661,7 @@ def get_all_captain_pairs(players):
     pairs.sort(key=lambda x: x[2])  # sort by diff
     return pairs  # List of (captain_pair, pool, diff)
 
+# Retrieves a player's saved role preferences from Firestore
 def get_preferred_roles(player_id):
     doc = db.collection("players").document(str(player_id)).get()
     if doc.exists:
@@ -668,9 +671,9 @@ def get_preferred_roles(player_id):
     return None  # Neutral: no preferences set
 
 # ================================ ⚖️ Team Balancing ================================
+
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
 def calculate_balanced_teams(players, guild_id):
-    best_combos = []
     all_players = set(players)
     # Cache preferences and MMR
     preference_map = {}
@@ -710,6 +713,7 @@ def calculate_balanced_teams(players, guild_id):
     valid_team_combos[guild_id] = len(results)
     return top_teams, len(results)
 
+# Calculates a team's role fit score by summing how well assigned roles match player preferences
 def calculate_role_fit_score(team, preference_map=None, mmr_map=None):
     assignments = assign_roles_with_preferences(team, preference_map, mmr_map)
     total_score = 0
@@ -730,6 +734,7 @@ def calculate_role_fit_score(team, preference_map=None, mmr_map=None):
 # ========================================================================================================================
 
 # ============================== 👥 General Commands ==============================
+
 # Links a user's Steam ID to their Discord account and stores their MMR/seasonRank in Firebase.
 @bot.command(name="cfg")
 async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
@@ -931,6 +936,7 @@ async def send_coins_error(ctx, error):
     else:
         await ctx.send("⚠️ An unexpected error occurred while sending coins.")
 
+# Command to set a user's preferred role order, optionally on behalf of another member
 @bot.command(name="setpreferredroles")
 async def set_preferred_roles(ctx, r1: int, r2: int, r3: int, r4: int, r5: int, member: discord.Member = None):
     roles = [r1, r2, r3, r4, r5]
@@ -962,6 +968,7 @@ async def set_preferred_roles_error(ctx, error):
         await ctx.send("⚠️ An unexpected error occurred while processing your preferred roles.")
         raise error  # optional: re-raise to see full error in logs
 
+# Command to view a user's saved preferred roles, defaults to the command invoker if no user mentioned
 @bot.command(name="viewpreferredroles")
 async def view_preferred_roles(ctx, member: discord.Member = None):
     target = member or ctx.author
@@ -983,6 +990,7 @@ async def view_preferred_roles_error(ctx, error):
         raise error
 
 # ========================== 🏠 Lobby Management Commands =========================
+
 # Adds one or more users to the current lobby for the server.
 @bot.command(name="add")
 async def add_to_lobby(ctx, *members: discord.Member):
@@ -1169,6 +1177,7 @@ async def livematch_cmd_error(ctx, error):
     await ctx.send("⚠️ An error occurred while recalling the live match embed.")
 
 # ============================= 🔐 Admin-Only Commands ============================
+
 # Admin only: manually set a user's MMR in Firebase.
 @bot.command(name="setmmr")
 @is_admin_or_has_role()
@@ -1479,6 +1488,7 @@ async def toggle_preferred_roles_error(ctx, error):
         print(f"[ERROR] toggle_preferred_roles command: {error}")
 
 # ================================ ℹ️ Help Command ================================
+
 # Displays a list of all bot commands and their usage.
 @bot.command(name="help")
 async def help_command(ctx, *, category: str = ""):
@@ -1789,6 +1799,7 @@ async def on_guild_join(guild):
 # ========================================================================================================================
 
 # ============================= 📋 Lobby Embed Functions =============================
+
 # Builds and returns a lobby embed showing current players and the server's password.
 def build_lobby_embed(guild, mode="regular"):
     guild_id = guild.id
@@ -1835,6 +1846,7 @@ async def update_all_lobbies():
         await update_lobby_embed(guild)
 
 # ============================== ⚔️ Team Embed Function ==============================
+
 # Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
 def build_team_embed(team1, team2, guild):
     global roll_count
@@ -1884,6 +1896,7 @@ def build_team_embed(team1, team2, guild):
         )
     return embed
 
+# Builds the embed message for an Immortal Mode draft lobby, showing captains, pool, and reroll info
 def build_immortal_embed(captains, pool, guild, reroll_count):
     c1, c2 = captains
     embed = discord.Embed(
@@ -1902,6 +1915,7 @@ def build_immortal_embed(captains, pool, guild, reroll_count):
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
+# Formats a live match embed showing kills, teams, player roles, and hero names for a given guild
 async def format_live_match_embed(match, guild):
     radiant_kills = sum(player.get("kills", 0) for player in match["scoreboard"]["radiant"]["players"])
     dire_kills = sum(player.get("kills", 0) for player in match["scoreboard"]["dire"]["players"])
