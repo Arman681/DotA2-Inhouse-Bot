@@ -1645,7 +1645,7 @@ async def on_raw_reaction_add(payload):
             valid_team_combos[guild_id] = valid_combo_count
             original_teams[guild_id] = team_rolls[guild_id][0]
             roll_count[guild_id] = 1
-            embed = await build_team_embed(*original_teams[guild_id], guild)
+            embed = build_team_embed(*original_teams[guild_id], guild)
         elif mode == "immortal":
             all_pairs = get_all_captain_pairs(lobby_players[guild_id])
             captain_draft_state[guild_id] = {
@@ -1714,7 +1714,7 @@ async def on_raw_reaction_add(payload):
             if index >= len(team_rolls[guild_id]):
                 index = 0
             original_teams[guild_id] = team_rolls[guild_id][index]
-            embed = await build_team_embed(*original_teams[guild_id], guild)
+            embed = build_team_embed(*original_teams[guild_id], guild)
         # IMMORTAL INHOUSE REROLL
         elif mode == "immortal":
             max_rolls = IMMORTAL_MAX_ROLLS
@@ -1831,7 +1831,7 @@ async def update_all_lobbies():
 
 # ============================== ⚔️ Team Embed Function ==============================
 # Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
-async def build_team_embed(team1, team2, guild):
+def build_team_embed(team1, team2, guild):
     global roll_count
     roles_enabled = load_preferred_roles_setting(guild.id)
     avg1 = sum(p[2] for p in team1) / 5
@@ -1854,23 +1854,22 @@ async def build_team_embed(team1, team2, guild):
         score2 = calculate_role_fit_score(team2)
         roles1 = assign_roles_with_preferences(team1_sorted)
         roles2 = assign_roles_with_preferences(team2_sorted)
-        async def format_player_list(team, assignments):
+        def format_player_list(assignments):
             return ", ".join(
                 f"{p[1]} ({p[2]}) [Pos {role}]"
                 for role, p in assignments.items()
             )
+        team1_desc = format_player_list(roles1) + f"\n🍀 Role Fit Score: {score1}"
+        team2_desc = format_player_list(roles2) + f"\n🍀 Role Fit Score: {score2}"
     else:
-        async def format_player_list(team, _assignments=None):
+        def format_player_list(team):
             return ", ".join(
                 f"{p[1]} ({p[2]})"
                 for p in team
             )
+        team1_desc = format_player_list(team1_sorted)
+        team2_desc = format_player_list(team2_sorted)
     password = load_lobby_password_for_guild(guild.id)
-    team1_desc = await format_player_list(team1_sorted, roles1)
-    team2_desc = await format_player_list(team2_sorted, roles2)
-    if roles_enabled:
-        team1_desc += f"\n🍀 Role Fit Score: {score1}"
-        team2_desc += f"\n🍀 Role Fit Score: {score2}"
     embed.add_field(name="Team One", value=team1_desc, inline=False)
     embed.add_field(name="Team Two", value=team2_desc, inline=False)
     embed.add_field(
