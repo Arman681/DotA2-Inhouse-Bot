@@ -1866,8 +1866,8 @@ async def build_team_embed(team1, team2, guild):
                 for p in team
             )
     password = load_lobby_password_for_guild(guild.id)
-    team1_desc = format_player_list(team1_sorted, roles1)
-    team2_desc = format_player_list(team2_sorted, roles2)
+    team1_desc = await format_player_list(team1_sorted, roles1)
+    team2_desc = await format_player_list(team2_sorted, roles2)
     if roles_enabled:
         team1_desc += f"\n🍀 Role Fit Score: {score1}"
         team2_desc += f"\n🍀 Role Fit Score: {score2}"
