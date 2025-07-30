@@ -24,6 +24,7 @@ import time
 import itertools
 import firebase_setup  # ensures Firebase is initialized before anything else
 from itertools import combinations
+from concurrent.futures import ThreadPoolExecutor
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from firebase_admin import firestore
@@ -603,20 +604,17 @@ async def refresh_all_mmrs():
     # Refresh lobby embeds across all servers
     await update_all_lobbies()
 
-def assign_roles_with_preferences(team):
-    """Assigns roles 1-5 to players in the given team using preference and MMR buffer logic."""
+def assign_roles_with_preferences(team, preference_map=None, mmr_map=None):
     assigned = {}
     unassigned_players = list(team)
-    role_pool = set([1, 2, 3, 4, 5])
-    # Fetch preferences in advance
-    preference_map = {}
-    mmr_map = {}
-    for player in team:
-        uid = str(player[0])
-        mmr_map[uid] = player[2]
-        doc = db.collection("players").document(uid).get()
-        preferred = doc.to_dict().get("preferred_roles", [1, 2, 3, 4, 5])
-        preference_map[uid] = preferred
+    if preference_map is None or mmr_map is None:
+        preference_map = {}
+        mmr_map = {}
+        for player in team:
+            uid = str(player[0])
+            mmr_map[uid] = player[2]
+            doc = db.collection("players").document(uid).get()
+            preference_map[uid] = doc.to_dict().get("preferred_roles", [1, 2, 3, 4, 5])
     for role in range(1, 6):
         best_candidate = None
         best_rank = 999
@@ -627,7 +625,6 @@ def assign_roles_with_preferences(team):
             mmr = mmr_map.get(uid, 0)
             if role in prefs:
                 rank = prefs.index(role)
-                # Favor players with lower rank preference, unless outclassed
                 if (rank < best_rank) or (rank == best_rank and mmr > best_mmr):
                     best_candidate = player
                     best_rank = rank
@@ -640,15 +637,13 @@ def assign_roles_with_preferences(team):
             if role in prefs:
                 if best_candidate:
                     best_uid = str(best_candidate[0])
-                    if (uid != best_uid and 
-                        mmr - mmr_map[best_uid] >= MMR_ROLE_OVERRULE_THRESHOLD and
-                        prefs.index(role) <= 2):  # prefer top 3 roles
+                    if (uid != best_uid and mmr - mmr_map[best_uid] >= MMR_ROLE_OVERRULE_THRESHOLD and prefs.index(role) <= 2):
                         best_candidate = player
                         break
         if best_candidate:
             assigned[role] = best_candidate
             unassigned_players.remove(best_candidate)
-    return assigned  # {1: (uid, name, mmr), ..., 5: (...) }
+    return assigned
 
 def get_all_captain_pairs(players):
     sorted_players = sorted(players, key=lambda p: p[2])  # sort by MMR
@@ -677,46 +672,56 @@ def get_preferred_roles(player_id):
 def calculate_balanced_teams(players, guild_id):
     best_combos = []
     all_players = set(players)
+    # Cache preferences and MMR
+    preference_map = {}
+    mmr_map = {}
+    for uid, _, mmr in players:
+        uid_str = str(uid)
+        mmr_map[uid_str] = mmr
+        doc = db.collection("players").document(uid_str).get()
+        preferred = doc.to_dict().get("preferred_roles", [1, 2, 3, 4, 5])
+        preference_map[uid_str] = preferred
+    use_roles = load_preferred_roles_setting(guild_id)
+    combos_to_score = []
+    # Generate valid MMR-balanced combos
     for team1 in itertools.combinations(players, 5):
         team2 = tuple(all_players - set(team1))
         mmr1 = sum(p[2] for p in team1) / 5
         mmr2 = sum(p[2] for p in team2) / 5
         mmr_diff = abs(mmr1 - mmr2)
-        if mmr_diff > 100:
-            continue  # skip unbalanced combos
-        use_roles = load_preferred_roles_setting(guild_id)
-        if use_roles:
-            score1 = calculate_role_fit_score(team1)
-            score2 = calculate_role_fit_score(team2)
-        else:
-            score1 = 0
-            score2 = 0
-        # Calculate total score
+        if mmr_diff > MMR_TOLERANCE:
+            continue
+        combos_to_score.append((team1, team2, mmr_diff))
+    print(f"[INFO] Found {len(combos_to_score)} valid team combinations (MMR diff ≤ {MMR_TOLERANCE})")
+    # Parallel role fit scoring
+    def score_combo(combo):
+        team1, team2, mmr_diff = combo
+        score1 = calculate_role_fit_score(team1, preference_map, mmr_map) if use_roles else 0
+        score2 = calculate_role_fit_score(team2, preference_map, mmr_map) if use_roles else 0
         total_score = (mmr_diff / 5) + ROLE_FIT_WEIGHT * (score1 + score2)
-        best_combos.append((total_score, team1, team2))
-    # Print how many valid combinations were found
-    print(f"[INFO] Found {len(best_combos)} valid team combinations (MMR diff ≤ 100)")
-    # Sort by total score: lower is better
-    best_combos.sort(key=lambda x: x[0])
-    top_teams = [(combo[1], combo[2]) for combo in best_combos[:5]]
-    return top_teams, len(best_combos)
+        return (total_score, team1, team2)
+    with ThreadPoolExecutor() as executor:
+        results = list(executor.map(score_combo, combos_to_score))
+    # Sort by total score and select top 5
+    results.sort(key=lambda x: x[0])
+    top_teams = [(r[1], r[2]) for r in results[:5]]
+    # Cache results for re-rolls
+    team_rolls[guild_id] = top_teams
+    valid_team_combos[guild_id] = len(results)
+    return top_teams, len(results)
 
-def calculate_role_fit_score(team):
-    """
-    team: list of player tuples (user_id, display_name, mmr)
-    Returns total role-fit score for the team. Lower = better fit.
-    """
-    assignments = assign_roles_with_preferences(team)
+def calculate_role_fit_score(team, preference_map=None, mmr_map=None):
+    assignments = assign_roles_with_preferences(team, preference_map, mmr_map)
     total_score = 0
     for role, player in assignments.items():
-        player_id = player[0]
-        preferences = get_preferred_roles(player_id)
-        if preferences is None:
-            continue  # skip scoring if no preferences set
+        uid = str(player[0])
+        preferences = preference_map.get(uid) if preference_map else get_preferred_roles(uid)
+        if not preferences:
+            continue
         try:
-            preference_rank = preferences.index(role) + 1  # index 0 is best
+            preference_rank = preferences.index(role) + 1
         except ValueError:
-            preference_rank = 6  # role not found in preferences (shouldn't happen)
+            preference_rank = 6
         total_score += preference_rank
     return total_score
 
