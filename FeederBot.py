@@ -699,15 +699,20 @@ def calculate_balanced_teams(players, guild_id):
     # Parallel role fit scoring
     def score_combo(combo):
         team1, team2, mmr_diff = combo
-        score1 = calculate_role_fit_score(team1, preference_map, mmr_map) if use_roles else 0
-        score2 = calculate_role_fit_score(team2, preference_map, mmr_map) if use_roles else 0
+        if use_roles:
+            score1, roles1 = calculate_role_fit_score(team1, preference_map, mmr_map)
+            score2, roles2 = calculate_role_fit_score(team2, preference_map, mmr_map)
+        else:
+            score1 = score2 = 0
+            roles1 = roles2 = None
         total_score = (mmr_diff / 5) + ROLE_FIT_WEIGHT * (score1 + score2)
-        return (total_score, team1, team2)
+        return (total_score, team1, team2, score1, score2, roles1, roles2)
     with ThreadPoolExecutor() as executor:
         results = list(executor.map(score_combo, combos_to_score))
     # Sort by total score and select top 5
     results.sort(key=lambda x: x[0])
-    top_teams = [(r[1], r[2]) for r in results[:5]]
+    # Each entry contains: (team1, team2, score1, score2, roles1, roles2)
+    top_teams = [(r[1], r[2], r[3], r[4], r[5], r[6]) for r in results[:5]]
     # Cache results for re-rolls
     team_rolls[guild_id] = top_teams
     valid_team_combos[guild_id] = len(results)
@@ -727,7 +732,7 @@ def calculate_role_fit_score(team, preference_map=None, mmr_map=None):
         except ValueError:
             preference_rank = 6
         total_score += preference_rank
-    return total_score
+    return total_score, assignments
 
 # ========================================================================================================================
 # ================================================= 💬 Commands Section =================================================
@@ -1657,9 +1662,10 @@ async def on_raw_reaction_add(payload):
         if mode == "regular":
             team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id], guild_id)
             valid_team_combos[guild_id] = valid_combo_count
-            original_teams[guild_id] = team_rolls[guild_id][0]
+            team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][0]
+            original_teams[guild_id] = (team1, team2, score1, score2, roles1, roles2)
+            embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
             roll_count[guild_id] = 1
-            embed = build_team_embed(*original_teams[guild_id], guild)
         elif mode == "immortal":
             all_pairs = get_all_captain_pairs(lobby_players[guild_id])
             captain_draft_state[guild_id] = {
@@ -1727,8 +1733,9 @@ async def on_raw_reaction_add(payload):
             index = roll_count[guild_id] - 1
             if index >= len(team_rolls[guild_id]):
                 index = 0
-            original_teams[guild_id] = team_rolls[guild_id][index]
-            embed = build_team_embed(*original_teams[guild_id], guild)
+            team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][index]
+            original_teams[guild_id] = (team1, team2, score1, score2, roles1, roles2)
+            embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
         # IMMORTAL INHOUSE REROLL
         elif mode == "immortal":
             max_rolls = IMMORTAL_MAX_ROLLS
@@ -1847,13 +1854,11 @@ async def update_all_lobbies():
 # ============================== ⚔️ Team Embed Function ==============================
 
 # Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
-def build_team_embed(team1, team2, guild):
+def build_team_embed(team1, team2, score1, score2, roles1=None, roles2=None, guild=None, preference_map=None, mmr_map=None):
     global roll_count
     roles_enabled = load_preferred_roles_setting(guild.id)
     avg1 = sum(p[2] for p in team1) / 5
     avg2 = sum(p[2] for p in team2) / 5
-    score1 = calculate_role_fit_score(team1)
-    score2 = calculate_role_fit_score(team2)
     description = f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count.get(guild.id, 1)}/{MAX_ROLLS}"
     if guild.id in valid_team_combos:
         description += f"\n🧮 Valid team combinations found: {valid_team_combos[guild.id]}"
@@ -1861,19 +1866,25 @@ def build_team_embed(team1, team2, guild):
         title="DotA2 Inhouse Lobby",
         description=description,
         color=discord.Color.gold()
-        )
+    )
     team1_sorted = sorted(team1, key=lambda x: x[2], reverse=True)
     team2_sorted = sorted(team2, key=lambda x: x[2], reverse=True)
-    roles1, roles2, score1, score2 = None, None, 0, 0
     if roles_enabled:
-        score1 = calculate_role_fit_score(team1)
-        score2 = calculate_role_fit_score(team2)
-        roles1 = assign_roles_with_preferences(team1_sorted)
-        roles2 = assign_roles_with_preferences(team2_sorted)
+        # Only assign roles if not already passed in
+        if roles1 is None:
+            print("[BUILD_TEAM_EMBED] Assigning roles for team 1")
+            roles1 = assign_roles_with_preferences(team1_sorted, preference_map, mmr_map)
+        else:
+            print("[BUILD_TEAM_EMBED] Using passed roles for team 1")
+        if roles2 is None:
+            print("[BUILD_TEAM_EMBED] Assigning roles for team 2")
+            roles2 = assign_roles_with_preferences(team2_sorted, preference_map, mmr_map)
+        else:
+            print("[BUILD_TEAM_EMBED] Using passed roles for team 2")
         def format_player_list(assignments):
             return ", ".join(
                 f"{p[1]} ({p[2]}) [Pos {role}]"
-                for role, p in assignments.items()
+                for role, p in sorted(assignments.items())
             )
         team1_desc = format_player_list(roles1) + f"\n🍀 Role Fit Score: {score1}"
         team2_desc = format_player_list(roles2) + f"\n🍀 Role Fit Score: {score2}"
@@ -1888,11 +1899,7 @@ def build_team_embed(team1, team2, guild):
     password = load_lobby_password_for_guild(guild.id)
     embed.add_field(name="Team One", value=team1_desc, inline=False)
     embed.add_field(name="Team Two", value=team2_desc, inline=False)
-    embed.add_field(
-        name="**Password**",
-        value=password,
-        inline=False
-        )
+    embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
 # Builds the embed message for an Immortal Mode draft lobby, showing captains, pool, and reroll info
