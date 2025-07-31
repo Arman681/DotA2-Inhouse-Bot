@@ -1639,21 +1639,19 @@ async def on_raw_reaction_add(payload):
             updated = True
             save_lobby_players(guild_id, lobby_players[guild_id])
     elif emoji == "👎":
-        was_nine = len(lobby_players[guild_id]) == 9
+        was_full = len(lobby_players[guild_id]) == 10
         for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
             if uid == user.id:
                 del lobby_players[guild_id][i]
                 updated = True
                 save_lobby_players(guild_id, lobby_players[guild_id])
-                if was_nine and len(lobby_players[guild_id]) == 8:
-                    await channel.send(f"Wow, so nice of you to leave at 9/10, {user.mention}")
+                if len(lobby_players[guild_id]) == 9 and was_full:
+                    await channel.send(f"{user.mention} left the full lobby. Lobby is now 9/10.")
+                    # Remove 🚀 and ♻️
+                    for reaction in message.reactions:
+                        if str(reaction.emoji) in ["🚀", "♻️"]:
+                            await message.clear_reaction(reaction.emoji)
                 break
-        # Remove 🚀 and ♻️ if needed
-        if was_nine and len(lobby_players[guild_id]) == 9:
-            message = await channel.fetch_message(message.id)
-            for reaction in message.reactions:
-                if str(reaction.emoji) in ["🚀", "♻️"]:
-                    await message.clear_reaction(reaction.emoji)
     elif emoji == "🚀" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
         if mode == "regular":
