@@ -1650,6 +1650,7 @@ async def on_raw_reaction_add(payload):
                 break
         # Remove 🚀 and ♻️ if needed
         if was_nine and len(lobby_players[guild_id]) == 9:
+            message = await channel.fetch_message(message.id)
             for reaction in message.reactions:
                 if str(reaction.emoji) in ["🚀", "♻️"]:
                     await message.clear_reaction(reaction.emoji)
