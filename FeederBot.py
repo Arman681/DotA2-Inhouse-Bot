@@ -1830,6 +1830,8 @@ def build_lobby_embed(guild, mode="regular"):
             value="✅ Enabled" if roles_enabled else "❌ Disabled",
             inline=True
         )
+    else:
+        embed.add_field(name="\u200b", value="\u200b", inline=True)  # Empty field
     for _, name, mmr in lobby_players.get(guild_id, []):
         embed.add_field(name=name, value=str(mmr), inline=True)
     password = load_lobby_password_for_guild(guild.id)
