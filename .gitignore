@@ -7,3 +7,4 @@ player_config.json
 feederbot-db-firebase-adminsdk-*.json
 .venv/
 dc_env/
+.vscode/
