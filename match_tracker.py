@@ -35,12 +35,12 @@ def fetch_match_result(match_id, max_retries=5):
                 data = response.json()["data"]["match"]
                 radiant_win = data["didRadiantWin"]
                 players = data["players"]
-                radiant = [str(p["steamAccountId"]) for p in players if p["isRadiant"]]
-                dire = [str(p["steamAccountId"]) for p in players if not p["isRadiant"]]
+                radiantplayers = [str(p["steamAccountId"]) for p in players if p["isRadiant"]]
+                direplayers = [str(p["steamAccountId"]) for p in players if not p["isRadiant"]]
                 return {
                     "radiant_win": radiant_win,
-                    "radiant": radiant,
-                    "dire": dire
+                    "radiantplayers": radiantplayers,
+                    "direplayers": direplayers
                 }
             elif response.status_code == 429:
                 time.sleep(2 ** attempt)  # exponential backoff
