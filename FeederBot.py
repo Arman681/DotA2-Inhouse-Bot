@@ -346,17 +346,30 @@ season_rank_to_mmr = {
 }
 
 # Converts a full 64-bit Steam ID to the shorter 32-bit Steam account ID used by STRATZ.
-def convert_to_steam32(steam_id_str):
+def convert_to_steam32(steam_id_input):
     try:
-        steam_id = int(steam_id_str.replace(" ", ""))
-        if steam_id > 76561197960265728:
-            return steam_id - 76561197960265728
-        return steam_id
-    except ValueError:
+        # If input is a string, remove spaces and convert to int
+        if isinstance(steam_id_input, str):
+            steam_id_input = int(steam_id_input.strip().replace(" ", ""))
+        elif not isinstance(steam_id_input, int):
+            # Reject unsupported types early
+            return None
+        # Perform 64-bit → 32-bit conversion
+        if steam_id_input > 76561197960265728:
+            return steam_id_input - 76561197960265728
+        return steam_id_input
+    except (ValueError, TypeError):
         return None
 
-# Sends a GraphQL query to STRATZ to fetch a user's seasonRank and maps it to an estimated MMR.
-async def fetch_mmr_from_stratz(steam_id, max_retries=2, user_id=None):
+# Sends a GraphQL query to STRATZ and then OpenDota to fetch a user's seasonRank and maps it to an estimated MMR.
+async def fetch_mmr(steam_id, max_retries: int = 2):
+    """
+    Returns (mmr:int|None, season_or_tier:int|None).
+    - Primary: STRATZ seasonRank -> map via season_rank_to_mmr
+    - Fallback: OpenDota rank_tier -> map via season_rank_to_mmr
+    Accepts either 64-bit or 32-bit steam_id.
+    """
+    steam_id = convert_to_steam32(steam_id)
     url = "https://api.stratz.com/graphql"
     headers = {
         "Authorization": f"Bearer {STRATZ_TOKEN}",
@@ -374,38 +387,42 @@ async def fetch_mmr_from_stratz(steam_id, max_retries=2, user_id=None):
         }}
         """
     }
-
-    for attempt in range(max_retries):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=query, headers=headers, timeout=5) as response:
+    async with aiohttp.ClientSession() as session:
+        # ---------- 1) STRATZ ----------
+        for attempt in range(max_retries):
+            try:
+                async with session.post(url, json=query, headers=headers, timeout=8) as response:
                     if response.status == 200:
                         data = await response.json()
                         player_data = data.get("data", {}).get("player", {})
                         if player_data and player_data.get("steamAccount"):
                             season_rank = player_data["steamAccount"].get("seasonRank")
-                            mmr = season_rank_to_mmr.get(season_rank, None)
-                            return mmr, season_rank
-                        else:
-                            print(f"[WARN] No STRATZ data for user_id={user_id}, steam_id={steam_id}")
-                            return None, None
-                    elif response.status in [403, 429, 500]:
-                        error_text = await response.text()
-                        print(f"[ERROR] STRATZ API error {response.status} for user_id={user_id}, steam_id={steam_id}")
-                        print("[RESPONSE BODY]")
-                        print(error_text)  # this could be HTML if Cloudflare blocks you
-                        await asyncio.sleep(2 ** attempt)
-                    else:
-                        error_text = await response.text()
-                        print(f"[ERROR] Unexpected STRATZ response {response.status} for user_id={user_id}, steam_id={steam_id}")
-                        print("[RESPONSE BODY]")
-                        print(error_text)
-                        return None, None
+                            if season_rank:
+                                mmr = season_rank_to_mmr.get(season_rank)
+                                return mmr, season_rank, "STRATZ"
+                        break  # No seasonRank -> skip retries and go to fallback
+                    if response.status in (403, 429, 500, 502, 503, 504):
+                        continue  # Retry on transient/blocked statuses
+                    break
+            except Exception as e:
+                print(f"[WARN] STRATZ error (attempt {attempt+1}/{max_retries}) for {steam_id}: {e}")
+        # ---------- 2) OpenDota fallback ----------
+        try:
+            od_url = f"https://api.opendota.com/api/players/{steam_id}"
+            async with session.get(od_url, timeout=8) as r:
+                if r.status != 200:
+                    txt = await r.text()
+                    print(f"[WARN] OpenDota {r.status} for steam_id={steam_id}: {txt[:180]}")
+                    return None, None
+                j = await r.json()
+                rank_tier = j.get("rank_tier")  # e.g. 55 => Legend 5
+                if not rank_tier:
+                    return None, None
+                mmr = season_rank_to_mmr.get(rank_tier)
+                return mmr, rank_tier, "OpenDota"
         except Exception as e:
-            print(f"[ERROR] fetch_mmr_from_stratz(user_id={user_id}): {e}")
+            print(f"[ERROR] OpenDota fallback failed for {steam_id}: {e}")
             return None, None
-
-    return None, None
 
 # Fetches the current live Dota 2 match for a guild using Steam API, filtered by bound league ID or in random mode
 async def fetch_live_match_for_guild(guild_id, random_mode=False):
@@ -593,11 +610,13 @@ async def refresh_all_mmrs():
         user_id = doc.id
         data = doc.to_dict()
         if "steam_id" in data:
-            mmr, season_rank = await fetch_mmr_from_stratz(data["steam_id"], user_id=user_id)
+            mmr, season_rank, source = await fetch_mmr(data["steam_id"])
             if mmr:
                 db.collection("players").document(str(user_id)).update({
                     "mmr": mmr,
-                    "seasonRank": season_rank
+                    "seasonRank": season_rank,
+                    "mmrSource": source,
+                    "mmrUpdatedAt": firestore.SERVER_TIMESTAMP
                 })
             # 🛡️ Add throttle delay to avoid exceeding 20 requests/sec
             await asyncio.sleep(0.1)
@@ -742,42 +761,129 @@ def calculate_role_fit_score(team, preference_map=None, mmr_map=None):
 
 # Links a user's Steam ID to their Discord account and stores their MMR/seasonRank in Firebase.
 @bot.command(name="cfg")
-async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None):
-    steam32 = convert_to_steam32(steam_id)
-    if steam32 is None:
+async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None, *, force: str = None):
+    MMR_CAP_FOR_TOP_RANKS = 5650
+    if steam_id is None:
         await ctx.send("Please provide a valid numeric Steam friend code or Steam ID.")
         return
+    # Check for force flag
+    force_flag = (force is not None and force.strip().lower() == "--force")
     target = member or ctx.author
-    # Check if user is trying to configure someone else
-    if target != ctx.author:
-        # Only allow if user is admin or has one of the special roles
+    # If configuring someone else, require special role/admin
+    if target != ctx.author or force_flag:
         is_authorized = await user_is_admin_or_has_role(ctx.author)
         if not is_authorized:
-            await ctx.send("❌ You do not have permission to configure another user. Only admins or users with the 'Inhouse Admin' role may do that.")
+            await ctx.send("❌ You do not have permission to configure another user or use `--force`.")
             return
-    user_id = str(target.id)
-    mmr, season_rank = await fetch_mmr_from_stratz(steam32)
-    # If MMR is None but seasonRank is high, set MMR manually
-    if mmr is None and season_rank and season_rank >= 80:
-        mmr = 5650
+    # Normalize Steam ID early (string or int safe)
+    steam_id_32 = convert_to_steam32(steam_id)
+    if steam_id_32 is None:
+        await ctx.send("❌ Invalid Steam ID provided.")
+        return
+    # Load existing player doc (if any)
+    player_ref = db.collection("players").document(str(target.id))
+    snap = player_ref.get()
+    existing = snap.to_dict() if snap.exists else {}
+    existing_steam_id = existing.get("steam_id")
+    existing_mmr = existing.get("mmr")
+    # Handle force flag — always refresh & overwrite
+    if force_flag:
+        mmr, season_rank, source = await fetch_mmr(steam_id_32)
+        if mmr is None and season_rank is not None and season_rank >= 80:
+            mmr = MMR_CAP_FOR_TOP_RANKS
+            await ctx.send(
+                "⚠️ STRATZ does not provide season rank values beyond 80.\n"
+                f"Your estimated MMR has been capped at **{MMR_CAP_FOR_TOP_RANKS}** "
+                f"based on your season rank ({season_rank})."
+            )
+        config_data = {
+            "steam_id": steam_id_32,
+            "steam_name": target.name,
+            "discord_username": str(target),
+            "discord_nickname": target.nick if target.nick else target.display_name,
+            "mmr": mmr,
+            "seasonRank": season_rank,
+            "mmrSource": source,
+            "mmrUpdatedAt": firestore.SERVER_TIMESTAMP,
+            "steamLinkedAt": firestore.SERVER_TIMESTAMP,
+        }
+        save_player_config(str(target.id), config_data)
+
         await ctx.send(
-            f"⚠️ STRATZ does not provide season rank values beyond 80.\n"
-            f"Your estimated MMR has been capped at **5650** based on your season rank ({season_rank}).\n"
-            f"If your actual MMR is higher, please have an admin or inhouse admin to manually update it using `!setmmr`."
+            f"🔄 {target.mention}, your Steam ID `{steam_id}` has been force-updated "
+            f"with an estimated MMR of **{mmr if mmr is not None else 'N/A'}**."
+        )
+        return
+    # Case A: Already fully configured → short-circuit
+    if existing_steam_id is not None and isinstance(existing_mmr, (int, float)):
+        await ctx.send(
+            f"{ctx.author.mention}, **{target.display_name}** is already configured "
+            f"(Steam ID linked and MMR set)."
+        )
+        return
+    # Case B: MMR exists but no steam_id → only link the Steam ID; do not fetch
+    if existing_steam_id is None and isinstance(existing_mmr, (int, float)):
+        player_ref.set({
+            "steam_id": steam_id_32,
+            "steamLinkedAt": firestore.SERVER_TIMESTAMP
+        }, merge=True)
+        await ctx.send(
+            f"{target.mention}, your Steam ID `{steam_id}` has been linked. "
+            f"(Existing MMR {int(existing_mmr)} preserved.)"
+        )
+        return
+    # Case C: steam_id exists but MMR missing/null → fetch MMR only
+    if existing_steam_id is not None and not isinstance(existing_mmr, (int, float)):
+        mmr, season_rank, source = await fetch_mmr(existing_steam_id)
+        if mmr is None and season_rank is not None and season_rank >= 80:
+            mmr = MMR_CAP_FOR_TOP_RANKS
+            await ctx.send(
+                "⚠️ STRATZ does not provide season rank values beyond 80.\n"
+                f"Your estimated MMR has been capped at **{MMR_CAP_FOR_TOP_RANKS}** "
+                f"based on your season rank ({season_rank})."
+            )
+        player_ref.set({
+            "mmr": mmr,
+            "seasonRank": season_rank,
+            "mmrSource": source,
+            "mmrUpdatedAt": firestore.SERVER_TIMESTAMP
+        }, merge=True)
+        if mmr is not None:
+            await ctx.send(f"{target.mention}, your MMR has been set to **{mmr}**.")
+        else:
+            await ctx.send(f"{target.mention}, Steam ID was linked earlier, "
+                           "but I still couldn’t determine your MMR.")
+        return
+    # Case D: neither steam_id nor mmr exist → normal flow: link + fetch
+    mmr, season_rank, source = await fetch_mmr(steam_id_32)
+    if mmr is None and season_rank is not None and season_rank >= 80:
+        mmr = MMR_CAP_FOR_TOP_RANKS
+        await ctx.send(
+            "⚠️ STRATZ does not provide season rank values beyond 80.\n"
+            f"Your estimated MMR has been capped at **{MMR_CAP_FOR_TOP_RANKS}** "
+            f"based on your season rank ({season_rank})."
         )
     config_data = {
-        "steam_id": steam32,
+        "steam_id": steam_id_32,
         "steam_name": target.name,
         "discord_username": str(target),
         "discord_nickname": target.nick if target.nick else target.display_name,
         "mmr": mmr,
-        "seasonRank": season_rank
+        "seasonRank": season_rank,
+        "mmrSource": source,
+        "mmrUpdatedAt": firestore.SERVER_TIMESTAMP,
+        "steamLinkedAt": firestore.SERVER_TIMESTAMP,
     }
-    save_player_config(user_id, config_data)
-    if mmr:
-        await ctx.send(f"{target.mention}, your Steam ID `{steam32}` has been linked with an estimated MMR of **{mmr}**.")
+    save_player_config(str(target.id), config_data)
+    if mmr is not None:
+        await ctx.send(
+            f"{target.mention}, your Steam ID `{steam_id}` has been linked "
+            f"with an estimated MMR of **{mmr}**."
+        )
     else:
-        await ctx.send(f"{target.mention}, Steam ID linked, but MMR could not be determined.")
+        await ctx.send(
+            f"{target.mention}, Steam ID linked, but MMR could not be determined."
+        )
 @cfg_cmd.error
 async def cfg_cmd_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
