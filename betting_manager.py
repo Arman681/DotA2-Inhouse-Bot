@@ -72,8 +72,7 @@ def resolve_bets(guild_id, winning_team):
 # 🔹 CLEANUP FUNCTIONS
 # ====================================
 
-def clear_guild_bets(ctx):
-    guild_id = ctx.guild.id
+def clear_guild_bets(guild_id):
     entries_ref = db.collection("bets").document(str(guild_id)).collection("entries").stream()
     for entry in entries_ref:
         db.collection("bets").document(str(guild_id)).collection("entries").document(entry.id).delete()
