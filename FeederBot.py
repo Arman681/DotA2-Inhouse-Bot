@@ -100,11 +100,9 @@ async def poll_live_match(match_id, guild, random_mode=False):
         await asyncio.sleep(15)
         try:
             match = await fetch_live_match_for_guild(guild.id, random_mode=random_mode)
-
             if not match:
                 print(f"[MATCH] Match {match_id} no longer reported as live. Stopping Steam polling.")
                 break  # Exit polling loop and move to STRATZ result retry
-
             # Update embed every 15 seconds
             embed = await format_live_match_embed(match, guild)
             channel = bot.get_channel(channel_id) if channel_id else None
