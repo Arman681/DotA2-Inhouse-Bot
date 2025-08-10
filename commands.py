@@ -913,8 +913,8 @@ def attach_commands(bot, deps):
             help_text = (
                 "\n__**🔐 Admin Commands**__\n"
                 "**!cfg <steam_id> [@member] [--force]** - Link a player's Steam ID and fetch their MMR.\n"
-                "   - Without `--force`: Will not overwrite an existing Steam ID and MMR.\n"
-                "   - With `--force`: Forcibly updates a user's Steam ID and MMR, even if already set.\n"
+                "- Without `--force`: Will not overwrite an existing Steam ID and MMR.\n"
+                "- With `--force`: Forcibly updates a user's Steam ID and MMR, even if already set.\n"
                 "**!lobby `mode`** - Sets the lobby mode for the inhouse \n"
                 "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
                 "           • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
