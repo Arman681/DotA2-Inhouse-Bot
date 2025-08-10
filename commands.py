@@ -857,6 +857,45 @@ def attach_commands(bot, deps):
         else:
             await ctx.send("⚠️ An unexpected error occurred while toggling preferred roles.")
             print(f"[ERROR] toggle_preferred_roles command: {error}")
+    
+    @bot.command(name="lobbyroles")
+    @is_admin_or_has_role()
+    async def lobby_roles(ctx):
+        """Show all 10 lobby players and their preferred roles. Admin-only. Only works at 10/10."""
+        guild_id = ctx.guild.id
+        # Must have a lobby and it must be full
+        if guild_id not in lobby_players or len(lobby_players[guild_id]) != 10:
+            await ctx.send("❌ This command only works when the lobby is full (10/10).")
+            return
+        # Build nice embed
+        embed = discord.Embed(
+            title="🧭 Preferred Roles — Current Lobby (10/10)",
+            description="Most → Least preferred",
+            color=discord.Color.blurple()
+        )
+        lines = []
+        for uid, display_name, _ in lobby_players[guild_id]:
+            doc = db.collection("players").document(str(uid)).get()
+            prefs = None
+            if doc.exists:
+                data = doc.to_dict() or {}
+                if isinstance(data.get("preferred_roles"), list):
+                    prefs = data["preferred_roles"]
+            if prefs and len(prefs) == 5 and sorted(prefs) == [1, 2, 3, 4, 5]:
+                # Example format: [1 4 5 3 2]
+                pretty = "[" + " ".join(str(p) for p in prefs) + "]"
+                lines.append(f"• **{display_name}**: {pretty}")
+            else:
+                lines.append(f"• **{display_name}**: _No preferred roles set_")
+        # Keep the list tidy even with long names
+        embed.add_field(name="Players", value="\n".join(lines), inline=False)
+        await ctx.send(embed=embed)
+    @lobby_roles.error
+    async def lobby_roles_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.send("⚠️ An unexpected error occurred while listing lobby roles.")
 
     # ================================ ℹ️ Help Command ================================
 
@@ -894,6 +933,7 @@ def attach_commands(bot, deps):
                 "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
                 "           • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
                 "**!toggle_roles `on|off`** - Enable or disable preferred role usage in team balancing.\n"
+                "**!lobbyroles** - Show preferred roles for all 10 current lobby players (requires full lobby).\n"
                 "**!setmmr `mmr` `@user`** - Manually set a user's MMR.\n"
                 "**!setpreferredroles `1 2 3 4 5` @user** - Set preferred roles for another user.\n"
                 "**!setpassword `new_password`** - Change the inhouse lobby password.\n"
