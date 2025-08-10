@@ -75,27 +75,31 @@ def attach_commands(bot, deps):
         if steam_id is None:
             await ctx.send("Please provide a valid numeric Steam friend code or Steam ID.")
             return
-
         force_flag = (force is not None and force.strip().lower() == "--force")
         target = member or ctx.author
-
-        if target != ctx.author or force_flag:
+        # figure out what they're trying to do
+        targeting_other = (target != ctx.author)
+        using_force = force_flag
+        # if they try either action, require admin/inhouse role
+        if targeting_other or using_force:
             is_authorized = await user_is_admin_or_has_role(ctx.author)
             if not is_authorized:
-                await ctx.send("❌ You do not have permission to configure another user or use `--force`.")
+                if targeting_other and using_force:
+                    await ctx.send("❌ You tried to configure another user **with `--force`**. Only admins or Inhouse Admins can do that.")
+                elif targeting_other:
+                    await ctx.send("❌ Only admins or Inhouse Admins can configure **other users**.")
+                else:  # using_force only
+                    await ctx.send("❌ `--force` can only be used by admins or Inhouse Admins.")
                 return
-
         steam_id_32 = convert_to_steam32(steam_id)
         if steam_id_32 is None:
             await ctx.send("❌ Invalid Steam ID provided.")
             return
-
         player_ref = db.collection("players").document(str(target.id))
         snap = player_ref.get()
         existing = snap.to_dict() if snap.exists else {}
         existing_steam_id = existing.get("steam_id")
         existing_mmr = existing.get("mmr")
-
         if force_flag:
             mmr, season_rank, source = await fetch_mmr(steam_id_32)
             if mmr is None and season_rank is not None and season_rank >= 80:
@@ -122,7 +126,6 @@ def attach_commands(bot, deps):
                 f"with an estimated MMR of **{mmr if mmr is not None else 'N/A'}**."
             )
             return
-
         # Case A
         if existing_steam_id is not None and isinstance(existing_mmr, (int, float)):
             await ctx.send(
@@ -130,7 +133,6 @@ def attach_commands(bot, deps):
                 f"(Steam ID linked and MMR set)."
             )
             return
-
         # Case B
         if existing_steam_id is None and isinstance(existing_mmr, (int, float)):
             player_ref.set({
@@ -142,7 +144,6 @@ def attach_commands(bot, deps):
                 f"(Existing MMR {int(existing_mmr)} preserved.)"
             )
             return
-
         # Case C
         if existing_steam_id is not None and not isinstance(existing_mmr, (int, float)):
             mmr, season_rank, source = await fetch_mmr(existing_steam_id)
@@ -164,7 +165,6 @@ def attach_commands(bot, deps):
             else:
                 await ctx.send(f"{target.mention}, Steam ID was linked earlier, but I still couldn’t determine your MMR.")
             return
-
         # Case D
         mmr, season_rank, source = await fetch_mmr(steam_id_32)
         if mmr is None and season_rank is not None and season_rank >= 80:
@@ -236,17 +236,14 @@ def attach_commands(bot, deps):
             return
         user_id = str(ctx.author.id)
         nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
-
         if ctx.guild.id not in active_match_ids:
             await ctx.send("❌ There is no active match in progress to bet on.")
             return
-
         is_random = random_polling_flags.get(ctx.guild.id, False)
         match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=is_random)
         if not match:
             await ctx.send("⚠️ Could not retrieve live match info. Betting may be closed.")
             return
-
         duration = match.get("scoreboard", {}).get("duration", 0)
         if is_random:
             start_time = match_tracking_start_times.get(ctx.guild.id)
@@ -257,7 +254,6 @@ def attach_commands(bot, deps):
             if duration >= 120:
                 await ctx.send("⏳ Bets are closed. The match has passed the 2:00 mark.")
                 return
-
         # block betting opposite team if user is playing
         player_team = None
         for player in match.get("players", []):
@@ -273,7 +269,6 @@ def attach_commands(bot, deps):
                     f"You cannot place a bet on the **opposing team** during a match you are in."
                 )
                 return
-
         entry_ref = db.collection("guild_specific_info").document(str(ctx.guild.id)).collection("bets").document(str(ctx.author.id))
         existing_bet_doc = entry_ref.get()
         previous_amount = 0
@@ -294,7 +289,6 @@ def attach_commands(bot, deps):
                 )
                 return
             is_update = True
-
         old_balance = get_balance(ctx.guild.id, ctx.author.id)
         success = place_bet(user_id, team, amount, ctx.guild.id, nickname)
         new_balance = get_balance(ctx.guild.id, ctx.author.id)
@@ -526,18 +520,15 @@ def attach_commands(bot, deps):
             wait_time = int(30 - (now - last_called))
             await ctx.send(f"⏳ You must wait {wait_time} seconds before using `!livematch` again.")
             return
-
         match_id = active_match_ids.get(guild_id)
         if not match_id:
             await ctx.send("❌ There is no active match to display.")
             return
-
         is_random = random_polling_flags.get(guild_id, False)
         match = await fetch_live_match_for_guild(guild_id, random_mode=is_random)
         if not match:
             await ctx.send("⚠️ Could not retrieve live match info.")
             return
-
         prev_msg = live_embed_messages.get(guild_id)
         channel = ctx.channel
         if prev_msg:
@@ -545,15 +536,12 @@ def attach_commands(bot, deps):
                 await prev_msg.delete()
             except Exception:
                 pass
-
         embed = await format_live_match_embed(match, ctx.guild)
         new_msg = await channel.send(embed=embed)
         live_embed_messages[guild_id] = new_msg
-
         livematch_cooldowns[guild_id] = now
         if guild_id in livematch_timers:
             livematch_timers[guild_id].cancel()
-
         async def clear_livematch_timer(gid):
             try:
                 await asyncio.sleep(45)
@@ -660,7 +648,6 @@ def attach_commands(bot, deps):
                 lines.append(f"🔧 **Prefix**:\n  • Value: `{prefix}`\n  • Set by: {prefix_set_by}\n  • Timestamp: `{prefix_time}`\n  • Full Doc: `{prefix_data}`")
             else:
                 lines.append(f"🔧 **Prefix**: `{prefix}`\nSet by: {prefix_set_by}\nTime: {prefix_time}")
-
             password_data = data.get("password", {})
             password = password_data.get("password", "Unknown")
             password_set_by = password_data.get("password_set_by", "Unknown")
@@ -669,7 +656,6 @@ def attach_commands(bot, deps):
                 lines.append(f"\n🔐 **Lobby Password**:\n  • Value: `{password}`\n  • Set by: {password_set_by}\n  • Timestamp: `{password_time}`\n  • Full Doc: `{password_data}`")
             else:
                 lines.append(f"\n🔐 **Lobby Password**: `{password}`\nSet by: {password_set_by}\nTime: {password_time}")
-
             inhouse_mode_data = data.get("inhouse_mode", {})
             mode = inhouse_mode_data.get("mode", "Unknown")
             mode_set_by = inhouse_mode_data.get("mode_set_by", "Unknown")
@@ -678,7 +664,6 @@ def attach_commands(bot, deps):
                 lines.append(f"\n🛠️ **Inhouse Mode**:\n  • Value: `{mode}`\n  • Set by: {mode_set_by}\n  • Timestamp: `{mode_time}`\n  • Full Doc: `{inhouse_mode_data}`")
             else:
                 lines.append(f"\n🛠️ **Inhouse Mode**: `{mode}`\nSet by: {mode_set_by}\nTime: {mode_time}")
-
             league_id_data = data.get("league_id", {})
             bound_league_id = league_id_data.get("bound_league_id", "Unknown")
             league_bind_by = league_id_data.get("league_id_bound_by", "Unknown")
@@ -687,7 +672,6 @@ def attach_commands(bot, deps):
                 lines.append(f"\n🏆 **League ID**:\n  • Value: `{bound_league_id}`\n  • Bound by: {league_bind_by}\n  • Timestamp: `{league_bind_time}`\n  • Full Doc: `{league_id_data}`")
             else:
                 lines.append(f"\n🏆 **League ID**: `{bound_league_id}`\nBound by: {league_bind_by}\nTime: {league_bind_time}")
-
             live_channel_data = data.get("live_channel_id", {})
             live_channel_id = live_channel_data.get("live_channel_id", "Unknown")
             live_channel_time = live_channel_data.get("live_channel_timestamp", "Unknown")
@@ -696,7 +680,6 @@ def attach_commands(bot, deps):
                 lines.append(f"\n📺 **Live Channel ID**:\n  • Value: `{live_channel_id}`\n  • Set by: {live_channel_set_by}\n  • Timestamp: `{live_channel_time}`\n  • Full Doc: `{live_channel_data}`")
             else:
                 lines.append(f"\n📺 **Live Channel ID**: `{live_channel_id}`\nSet by: {live_channel_set_by}\nTime: {live_channel_time}")
-
             preferred_roles_setting_data = data.get("preferred_roles_setting", {})
             preferred_roles_enabled = preferred_roles_setting_data.get("preferred_roles_enabled", True)
             preferred_roles_set_by = preferred_roles_setting_data.get("preferred_roles_set_by", "Unknown")
@@ -906,7 +889,7 @@ def attach_commands(bot, deps):
             help_text = (
                 "\n**📜 Available Commands:**\n\n"
                 "__**👥 General Commands**__\n"
-                "**!cfg `steam_id` `@user`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
+                "**!cfg `steam_id`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
                 "**!setpreferredroles `1 2 3 4 5` `@user`** - Set your role preferences from most to least preferred (admin can set for others).\n"
                 "**!viewpreferredroles `@user`** - View preferred roles for yourself or another user.\n"
                 "**!mmr `@user`** - Show your MMR or another user's MMR.\n"
@@ -929,6 +912,9 @@ def attach_commands(bot, deps):
         elif category == "admin":
             help_text = (
                 "\n__**🔐 Admin Commands**__\n"
+                "**!cfg <steam_id> [@member] [--force]** - Link a player's Steam ID and fetch their MMR.\n"
+                "   - Without `--force`: Will not overwrite an existing Steam ID and MMR.\n"
+                "   - With `--force`: Forcibly updates a user's Steam ID and MMR, even if already set.\n"
                 "**!lobby `mode`** - Sets the lobby mode for the inhouse \n"
                 "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
                 "           • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
