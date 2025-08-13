@@ -694,7 +694,8 @@ def assign_roles_with_preferences(team, preference_map=None, mmr_map=None):
             uid = str(player[0])
             mmr_map[uid] = player[2]
             doc = db.collection("players").document(uid).get()
-            preference_map[uid] = doc.to_dict().get("preferred_roles", [1, 2, 3, 4, 5])
+            data = doc.to_dict() if doc.exists else None
+            preference_map[uid] = data.get("preferred_roles", [1, 2, 3, 4, 5]) if (data and isinstance(data.get("preferred_roles"), list)) else [1, 2, 3, 4, 5]
     for role in range(1, 6):
         best_candidate = None
         best_rank = 999
@@ -761,7 +762,8 @@ def calculate_balanced_teams(players, guild_id):
         uid_str = str(uid)
         mmr_map[uid_str] = mmr
         doc = db.collection("players").document(uid_str).get()
-        preferred = doc.to_dict().get("preferred_roles", [1, 2, 3, 4, 5])
+        data = doc.to_dict() if doc.exists else None
+        preferred = data.get("preferred_roles", [1, 2, 3, 4, 5]) if (data and isinstance(data.get("preferred_roles"), list)) else [1, 2, 3, 4, 5]
         preference_map[uid_str] = preferred
     use_roles = load_preferred_roles_setting(guild_id)
     combos_to_score = []
