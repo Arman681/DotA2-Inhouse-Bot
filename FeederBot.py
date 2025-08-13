@@ -396,7 +396,7 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
                             season_rank = player_data["steamAccount"].get("seasonRank")
                             if season_rank:
                                 mmr = season_rank_to_mmr.get(season_rank)
-                                return mmr, season_rank, "STRATZ"
+                                return mmr, season_rank, "STRATZ" or None
                         break  # No seasonRank -> skip retries and go to fallback
                     if response.status in (403, 429, 500, 502, 503, 504):
                         continue  # Retry on transient/blocked statuses
@@ -416,7 +416,7 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
                 if not rank_tier:
                     return None, None
                 mmr = season_rank_to_mmr.get(rank_tier)
-                return mmr, rank_tier, "OpenDota"
+                return mmr, rank_tier, "OpenDota" or None
         except Exception as e:
             print(f"[ERROR] OpenDota fallback failed for {steam_id}: {e}")
             return None, None
@@ -607,14 +607,25 @@ async def refresh_all_mmrs():
         user_id = doc.id
         data = doc.to_dict()
         if "steam_id" in data:
-            mmr, season_rank, source = await fetch_mmr(data["steam_id"])
-            if mmr:
-                db.collection("players").document(str(user_id)).update({
-                    "mmr": mmr,
-                    "seasonRank": season_rank,
-                    "mmrSource": source,
-                    "mmrUpdatedAt": firestore.SERVER_TIMESTAMP
-                })
+            try:
+                mmr, season_rank, source = await fetch_mmr(data["steam_id"])
+            except ValueError:
+                print(f"[WARN] fetch_mmr did not return expected values for {data['steam_id']}")
+                continue
+            except Exception as e:
+                print(f"[ERROR] Failed to refresh MMR for {data['steam_id']}: {e}")
+                continue
+            if mmr is not None:
+                try:
+                    db.collection("players").document(str(user_id)).update({
+                        "mmr": mmr,
+                        "seasonRank": season_rank,
+                        "mmrSource": source,
+                        "mmrUpdatedAt": firestore.SERVER_TIMESTAMP
+                    })
+                except Exception as e:
+                    print(f"[ERROR] Failed to update MMR for {user_id}: {e}")
+                    continue
             # 🛡️ Add throttle delay to avoid exceeding 20 requests/sec
             await asyncio.sleep(0.1)
     # Refresh lobby embeds across all servers
