@@ -761,7 +761,7 @@ async def on_ready():
     global hero_id_to_name
     print(f"{bot.user} is online!")
     active_match_ids.clear()
-    #refresh_all_mmrs.start()
+    refresh_all_mmrs.start()
     clear_all_bets(bot)
     # Cache hero IDs
     hero_id_to_name = await fetch_hero_id_to_name_map()
