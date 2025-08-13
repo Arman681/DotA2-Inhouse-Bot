@@ -832,7 +832,6 @@ async def on_ready():
     global hero_id_to_name
     print(f"{bot.user} is online!")
     active_match_ids.clear()
-    refresh_all_mmrs.start()
     clear_all_bets(bot)
     # Cache hero IDs
     hero_id_to_name = await fetch_hero_id_to_name_map()
@@ -869,9 +868,10 @@ async def on_ready():
                         break
                 except:
                     continue
-    """print("[DEBUG] Full live_channel_ids dict with types:")
-    for guild_id, channel_id in live_channel_ids.items():
-        print(f"  {guild_id} (type: {type(guild_id).__name__}) → {channel_id} (type: {type(channel_id).__name__})")"""
+    # Start the periodic MMR refresh task **after** restores finish
+    if not refresh_all_mmrs.is_running():
+        refresh_all_mmrs.start()
+        print("[INIT] Started refresh_all_mmrs task.")
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
