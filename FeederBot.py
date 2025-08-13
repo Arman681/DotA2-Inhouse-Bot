@@ -631,21 +631,14 @@ async def refresh_all_mmrs():
         # Fetch (mmr, season_or_tier, source), where season_or_tier is STRATZ seasonRank or OpenDota rank_tier
         try:
             mmr, season_or_tier, source = await fetch_mmr(steam_id)
+            # throttle between users
+            await asyncio.sleep(0.3) # ensure stratz api call limit is not exceeded
         except Exception as e:
             print(f"[ERROR] Failed to fetch MMR for {steam_id} ({user_id}): {e}")
+            await asyncio.sleep(0.3)
             continue
-        # --- Skip rules ---
-        # 1) No rank available -> skip (do not update Firestore)
-        if season_or_tier is None:
-            await asyncio.sleep(0.1)
-            continue
-        # 2) Immortal or higher (80+): likely admin-set MMR; skip to avoid overriding !setmmr
-        if season_or_tier >= 80:
-            await asyncio.sleep(0.1)
-            continue
-        # If fetch gave no MMR (e.g., mapping returned None), skip write
-        if mmr is None:
-            await asyncio.sleep(0.1)
+        # Skip if: no rank, Immortal-or-higher, or no mapped MMR
+        if (season_or_tier is None) or (season_or_tier >= 80) or (mmr is None):
             continue
         # Only write if something actually changed
         changed = (
@@ -671,8 +664,6 @@ async def refresh_all_mmrs():
                 })
             except Exception as e:
                 print(f"[ERROR] Failed to update Firestore for {user_id}: {e}")
-        # throttle between users
-        await asyncio.sleep(0.1)
     # Refresh lobby embeds across all servers
     try:
         await update_all_lobbies()
