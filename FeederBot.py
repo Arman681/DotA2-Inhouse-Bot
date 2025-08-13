@@ -396,30 +396,40 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
                             season_rank = player_data["steamAccount"].get("seasonRank")
                             if season_rank:
                                 mmr = season_rank_to_mmr.get(season_rank)
-                                return mmr, season_rank, "STRATZ" or None
-                        break  # No seasonRank -> skip retries and go to fallback
+                                return mmr, season_rank, "STRATZ"
+                        break  # No seasonRank -> skip retries and go fallback
+                    # Log non-200 response
+                    txt = (await response.text()).strip()
+                    print(
+                        f"[WARN] STRATZ {response.status} "
+                        f"(attempt {attempt+1}/{max_retries}) "
+                        f"for steam_id={steam_id}: {txt[:180]}"
+                    )
                     if response.status in (403, 429, 500, 502, 503, 504):
                         continue  # Retry on transient/blocked statuses
-                    break
+                    break  # Non-retryable error, break out
             except Exception as e:
-                print(f"[WARN] STRATZ error (attempt {attempt+1}/{max_retries}) for {steam_id}: {e}")
+                print(
+                    f"[ERROR] STRATZ request failed "
+                    f"(attempt {attempt+1}/{max_retries}) for steam_id={steam_id}: {e}"
+                )
         # ---------- 2) OpenDota fallback ----------
         try:
             od_url = f"https://api.opendota.com/api/players/{steam_id}"
             async with session.get(od_url, timeout=8) as r:
                 if r.status != 200:
-                    txt = await r.text()
+                    txt = (await r.text()).strip()
                     print(f"[WARN] OpenDota {r.status} for steam_id={steam_id}: {txt[:180]}")
-                    return None, None
+                    return None, None, None
                 j = await r.json()
                 rank_tier = j.get("rank_tier")  # e.g. 55 => Legend 5
                 if not rank_tier:
-                    return None, None
+                    return None, None, None
                 mmr = season_rank_to_mmr.get(rank_tier)
-                return mmr, rank_tier, "OpenDota" or None
+                return mmr, rank_tier, "OpenDota"
         except Exception as e:
-            print(f"[ERROR] OpenDota fallback failed for {steam_id}: {e}")
-            return None, None
+            print(f"[ERROR] OpenDota fallback failed for steam_id={steam_id}: {e}")
+        return None, None, None
 
 # Fetches the current live Dota 2 match for a guild using Steam API, filtered by bound league ID or in random mode
 async def fetch_live_match_for_guild(guild_id, random_mode=False):
@@ -602,34 +612,80 @@ async def get_display_name_or_steam(account_id_32, guild):
 @tasks.loop(hours=18)
 async def refresh_all_mmrs():
     print("Refreshing MMRs (Firebase)...")
+    updates_log = []  # collected and printed once at the end
     players_ref = db.collection("players").stream()
     for doc in players_ref:
         user_id = doc.id
         data = doc.to_dict()
-        if "steam_id" in data:
-            try:
-                mmr, season_rank, source = await fetch_mmr(data["steam_id"])
-            except ValueError:
-                print(f"[WARN] fetch_mmr did not return expected values for {data['steam_id']}")
-                continue
-            except Exception as e:
-                print(f"[ERROR] Failed to refresh MMR for {data['steam_id']}: {e}")
-                continue
-            if mmr is not None:
-                try:
-                    db.collection("players").document(str(user_id)).update({
-                        "mmr": mmr,
-                        "seasonRank": season_rank,
-                        "mmrSource": source,
-                        "mmrUpdatedAt": firestore.SERVER_TIMESTAMP
-                    })
-                except Exception as e:
-                    print(f"[ERROR] Failed to update MMR for {user_id}: {e}")
-                    continue
-            # 🛡️ Add throttle delay to avoid exceeding 20 requests/sec
+        steam_id = data.get("steam_id")
+        if not steam_id:
+            continue
+        discord_nickname = data.get("discord_nickname", str(user_id))
+        old_mmr    = data.get("mmr")
+        old_season = data.get("seasonRank")
+        old_source = data.get("mmrSource")
+        # Fetch (mmr, season_or_tier, source), where season_or_tier is STRATZ seasonRank or OpenDota rank_tier
+        try:
+            mmr, season_or_tier, source = await fetch_mmr(steam_id)
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch MMR for {steam_id} ({user_id}): {e}")
+            continue
+        # --- Skip rules ---
+        # 1) No rank available -> skip (do not update Firestore)
+        if season_or_tier is None:
             await asyncio.sleep(0.1)
+            continue
+        # 2) Immortal or higher (80+): likely admin-set MMR; skip to avoid overriding !setmmr
+        if season_or_tier >= 80:
+            await asyncio.sleep(0.1)
+            continue
+        # If fetch gave no MMR (e.g., mapping returned None), skip write
+        if mmr is None:
+            await asyncio.sleep(0.1)
+            continue
+        # Only write if something actually changed
+        changed = (
+            old_mmr != mmr or
+            old_season != season_or_tier or
+            old_source != source
+        )
+        if changed:
+            try:
+                db.collection("players").document(str(user_id)).update({
+                    "mmr": mmr,
+                    "seasonRank": season_or_tier,   # stores either seasonRank or rank_tier
+                    "mmrSource": source,            # "STRATZ" or "OpenDota"
+                    "mmrUpdatedAt": firestore.SERVER_TIMESTAMP
+                })
+                updates_log.append({
+                    "discord_nickname": discord_nickname,
+                    "user_id": user_id,
+                    "steam_id": steam_id,
+                    "old_mmr": old_mmr, "new_mmr": mmr,
+                    "old_season": old_season, "new_season": season_or_tier,
+                    "old_source": old_source, "new_source": source,
+                })
+            except Exception as e:
+                print(f"[ERROR] Failed to update Firestore for {user_id}: {e}")
+        # throttle between users
+        await asyncio.sleep(0.1)
     # Refresh lobby embeds across all servers
-    await update_all_lobbies()
+    try:
+        await update_all_lobbies()
+    except Exception as e:
+        print(f"[ERROR] Failed to update lobby embeds: {e}")
+    # Final one-shot debug summary
+    if updates_log:
+        print("[MMR REFRESH CHANGES]")
+        for u in updates_log:
+            print(
+                f" {u['discord_nickname']} (user_id={u['user_id']}, steam_id={u['steam_id']}) | "
+                f"MMR: {u['old_mmr']} -> {u['new_mmr']} | "
+                f"Season: {u['old_season']} -> {u['new_season']} | "
+                f"Source: {u['old_source']} -> {u['new_source']}"
+            )
+    else:
+        print("[MMR REFRESH] No changes detected.")
     print("Refreshed all MMRs and lobby embeds.")
 
 # Assigns players to roles based on their preferences and MMR, prioritizing optimal fit
