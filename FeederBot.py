@@ -397,17 +397,21 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
                             if season_rank:
                                 mmr = season_rank_to_mmr.get(season_rank)
                                 return mmr, season_rank, "STRATZ"
-                        break  # No seasonRank -> skip retries and go fallback
-                    # Log non-200 response
-                    txt = (await response.text()).strip()
-                    print(
-                        f"[WARN] STRATZ {response.status} "
-                        f"(attempt {attempt+1}/{max_retries}) "
-                        f"for steam_id={steam_id}: {txt[:180]}"
-                    )
-                    if response.status in (403, 429, 500, 502, 503, 504):
-                        continue  # Retry on transient/blocked statuses
-                    break  # Non-retryable error, break out
+                            else:
+                                # <-- 200 but no rank: log why we're falling back
+                                print(f"[INFO] STRATZ 200 but no seasonRank for steam_id={steam_id}; falling back to OpenDota")
+                                break  # No seasonRank -> skip retries and go fallback
+                    else:
+                        # Log non-200 response
+                        txt = (await response.text()).strip()
+                        print(
+                            f"[WARN] STRATZ {response.status} "
+                            f"(attempt {attempt+1}/{max_retries}) "
+                            f"for steam_id={steam_id}: {txt[:180]}"
+                        )
+                        if response.status in (403, 429, 500, 502, 503, 504):
+                            continue  # Retry on transient/blocked statuses
+                        break  # Non-retryable error, break out
             except Exception as e:
                 print(
                     f"[ERROR] STRATZ request failed "
