@@ -599,7 +599,7 @@ async def get_display_name_or_steam(account_id_32, guild):
     return await get_steam_display_name(account_id_32)
 
 # Periodic background task that updates all players' MMR values from STRATZ in Firebase, and refreshes lobby embeds across all servers.
-@tasks.loop(hours=24)
+@tasks.loop(hours=18)
 async def refresh_all_mmrs():
     print("Refreshing MMRs (Firebase)...")
     players_ref = db.collection("players").stream()
@@ -619,6 +619,7 @@ async def refresh_all_mmrs():
             await asyncio.sleep(0.1)
     # Refresh lobby embeds across all servers
     await update_all_lobbies()
+    print("Refreshed all MMRs and lobby embeds.")
 
 # Assigns players to roles based on their preferences and MMR, prioritizing optimal fit
 def assign_roles_with_preferences(team, preference_map=None, mmr_map=None):
