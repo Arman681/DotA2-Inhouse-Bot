@@ -835,7 +835,23 @@ def attach_commands(bot, deps):
         await ctx.send(f"Preferred roles integration is now {status} for team balancing.")
     @toggle_preferred_roles.error
     async def toggle_preferred_roles_error(ctx, error):
-        if isinstance(error, commands.CheckFailure):
+        if isinstance(error, commands.MissingRequiredArgument):
+            # e.g., user typed `!toggle_roles` with no argument
+            await ctx.send(
+                "❌ Missing required argument `mode`.\n"
+                "Usage: `!toggle_roles on` or `!toggle_roles off`"
+            )
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send(
+                "❌ Invalid argument for `mode`. Use `on` or `off`.\n"
+                "Usage: `!toggle_roles on` or `!toggle_roles off`"
+            )
+        elif isinstance(error, commands.UserInputError):
+            await ctx.send(
+                "❌ Incorrect usage.\n"
+                "Usage: `!toggle_roles on` or `!toggle_roles off`"
+            )
+        elif isinstance(error, commands.CheckFailure):
             await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
             await ctx.send("⚠️ An unexpected error occurred while toggling preferred roles.")
