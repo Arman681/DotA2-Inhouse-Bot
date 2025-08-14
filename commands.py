@@ -209,7 +209,7 @@ def attach_commands(bot, deps):
     @bot.command(name="inhouse_mmr")
     async def inhouse_mmr(ctx, member: discord.Member = None):
         member = member or ctx.author
-        mmr = get_inhouse_mmr(ctx.guild.id, str(member.id))
+        mmr = await get_inhouse_mmr(bot, ctx.guild.id, str(member.id))
         await ctx.send(f"{member.display_name}'s inhouse MMR is **{mmr}**.")
 
     @bot.command(name="leaderboard")
