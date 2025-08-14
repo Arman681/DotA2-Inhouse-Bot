@@ -727,6 +727,8 @@ def attach_commands(bot, deps):
     async def submitmatch_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
             await ctx.send("❗ Usage: `!submitmatch <match_id>`")
+        elif isinstance(error, commands.CheckFailure):
+            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         elif isinstance(error, commands.BadArgument):
             await ctx.send("❗ Invalid match ID. It should be a numeric string like `8351234567`.")
         else:
