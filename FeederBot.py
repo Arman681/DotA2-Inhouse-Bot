@@ -61,7 +61,6 @@ valid_team_combos = {}     # {guild_id: int} for how many valid team combination
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
 MMR_ROLE_OVERRULE_THRESHOLD = 1500
-MMR_TOLERANCE = 100  # adjust as needed
 ROLE_FIT_WEIGHT = 10  # You can adjust this based on how much role fit matters
 
 HERO_CACHE_FILE = "hero_id_map.json"
@@ -753,8 +752,7 @@ def get_preferred_roles(player_id):
 # ================================ ⚖️ Team Balancing ================================
 
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
-def calculate_balanced_teams(players, guild_id):
-    all_players = set(players)
+def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
     # Cache preferences and MMR
     preference_map = {}
     mmr_map = {}
@@ -769,14 +767,18 @@ def calculate_balanced_teams(players, guild_id):
     combos_to_score = []
     # Generate valid MMR-balanced combos
     for team1 in itertools.combinations(players, 5):
-        team2 = tuple(all_players - set(team1))
+        team2 = tuple(p for p in players if p not in set(team1))
         mmr1 = sum(p[2] for p in team1) / 5
         mmr2 = sum(p[2] for p in team2) / 5
         mmr_diff = abs(mmr1 - mmr2)
-        if mmr_diff > MMR_TOLERANCE:
+        if mmr_diff > max_mmr_diff:
             continue
         combos_to_score.append((team1, team2, mmr_diff))
-    print(f"[INFO] Found {len(combos_to_score)} valid team combinations (MMR diff ≤ {MMR_TOLERANCE})")
+    print(f"[INFO] Found {len(combos_to_score)} valid team combinations (MMR diff ≤ {max_mmr_diff})")
+    if not combos_to_score:
+        # Nothing to score—callers must guard against empty results
+        team_rolls[guild_id] = []
+        return [], 0
     # Parallel role fit scoring
     def score_combo(combo):
         team1, team2, mmr_diff = combo
@@ -786,7 +788,7 @@ def calculate_balanced_teams(players, guild_id):
         else:
             score1 = score2 = 0
             roles1 = roles2 = None
-        total_score = (mmr_diff / 5) + ROLE_FIT_WEIGHT * (score1 + score2)
+        total_score = (mmr_diff / 5) - ROLE_FIT_WEIGHT * (score1 + score2)
         return (total_score, team1, team2, score1, score2, roles1, roles2)
     with ThreadPoolExecutor() as executor:
         results = list(executor.map(score_combo, combos_to_score))
@@ -929,6 +931,18 @@ async def on_raw_reaction_add(payload):
         mode = inhouse_mode.get(guild_id, "regular")
         if mode == "regular":
             team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id], guild_id)
+            if not team_rolls[guild_id]:
+                await channel.send(
+                    "⚠️ I couldn't form teams with the current MMR threshold (≤100). "
+                    "Either set missing MMRs (`!cfg <steam_id>`) or let me try a relaxed threshold…"
+                )
+                # optional automatic fallback (see #2 below)
+                team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(
+                    lobby_players[guild_id], guild_id, max_mmr_diff=400  # try 400 first
+                )
+            if not team_rolls[guild_id]:
+                await channel.send("❌ Still no valid combos. Please set MMRs or disable the strict threshold.")
+                return
             valid_team_combos[guild_id] = valid_combo_count
             team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][0]
             original_teams[guild_id] = (team1, team2, score1, score2, roles1, roles2)
