@@ -1259,6 +1259,7 @@ deps = {
     # checks
     "user_is_admin_or_has_role": user_is_admin_or_has_role,
     "is_admin_or_has_role": is_admin_or_has_role,
+    "is_global_admin": is_global_admin,
     # firestore
     "db": db,
     "firestore": firestore,
