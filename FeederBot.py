@@ -178,8 +178,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
 # Custom check that allows admins or specific roles to use commands
 def is_admin_or_has_role():
     async def predicate(ctx):
-        global_admin_ids = ["187959278949105664"]  # 👈 replace with your real Discord user ID
-        if str(ctx.author.id) in global_admin_ids:
+        if ctx.author.id == GLOBAL_ADMIN_ID:
             return True
         if ctx.author.guild_permissions.administrator:
             return True
@@ -195,8 +194,7 @@ def is_global_admin():
 
 # Utility function version of the role check (returns True/False instead of being a decorator)
 async def user_is_admin_or_has_role(member):
-    global_admin_ids = ["187959278949105664"]  # 👈 Replace with your actual Discord user ID
-    if str(member.id) in global_admin_ids:
+    if member.id == GLOBAL_ADMIN_ID:
         return True
     if member.guild_permissions.administrator:
         return True
