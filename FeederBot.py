@@ -792,7 +792,7 @@ def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
         return (total_score, team1, team2, score1, score2, roles1, roles2)
     with ThreadPoolExecutor() as executor:
         results = list(executor.map(score_combo, combos_to_score))
-    # Sort by total score and select top 5
+    # Sort teams so the most balanced (lowest total_score) come first, then take the best 5
     results.sort(key=lambda x: x[0])
     # Each entry contains: (team1, team2, score1, score2, roles1, roles2)
     top_teams = [(r[1], r[2], r[3], r[4], r[5], r[6]) for r in results[:5]]
