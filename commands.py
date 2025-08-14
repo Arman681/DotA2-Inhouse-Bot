@@ -9,6 +9,7 @@ def attach_commands(bot, deps):
     # Checks / auth
     user_is_admin_or_has_role = deps["user_is_admin_or_has_role"]   # async fn(author) -> bool
     is_admin_or_has_role      = deps["is_admin_or_has_role"]        # decorator factory @is_admin_or_has_role()
+    is_global_admin           = deps["is_global_admin"]
 
     # Firestore + db
     db         = deps["db"]
@@ -896,7 +897,53 @@ def attach_commands(bot, deps):
             await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
             await ctx.send("⚠️ An unexpected error occurred while listing lobby roles.")
-
+    
+    @bot.command(name="pose")
+    @is_global_admin()
+    async def pose(ctx, member: discord.Member, *, raw: str):
+        """Global admin-only: execute another command as if sent by <member>.
+        Usage: !pose @user <other command and args>
+        """
+        if not raw.strip():
+            return await ctx.send("Usage: `!pose @user <other command with args>`")
+        if raw.strip().lower().startswith(("pose ", "!pose")):
+            return await ctx.send("❌ You can’t pose a `pose` command.")
+        # Resolve dynamic prefix
+        prefix = await bot.get_prefix(ctx.message)
+        if isinstance(prefix, (list, tuple)):
+            prefix = prefix[0]
+        cmd_text = raw if raw.lstrip().startswith(prefix) else f"{prefix}{raw.lstrip()}"
+        # Proxy message that spoofs BOTH author and member
+        class _MessageProxy:
+            __slots__ = ("_orig", "author", "member", "content")
+            def __init__(self, orig: discord.Message, new_author: discord.Member, new_content: str):
+                self._orig = orig
+                self.author = new_author
+                self.member = new_author
+                self.content = new_content
+            def __getattr__(self, name):
+                return getattr(self._orig, name)
+        proxy_msg = _MessageProxy(ctx.message, member, cmd_text)
+        new_ctx = await bot.get_context(proxy_msg, cls=commands.Context)
+        if not new_ctx.command:
+            return await ctx.send(f"⚠️ Unknown command in `pose`: `{raw.split()[0]}`")
+        # Let discord.py run checks and error handlers normally
+        try:
+            await bot.invoke(new_ctx)
+        except commands.CheckFailure as e:
+            # Re-dispatch so your existing on_command_error shows the usual message
+            bot.dispatch("command_error", new_ctx, e)
+        except Exception as e:
+            await ctx.send(f"⚠️ Error while posing: `{e}`")
+    @pose.error
+    async def pose_error(ctx, error):
+        """Local error handler for !pose."""
+        if isinstance(error, commands.CheckFailure):
+            await ctx.send("❌ You do not have permission to use `!pose`.")
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send("⚠️ Invalid member specified. Make sure to mention a valid user.")
+        else:
+            await ctx.send(f"⚠️ An unexpected error occurred in `!pose`: `{error}`")
     # ================================ ℹ️ Help Command ================================
 
     @bot.command(name="help")
