@@ -1287,9 +1287,6 @@ async def format_live_match_embed(match, guild):
         value=f"League ID: `{league_id}`\nMatch ID: `{match_id}`",
         inline=False
     )
-    # Helpful footer in draft
-    if not sb:
-        embed.set_footer(text="Draft phase (Steam scoreboard not yet populated)")
     return embed
 
 deps = {
