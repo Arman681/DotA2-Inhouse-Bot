@@ -1218,14 +1218,25 @@ def build_immortal_embed(captains, pool, guild, reroll_count):
     embed.add_field(name="**Password**", value=password, inline=False)
     return embed
 
-# Formats a live match embed showing kills, teams, player roles, and hero names for a given guild
+# Formats a live match embed that works even when the Steam scoreboard hasn't populated yet (draft phase)
 async def format_live_match_embed(match, guild):
-    radiant_kills = sum(player.get("kills", 0) for player in match["scoreboard"]["radiant"]["players"])
-    dire_kills = sum(player.get("kills", 0) for player in match["scoreboard"]["dire"]["players"])
-    match_time = match["scoreboard"]["duration"]
-    minutes = int(match_time) // 60
-    seconds = int(match_time) % 60
-    timer = f"{minutes}:{seconds:02d}"
+    sb = match.get("scoreboard")  # may be None in draft
+    # Timer (mm:ss) and scores are only reliable when scoreboard exists
+    if sb:
+        try:
+            dur_raw = sb.get("duration", 0) or 0
+            dur = int(dur_raw)
+        except (TypeError, ValueError):
+            dur = 0
+        minutes = dur // 60
+        seconds = dur % 60
+        timer = f"{minutes}:{seconds:02d}"
+        radiant_kills = sum(p.get("kills", 0) for p in sb.get("radiant", {}).get("players", []))
+        dire_kills    = sum(p.get("kills", 0) for p in sb.get("dire",    {}).get("players", []))
+    else:
+        timer = "—"
+        radiant_kills = 0
+        dire_kills = 0
     league_id = match.get("league_id", "N/A")
     match_id = match.get("match_id", "N/A")
     # Determine embed color
@@ -1235,36 +1246,50 @@ async def format_live_match_embed(match, guild):
         color = discord.Color.red()
     else:
         color = discord.Color.blurple()
+    # Title/description adapt to draft phase
+    desc = (
+        f"⏱️ **{timer}** — **Radiant {radiant_kills} : {dire_kills} Dire**"
+        if sb else
+        "Draft phase (scoreboard not available yet)"
+    )
     embed = discord.Embed(
         title="🏆 Live League Match",
-        description=f"⏱️ **{timer}** — **Radiant {radiant_kills} : {dire_kills} Dire**",
+        description=desc,
         color=color
     )
-    radiant_players = []
-    dire_players = []
-    for player in match.get("players", []):
-        hero_id = player.get("hero_id", 0)
-        """if hero_id == 0:
-            continue"""
-        team = player.get("team", 0)
-        steam_id = player.get("account_id", 0)
-        name = await get_display_name_or_steam(steam_id, guild)
-        hero_name = hero_id_map.get(str(hero_id), "-" if hero_id == 0 else f"Hero {hero_id}")
-        player_entry = f"{name} ({hero_name})"
+    # Build player lists from `match['players']` which is present during draft
+    radiant_players, dire_players = [], []
+    for p in match.get("players", []) or []:
+        team = p.get("team", 0)  # 0=radiant, 1=dire
+        hero_id = p.get("hero_id", 0) or 0
+        hero_name = hero_id_map.get(str(hero_id), "—" if hero_id == 0 else f"Hero {hero_id}")
+        steam32 = p.get("account_id")
+        if steam32:
+            name = await get_display_name_or_steam(steam32, guild)
+        else:
+            name = "Unknown"
+        entry = f"{name} ({hero_name})"
         if team == 0 and len(radiant_players) < 5:
-            radiant_players.append(player_entry)
+            radiant_players.append(entry)
         elif team == 1 and len(dire_players) < 5:
-            dire_players.append(player_entry)
-    # Catch unexpected counts
-    if len(radiant_players) != 5 or len(dire_players) != 5:
+            dire_players.append(entry)
+    # Only warn about incomplete teams once the scoreboard exists (i.e., post-draft)
+    if sb and (len(radiant_players) != 5 or len(dire_players) != 5):
         print(f"[WARN] Expected 5 players per team. Got Radiant={len(radiant_players)}, Dire={len(dire_players)}")
+    # Pad with placeholders so columns remain stable during draft
+    while len(radiant_players) < 5: radiant_players.append("—")
+    while len(dire_players) < 5:    dire_players.append("—")
     embed.add_field(name="**Radiant**", value="\n".join(radiant_players), inline=True)
-    embed.add_field(name="**Dire**", value="\n".join(dire_players), inline=True)
+    embed.add_field(name="**Dire**",    value="\n".join(dire_players),    inline=True)
+    # Info block is always useful
     embed.add_field(
         name="Info",
         value=f"League ID: `{league_id}`\nMatch ID: `{match_id}`",
         inline=False
     )
+    # Helpful footer in draft
+    if not sb:
+        embed.set_footer(text="Draft phase (Steam scoreboard not yet populated)")
     return embed
 
 deps = {
