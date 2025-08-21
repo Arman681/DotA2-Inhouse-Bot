@@ -457,10 +457,24 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
                     return None
                 result = await response.json()
                 matches = result.get("result", {}).get("games", [])
-                valid_matches = [
-                    m for m in matches 
-                    if m.get("scoreboard") and (not random_mode or m["scoreboard"].get("duration", 0) >= 1800)
-                ]
+                valid_matches = []
+                for m in matches:
+                    has_scoreboard = bool(m.get("scoreboard"))
+                    if random_mode:
+                        # In random mode: require a scoreboard and duration >= 1800s
+                        if not has_scoreboard:
+                            continue
+                        dur = m["scoreboard"].get("duration", 0)
+                        if dur < 1800:
+                            continue
+                        valid_matches.append(m)
+                    else:
+                        # Normal mode: allow draft/lobby matches (no scoreboard yet)
+                        if not has_scoreboard:
+                            valid_matches.append(m)
+                            continue
+                        # Scoreboard present -> accept (no duration gate in normal mode)
+                        valid_matches.append(m)
                 if not valid_matches:
                     if guild_id in active_match_ids:
                         print(f"[INFO] Clearing expired match for guild {guild_id}")
