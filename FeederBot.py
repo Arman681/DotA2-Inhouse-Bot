@@ -57,6 +57,10 @@ random_polling_flags = {}        # {guild_id: True/False}
 livematch_cooldowns = {}   # {guild_id: last_called_timestamp}
 livematch_timers = {}      # {guild_id: asyncio.Task}
 valid_team_combos = {}     # {guild_id: int} for how many valid team combinations were found
+# Debug log de-dupers to avoid noisy repeats during polling
+_last_fetch_stats = {}         # {guild_id: (checked_total, passed_total)}
+_last_active_match_id = {}     # {guild_id: last_match_id}
+_last_selected_match_id = {}   # {guild_id: selected_match_id}
 
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
@@ -135,6 +139,9 @@ async def poll_live_match(match_id, guild, random_mode=False):
         random_polling_flags.pop(guild.id, None)
         match_tracking_start_times.pop(guild.id, None)
         live_embed_messages.pop(guild.id, None)
+        _last_fetch_stats.pop(guild.id, None)
+        _last_active_match_id.pop(guild.id, None)
+        _last_selected_match_id.pop(guild.id, None)
         channel = bot.get_channel(channel_id)
         if channel:
             await channel.send("⚠️ Match ended but no result was found. Polling has been stopped.")
@@ -169,6 +176,9 @@ async def poll_live_match(match_id, guild, random_mode=False):
     random_polling_flags.pop(guild.id, None)
     match_tracking_start_times.pop(guild.id, None)
     live_embed_messages.pop(guild.id, None)
+    _last_fetch_stats.pop(guild.id, None)
+    _last_active_match_id.pop(guild.id, None)
+    _last_selected_match_id.pop(guild.id, None)
     # Final notice
     if channel:
         await channel.send("Polling for this server has ended.")
@@ -479,9 +489,15 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
                     if guild_id in active_match_ids:
                         print(f"[INFO] Clearing expired match for guild {guild_id}")
                         del active_match_ids[guild_id]
+                        _last_fetch_stats.pop(guild_id, None)
+                        _last_active_match_id.pop(guild_id, None)
+                        _last_selected_match_id.pop(guild_id, None)
                     return None
-                print(f"[DEBUG] Checked {len(matches)} total live matches from Steam API.")
-                print(f"[DEBUG] {len(valid_matches)} passed scoreboard and duration filters.")
+                stats = (len(matches), len(valid_matches))
+                if _last_fetch_stats.get(guild_id) != stats:
+                    print(f"[DEBUG] Checked {stats[0]} total live matches from Steam API.")
+                    print(f"[DEBUG] {stats[1]} passed scoreboard and duration filters.")
+                    _last_fetch_stats[guild_id] = stats
                 # ✅ Step 3: Filter by league ID
                 bound_matches = valid_matches if random_mode else [
                     m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
@@ -491,20 +507,30 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
                     return None
                 # ✅ Step 4: Reuse previous match ID if still valid
                 last_match_id = active_match_ids.get(guild_id)
-                if last_match_id:
-                    print(f"[DEBUG] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
-                else:
-                    print(f"[DEBUG] Step 4 skipped: No active match found for guild {guild_id}")
+                prev_active_id = _last_active_match_id.get(guild_id)
+                if prev_active_id != last_match_id:
+                    if last_match_id:
+                        print(f"[DEBUG] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
+                    else:
+                        print(f"[DEBUG] Step 4 skipped: No active match found for guild {guild_id}")
+                    _last_active_match_id[guild_id] = last_match_id
                 selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
-                if selected_match:
-                    print(f"[DEBUG] Reusing existing match_id {last_match_id} for guild {guild_id}")
-                elif random_mode and last_match_id:
-                    print(f"[INFO] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
-                    return None
-                else:
+                if selected_match is None:
+                    if random_mode and last_match_id:
+                        print(f"[INFO] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
+                        return None
                     selected_match = random.choice(bound_matches)
                     active_match_ids[guild_id] = selected_match["match_id"]
-                    print(f"[DEBUG] Picked new match_id {selected_match['match_id']} for guild {guild_id}")
+                # ---- Part C: only log when the selected match id changes ----
+                sel_id = selected_match["match_id"]
+                prev_sel_id = _last_selected_match_id.get(guild_id)
+                if prev_sel_id != sel_id:
+                    if last_match_id and sel_id == last_match_id:
+                        print(f"[DEBUG] Reusing existing match_id {last_match_id} for guild {guild_id}")
+                    else:
+                        print(f"[DEBUG] Picked new match_id {sel_id} for guild {guild_id}")
+                    _last_selected_match_id[guild_id] = sel_id
+                # -------------------------------------------------------------
                 selected_match["guild_id"] = guild_id
                 return selected_match
     except Exception as e:
