@@ -97,6 +97,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
     # 💡 Prevent using any previous embed
     live_embed_messages.pop(guild.id, None)
     channel_id = live_channel_ids.get(guild.id)
+    channel = bot.get_channel(channel_id) if channel_id else None
     # Poll until Steam no longer reports a live match
     while True:
         await asyncio.sleep(15)
@@ -107,7 +108,6 @@ async def poll_live_match(match_id, guild, random_mode=False):
                 break  # Exit polling loop and move to STRATZ result retry
             # Update embed every 15 seconds
             embed = await format_live_match_embed(match, guild)
-            channel = bot.get_channel(channel_id) if channel_id else None
             if channel:
                 prev_msg = live_embed_messages.get(guild.id)
                 if prev_msg:
@@ -126,7 +126,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
     retry_delay = 30  # seconds
     result = None
     for attempt in range(max_retries):
-        result = fetch_match_result(match_id)
+        result = await asyncio.to_thread(fetch_match_result, match_id)
         if result:
             break
         print(f"[RETRY] No match result yet for match {match_id}. Retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
@@ -142,7 +142,6 @@ async def poll_live_match(match_id, guild, random_mode=False):
         _last_fetch_stats.pop(guild.id, None)
         _last_active_match_id.pop(guild.id, None)
         _last_selected_match_id.pop(guild.id, None)
-        channel = bot.get_channel(channel_id)
         if channel:
             await channel.send("⚠️ Match ended but no result was found. Polling has been stopped.")
         return
