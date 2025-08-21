@@ -1230,12 +1230,12 @@ async def format_live_match_embed(match, guild):
     dire_players = []
     for player in match.get("players", []):
         hero_id = player.get("hero_id", 0)
-        if hero_id == 0:
-            continue
+        """if hero_id == 0:
+            continue"""
         team = player.get("team", 0)
         steam_id = player.get("account_id", 0)
         name = await get_display_name_or_steam(steam_id, guild)
-        hero_name = hero_id_map.get(str(hero_id), f"Hero {hero_id}")
+        hero_name = hero_id_map.get(str(hero_id), "-" if hero_id == 0 else f"Hero {hero_id}")
         player_entry = f"{name} ({hero_name})"
         if team == 0 and len(radiant_players) < 5:
             radiant_players.append(player_entry)
