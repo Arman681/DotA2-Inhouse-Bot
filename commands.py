@@ -227,11 +227,7 @@ def attach_commands(bot, deps):
         await ctx.send("🏆 **Top 10 Inhouse Players**\n" + "\n".join(lines))
 
     @bot.command(name="bet")
-    async def bet(ctx, amount: int, team: str):
-        team = team.lower()
-        if team not in ["radiant", "dire"]:
-            await ctx.send("❌ Invalid team. Choose `radiant` or `dire`.")
-            return
+    async def bet(ctx, amount: int, team=None):
         if amount <= 0:
             await ctx.send("❌ Bet amount must be greater than 0.")
             return
@@ -255,6 +251,33 @@ def attach_commands(bot, deps):
             if duration >= 120:
                 await ctx.send("⏳ Bets are closed. The match has passed the 2:00 mark.")
                 return
+        # --- Auto-detect bettor's team if they're playing ---
+        player_team = None  # 0 = Radiant, 1 = Dire
+        for player in match.get("players", []):
+            steam_id = player.get("account_id")
+            discord_id = get_discord_id_from_steam_id(str(steam_id))
+            if discord_id == str(ctx.author.id):
+                player_team = player.get("team")  # 0/1
+                break
+        # If team not provided, fill it from player's team (if playing), else prompt
+        if team is None:
+            if player_team is not None:
+                team = "radiant" if player_team == 0 else "dire"
+                await ctx.send(
+                    f"🎯 Detected you’re playing on **{team.capitalize()}**. "
+                    f"Placing your bet on **{team.capitalize()}** by default."
+                )
+            else:
+                await ctx.send(
+                    "ℹ️ You’re not in the current match. Please specify a team:\n"
+                    "`!bet <amount> <radiant|dire>`"
+                )
+                return
+        # Normalize & validate team now that it’s known
+        team = str(team).lower().strip()
+        if team not in ["radiant", "dire"]:
+            await ctx.send("❌ Invalid team. Choose `radiant` or `dire`.")
+            return
         # block betting opposite team if user is playing
         player_team = None
         for player in match.get("players", []):
@@ -309,9 +332,9 @@ def attach_commands(bot, deps):
     @bet.error
     async def bet_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("❗ Usage: `!bet <amount> <radiant|dire>`")
+            await ctx.send("❗ Usage: `!bet <amount> [radiant|dire]`")
         elif isinstance(error, commands.BadArgument):
-            await ctx.send("❗ Invalid argument. Usage: `!bet <amount> <radiant|dire>` — make sure `<amount>` is a number.")
+            await ctx.send("❗ Invalid argument. Usage: `!bet <amount> [radiant|dire]` — make sure `<amount>` is a number.")
         else:
             await ctx.send("⚠️ An unexpected error occurred while placing your bet.")
 
