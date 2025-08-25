@@ -61,8 +61,10 @@ def attach_commands(bot, deps):
 
     # Guild settings
     save_guild_prefix            = deps["save_guild_prefix"]
+    load_guild_prefix            = deps["load_guild_prefix"]
     save_league_guild_mapping    = deps["save_league_guild_mapping"]
     live_channel_ids             = deps["live_channel_ids"]
+    prefix_cache                 = deps["prefix_cache"]
 
     # Misc helpers
     get_discord_id_from_steam_id = deps["get_discord_id_from_steam_id"]
@@ -641,8 +643,9 @@ def attach_commands(bot, deps):
     @bot.command(name="changeprefix")
     @is_admin_or_has_role()
     async def change_prefix(ctx, new_prefix: str):
+        old_prefix = load_guild_prefix(ctx.guild.id)
         save_guild_prefix(ctx.guild.id, new_prefix, server_name=ctx.guild.name, set_by=str(ctx.author))
-        await ctx.send(f"✅ Command prefix changed to `{new_prefix}` for this server.")
+        await ctx.send(f"✅ Command prefix changed from `{old_prefix}` to `{new_prefix}` for this server.")
     @change_prefix.error
     async def change_prefix_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
