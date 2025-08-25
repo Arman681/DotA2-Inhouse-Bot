@@ -165,7 +165,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
             print(f"[ERROR] Failed to award coins to user {discord_id}: {e}")
     # Send match summary
     try:
-        await channel.send(f"✅ Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.\n All participants received **50 coins** for playing.")
+        await channel.send(f"Match `{match_id}` has ended. Bets have been resolved and Inhouse-MMR updated.\n All participants received **50 coins** for playing.")
         print(f"[DEBUG] Match summary sent to channel ID: {channel.id}")
     except Exception as e:
         print(f"[ERROR] Failed to send match summary: {e}")
@@ -178,9 +178,6 @@ async def poll_live_match(match_id, guild, random_mode=False):
     _last_fetch_stats.pop(guild.id, None)
     _last_active_match_id.pop(guild.id, None)
     _last_selected_match_id.pop(guild.id, None)
-    # Final notice
-    if channel:
-        await channel.send("Polling for this server has ended.")
 
 # =============================== 🔐 Permission Checks ===============================
 
