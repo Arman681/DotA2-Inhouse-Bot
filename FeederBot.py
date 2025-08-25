@@ -58,6 +58,7 @@ livematch_cooldowns = {}   # {guild_id: last_called_timestamp}
 livematch_timers = {}      # {guild_id: asyncio.Task}
 valid_team_combos = {}     # {guild_id: int} for how many valid team combinations were found
 prefix_cache = {}          # {guild_id: prefix}
+display_name = {}          # {steam_id: display_name}
 # Debug log de-dupers to avoid noisy repeats during polling
 _last_fetch_stats = {}         # {guild_id: (checked_total, passed_total)}
 _last_active_match_id = {}     # {guild_id: last_match_id}
@@ -610,7 +611,6 @@ def get_discord_id_from_steam_id(steam_id: str) -> Optional[str]:
 # Converts a list of Steam IDs into their corresponding Discord user IDs
 def map_steam_ids_to_discord_ids(steam_ids):
         discord_ids = []
-
         for steam_id in steam_ids:
             discord_id = get_discord_id_from_steam_id(steam_id)
             if discord_id:
@@ -634,18 +634,24 @@ async def get_steam_display_name(account_id_32):
                 data = await response.json()
                 players = data.get("response", {}).get("players", [])
                 if players:
-                    return players[0].get("personaname", f"SteamID {account_id_32}")
+                    steam_display_name = players[0].get("personaname", f"SteamID {account_id_32}")
+                    display_name[account_id_32] = steam_display_name
+                    return steam_display_name
     except Exception as e:
         print(f"[ERROR] get_steam_display_name: {e}")
     return f"SteamID {account_id_32}"
 
 # Gets a player's display name from Discord if mapped, otherwise fetches from Steam
-async def get_display_name_or_steam(account_id_32, guild):
+async def get_display_name(account_id_32, guild):
+    if account_id_32 in display_name:
+        return display_name[account_id_32]
     discord_id = get_discord_id_from_steam_id(account_id_32)
     if discord_id and guild:
         member = guild.get_member(int(discord_id))
         if member:
-            return member.display_name
+            discord_display_name = member.display_name
+            display_name[account_id_32] = discord_display_name
+            return discord_display_name
     return await get_steam_display_name(account_id_32)
 
 # Periodic background task that updates all players' MMR values from STRATZ in Firebase, and refreshes lobby embeds across all servers.
@@ -1290,7 +1296,7 @@ async def format_live_match_embed(match, guild):
         hero_name = hero_id_map.get(str(hero_id), "—" if hero_id == 0 else f"Hero {hero_id}")
         steam32 = p.get("account_id")
         if steam32:
-            name = await get_display_name_or_steam(steam32, guild)
+            name = await get_display_name(steam32, guild)
         else:
             name = "Unknown"
         entry = f"{name} ({hero_name})"
