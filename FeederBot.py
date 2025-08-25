@@ -88,6 +88,15 @@ async def resolve_command_prefix(bot, message):
 
 bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_command=None)
 
+http_session: aiohttp.ClientSession | None = None
+def get_http_session() -> aiohttp.ClientSession:
+    # Simple accessor that always returns a live session
+    global http_session
+    if http_session is None or http_session.closed:
+        # NOTE: we only hit this during very early startup or after a reconnect
+        http_session = aiohttp.ClientSession()
+    return http_session
+
 # ========================================================================================================================
 # ============================================ ⚙️ Core Functions & Utilities ============================================
 # ========================================================================================================================
@@ -391,56 +400,55 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
         }}
         """
     }
-    async with aiohttp.ClientSession() as session:
-        # ---------- 1) STRATZ ----------
-        for attempt in range(max_retries):
-            try:
-                async with session.post(url, json=query, headers=headers, timeout=8) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        player_data = data.get("data", {}).get("player", {})
-                        if player_data and player_data.get("steamAccount"):
-                            season_rank = player_data["steamAccount"].get("seasonRank")
-                            if season_rank:
-                                mmr = season_rank_to_mmr.get(season_rank)
-                                return mmr, season_rank, "STRATZ"
-                            else:
-                                # <-- 200 but no rank: log why we're falling back
-                                print(f"[INFO] STRATZ 200 but no seasonRank for steam_id={steam_id}; falling back to OpenDota")
-                                break  # No seasonRank -> skip retries and go fallback
-                    else:
-                        # Log non-200 response
-                        txt = (await response.text()).strip()
-                        print(
-                            f"[WARN] STRATZ {response.status} "
-                            f"(attempt {attempt+1}/{max_retries}) "
-                            f"for steam_id={steam_id}: {txt[:180]}"
-                        )
-                        if response.status in (403, 429, 500, 502, 503, 504):
-                            continue  # Retry on transient/blocked statuses
-                        break  # Non-retryable error, break out
-            except Exception as e:
-                print(
-                    f"[ERROR] STRATZ request failed "
-                    f"(attempt {attempt+1}/{max_retries}) for steam_id={steam_id}: {e}"
-                )
-        # ---------- 2) OpenDota fallback ----------
+    # ---------- 1) STRATZ ----------
+    for attempt in range(max_retries):
         try:
-            od_url = f"https://api.opendota.com/api/players/{steam_id}"
-            async with session.get(od_url, timeout=8) as r:
-                if r.status != 200:
-                    txt = (await r.text()).strip()
-                    print(f"[WARN] OpenDota {r.status} for steam_id={steam_id}: {txt[:180]}")
-                    return None, None, None
-                j = await r.json()
-                rank_tier = j.get("rank_tier")  # e.g. 55 => Legend 5
-                if not rank_tier:
-                    return None, None, None
-                mmr = season_rank_to_mmr.get(rank_tier)
-                return mmr, rank_tier, "OpenDota"
+            async with get_http_session().post(url, json=query, headers=headers, timeout=8) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    player_data = data.get("data", {}).get("player", {})
+                    if player_data and player_data.get("steamAccount"):
+                        season_rank = player_data["steamAccount"].get("seasonRank")
+                        if season_rank:
+                            mmr = season_rank_to_mmr.get(season_rank)
+                            return mmr, season_rank, "STRATZ"
+                        else:
+                            # <-- 200 but no rank: log why we're falling back
+                            print(f"[INFO] STRATZ 200 but no seasonRank for steam_id={steam_id}; falling back to OpenDota")
+                            break  # No seasonRank -> skip retries and go fallback
+                else:
+                    # Log non-200 response
+                    txt = (await response.text()).strip()
+                    print(
+                        f"[WARN] STRATZ {response.status} "
+                        f"(attempt {attempt+1}/{max_retries}) "
+                        f"for steam_id={steam_id}: {txt[:180]}"
+                    )
+                    if response.status in (403, 429, 500, 502, 503, 504):
+                        continue  # Retry on transient/blocked statuses
+                    break  # Non-retryable error, break out
         except Exception as e:
-            print(f"[ERROR] OpenDota fallback failed for steam_id={steam_id}: {e}")
-        return None, None, None
+            print(
+                f"[ERROR] STRATZ request failed "
+                f"(attempt {attempt+1}/{max_retries}) for steam_id={steam_id}: {e}"
+            )
+    # ---------- 2) OpenDota fallback ----------
+    try:
+        od_url = f"https://api.opendota.com/api/players/{steam_id}"
+        async with get_http_session().get(od_url, timeout=8) as r:
+            if r.status != 200:
+                txt = (await r.text()).strip()
+                print(f"[WARN] OpenDota {r.status} for steam_id={steam_id}: {txt[:180]}")
+                return None, None, None
+            j = await r.json()
+            rank_tier = j.get("rank_tier")  # e.g. 55 => Legend 5
+            if not rank_tier:
+                return None, None, None
+            mmr = season_rank_to_mmr.get(rank_tier)
+            return mmr, rank_tier, "OpenDota"
+    except Exception as e:
+        print(f"[ERROR] OpenDota fallback failed for steam_id={steam_id}: {e}")
+    return None, None, None
 
 # Fetches the current live Dota 2 match for a guild using Steam API, filtered by bound league ID or in random mode
 async def fetch_live_match_for_guild(guild_id, random_mode=False):
@@ -460,79 +468,78 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
     url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
     params = {"key": STEAM_API_KEY}
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=5) as response:
-                if response.status != 200:
-                    print(f"[ERROR] Steam API returned {response.status}")
-                    return None
-                result = await response.json()
-                matches = result.get("result", {}).get("games", [])
-                valid_matches = []
-                for m in matches:
-                    has_scoreboard = bool(m.get("scoreboard"))
-                    if random_mode:
-                        # In random mode: require a scoreboard and duration >= 1800s
-                        if not has_scoreboard:
-                            continue
-                        dur = m["scoreboard"].get("duration", 0)
-                        if dur < 1800:
-                            continue
+        async with get_http_session().get(url, params=params, timeout=5) as response:
+            if response.status != 200:
+                print(f"[ERROR] Steam API returned {response.status}")
+                return None
+            result = await response.json()
+            matches = result.get("result", {}).get("games", [])
+            valid_matches = []
+            for m in matches:
+                has_scoreboard = bool(m.get("scoreboard"))
+                if random_mode:
+                    # In random mode: require a scoreboard and duration >= 1800s
+                    if not has_scoreboard:
+                        continue
+                    dur = m["scoreboard"].get("duration", 0)
+                    if dur < 1800:
+                        continue
+                    valid_matches.append(m)
+                else:
+                    # Normal mode: allow draft/lobby matches (no scoreboard yet)
+                    if not has_scoreboard:
                         valid_matches.append(m)
-                    else:
-                        # Normal mode: allow draft/lobby matches (no scoreboard yet)
-                        if not has_scoreboard:
-                            valid_matches.append(m)
-                            continue
-                        # Scoreboard present -> accept (no duration gate in normal mode)
-                        valid_matches.append(m)
-                if not valid_matches:
-                    if guild_id in active_match_ids:
-                        print(f"[INFO] Clearing expired match for guild {guild_id}")
-                        del active_match_ids[guild_id]
-                        _last_fetch_stats.pop(guild_id, None)
-                        _last_active_match_id.pop(guild_id, None)
-                        _last_selected_match_id.pop(guild_id, None)
+                        continue
+                    # Scoreboard present -> accept (no duration gate in normal mode)
+                    valid_matches.append(m)
+            if not valid_matches:
+                if guild_id in active_match_ids:
+                    print(f"[INFO] Clearing expired match for guild {guild_id}")
+                    del active_match_ids[guild_id]
+                    _last_fetch_stats.pop(guild_id, None)
+                    _last_active_match_id.pop(guild_id, None)
+                    _last_selected_match_id.pop(guild_id, None)
+                return None
+            stats = (len(matches), len(valid_matches))
+            if _last_fetch_stats.get(guild_id) != stats:
+                print(f"[DEBUG] Checked {stats[0]} total live matches from Steam API.")
+                print(f"[DEBUG] {stats[1]} passed scoreboard and duration filters.")
+                _last_fetch_stats[guild_id] = stats
+            # ✅ Step 3: Filter by league ID
+            bound_matches = valid_matches if random_mode else [
+                m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
+            ]
+            if not bound_matches:
+                print(f"[INFO] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
+                return None
+            # ✅ Step 4: Reuse previous match ID if still valid
+            last_match_id = active_match_ids.get(guild_id)
+            prev_active_id = _last_active_match_id.get(guild_id)
+            if prev_active_id != last_match_id:
+                if last_match_id:
+                    print(f"[DEBUG] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
+                else:
+                    print(f"[DEBUG] Step 4 skipped: No active match found for guild {guild_id}")
+                _last_active_match_id[guild_id] = last_match_id
+            selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
+            if selected_match is None:
+                if random_mode and last_match_id:
+                    print(f"[INFO] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
                     return None
-                stats = (len(matches), len(valid_matches))
-                if _last_fetch_stats.get(guild_id) != stats:
-                    print(f"[DEBUG] Checked {stats[0]} total live matches from Steam API.")
-                    print(f"[DEBUG] {stats[1]} passed scoreboard and duration filters.")
-                    _last_fetch_stats[guild_id] = stats
-                # ✅ Step 3: Filter by league ID
-                bound_matches = valid_matches if random_mode else [
-                    m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
-                ]
-                if not bound_matches:
-                    print(f"[INFO] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
-                    return None
-                # ✅ Step 4: Reuse previous match ID if still valid
-                last_match_id = active_match_ids.get(guild_id)
-                prev_active_id = _last_active_match_id.get(guild_id)
-                if prev_active_id != last_match_id:
-                    if last_match_id:
-                        print(f"[DEBUG] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
-                    else:
-                        print(f"[DEBUG] Step 4 skipped: No active match found for guild {guild_id}")
-                    _last_active_match_id[guild_id] = last_match_id
-                selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
-                if selected_match is None:
-                    if random_mode and last_match_id:
-                        print(f"[INFO] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
-                        return None
-                    selected_match = random.choice(bound_matches)
-                    active_match_ids[guild_id] = selected_match["match_id"]
-                # ---- Part C: only log when the selected match id changes ----
-                sel_id = selected_match["match_id"]
-                prev_sel_id = _last_selected_match_id.get(guild_id)
-                if prev_sel_id != sel_id:
-                    if last_match_id and sel_id == last_match_id:
-                        print(f"[DEBUG] Reusing existing match_id {last_match_id} for guild {guild_id}")
-                    else:
-                        print(f"[DEBUG] Picked new match_id {sel_id} for guild {guild_id}")
-                    _last_selected_match_id[guild_id] = sel_id
-                # -------------------------------------------------------------
-                selected_match["guild_id"] = guild_id
-                return selected_match
+                selected_match = random.choice(bound_matches)
+                active_match_ids[guild_id] = selected_match["match_id"]
+            # ---- Part C: only log when the selected match id changes ----
+            sel_id = selected_match["match_id"]
+            prev_sel_id = _last_selected_match_id.get(guild_id)
+            if prev_sel_id != sel_id:
+                if last_match_id and sel_id == last_match_id:
+                    print(f"[DEBUG] Reusing existing match_id {last_match_id} for guild {guild_id}")
+                else:
+                    print(f"[DEBUG] Picked new match_id {sel_id} for guild {guild_id}")
+                _last_selected_match_id[guild_id] = sel_id
+            # -------------------------------------------------------------
+            selected_match["guild_id"] = guild_id
+            return selected_match
     except Exception as e:
         print(f"[ERROR] fetch_live_match_for_guild() Steam API error: {e}")
         return None
@@ -559,18 +566,15 @@ async def fetch_hero_id_to_name_map():
         "key": STEAM_API_KEY
     }
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                response.raise_for_status()
-                data = await response.json()
-                heroes = data.get("result", {}).get("heroes", [])
-                hero_map = {str(hero["id"]): hero["localized_name"] for hero in heroes}
-
-                with open(HERO_CACHE_FILE, "w") as f:
-                    json.dump(hero_map, f)
-                print("[INFO] 💾 Saved hero ID map to cache.")
-
-                return hero_map
+        async with get_http_session().get(url, params=params) as response:
+            response.raise_for_status()
+            data = await response.json()
+            heroes = data.get("result", {}).get("heroes", [])
+            hero_map = {str(hero["id"]): hero["localized_name"] for hero in heroes}
+            with open(HERO_CACHE_FILE, "w") as f:
+                json.dump(hero_map, f)
+            print("[INFO] 💾 Saved hero ID map to cache.")
+            return hero_map
     except Exception as e:
         print(f"[ERROR] Failed to fetch hero data from Steam API: {e}")
         return {}
@@ -629,14 +633,13 @@ async def get_steam_display_name(account_id_32):
             "key": STEAM_API_KEY,
             "steamids": steam_id_64
         }
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                data = await response.json()
-                players = data.get("response", {}).get("players", [])
-                if players:
-                    steam_display_name = players[0].get("personaname", f"SteamID {account_id_32}")
-                    display_name[account_id_32] = steam_display_name
-                    return steam_display_name
+        async with get_http_session().get(url, params=params, timeout=5) as response:
+            data = await response.json()
+            players = data.get("response", {}).get("players", [])
+            if players:
+                steam_display_name = players[0].get("personaname", f"SteamID {account_id_32}")
+                display_name[account_id_32] = steam_display_name
+                return steam_display_name
     except Exception as e:
         print(f"[ERROR] get_steam_display_name: {e}")
     return f"SteamID {account_id_32}"
@@ -910,6 +913,8 @@ async def on_ready():
     if not refresh_all_mmrs.is_running():
         refresh_all_mmrs.start()
         print("[INIT] Started refresh_all_mmrs task.")
+    _ = get_http_session()  # ensure session exists
+    print("[HTTP] Shared aiohttp session is ready")
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
