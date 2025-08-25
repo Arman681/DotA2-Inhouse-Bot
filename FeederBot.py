@@ -57,6 +57,7 @@ random_polling_flags = {}        # {guild_id: True/False}
 livematch_cooldowns = {}   # {guild_id: last_called_timestamp}
 livematch_timers = {}      # {guild_id: asyncio.Task}
 valid_team_combos = {}     # {guild_id: int} for how many valid team combinations were found
+prefix_cache = {}          # {guild_id: prefix}
 # Debug log de-dupers to avoid noisy repeats during polling
 _last_fetch_stats = {}         # {guild_id: (checked_total, passed_total)}
 _last_active_match_id = {}     # {guild_id: last_match_id}
@@ -81,8 +82,7 @@ if os.path.exists(HERO_CACHE_FILE):
 # Resolves the correct command prefix for the bot, based on the message's guild.
 async def resolve_command_prefix(bot, message):
     if message.guild:
-        prefix = load_guild_prefix(str(message.guild.id))
-        return prefix
+        return load_guild_prefix(message.guild.id)
     return "!"  # fallback default for DMs
 
 bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_command=None)
@@ -229,9 +229,12 @@ def save_guild_prefix(guild_id, prefix, server_name=None, set_by=None):
     }
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"prefix": data}, merge=True)
+    prefix_cache[guild_id] = prefix
 
 # Loads the custom command prefix for a guild from Firestore; defaults to "!" if not set
 def load_guild_prefix(guild_id):
+    if guild_id in prefix_cache:
+        return prefix_cache[guild_id]
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
         data = doc.to_dict()
@@ -1359,8 +1362,10 @@ deps = {
     "save_inhouse_mode_for_guild": save_inhouse_mode_for_guild,
     # guild settings
     "save_guild_prefix": save_guild_prefix,
+    "load_guild_prefix": load_guild_prefix,
     "save_league_guild_mapping": save_league_guild_mapping,
     "live_channel_ids": live_channel_ids,
+    "prefix_cache": prefix_cache,
     # misc
     "get_discord_id_from_steam_id": get_discord_id_from_steam_id,
     "adjust_mmr": adjust_mmr,
