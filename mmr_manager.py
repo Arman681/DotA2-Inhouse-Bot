@@ -53,32 +53,34 @@ def set_inhouse_mmr(guild_id, user_id, nickname, mmr):
 
 async def adjust_mmr(bot, winner_ids, loser_ids, guild_id, gain=50, loss=50):
     guild = bot.get_guild(int(guild_id))
+    batch = db.batch()
+    async def stage(uid, delta: int):
+        current = await get_inhouse_mmr(bot, guild_id, uid)
+        nickname = "Unknown"
+        member = guild.get_member(int(uid))
+        if member:
+            nickname = member.display_name
+        else:
+            try:
+                if guild:
+                    member = await guild.fetch_member(int(uid))
+                    nickname = member.display_name
+            except discord.NotFound:
+                print(f"[WARN] No Discord user found for Steam ID {uid} in guild {guild_id}")
+            except Exception as e:
+                print(f"[ERROR] Unexpected error fetching member {uid}: {e}")
+        new_mmr = current + delta
+        ref = db.collection("inhouse_mmr").document(str(guild_id)).collection("users").document(str(uid))
+        batch.set(ref, {"nickname": nickname, "mmr": new_mmr}, merge=True)
+        if delta > 0:
+            print(f"[MMR+] ✅ {nickname} ({uid}) gained {gain} MMR (now {new_mmr})")
+        elif delta < 0:
+            print(f"[MMR–] ❌ {nickname} ({uid}) lost {loss} MMR (now {new_mmr})")
     for uid in winner_ids:
-        current = await get_inhouse_mmr(bot, guild_id, uid)
-        nickname = "Unknown"
-        try:
-            member = await guild.fetch_member(int(uid))
-            nickname = member.display_name
-        except discord.NotFound:
-            print(f"[WARN] No Discord user found for Steam ID {uid} in guild {guild_id}")
-        except Exception as e:
-            print(f"[ERROR] Unexpected error fetching member {uid}: {e}")
-        new_mmr = current + gain
-        set_inhouse_mmr(guild_id, uid, nickname, new_mmr)
-        print(f"[MMR+] ✅ {nickname} ({uid}) gained {gain} MMR (now {new_mmr})")
+        await stage(uid, gain)
     for uid in loser_ids:
-        current = await get_inhouse_mmr(bot, guild_id, uid)
-        nickname = "Unknown"
-        try:
-            member = await guild.fetch_member(int(uid))
-            nickname = member.display_name
-        except discord.NotFound:
-            print(f"[WARN] No Discord user found for Steam ID {uid} in guild {guild_id}")
-        except Exception as e:
-            print(f"[ERROR] Unexpected error fetching member {uid}: {e}")
-        new_mmr = current - loss
-        set_inhouse_mmr(guild_id, uid, nickname, new_mmr)
-        print(f"[MMR–] ❌ {nickname} ({uid}) lost {loss} MMR (now {new_mmr})")
+        await stage(uid, -loss)
+    batch.commit()
 
 def get_top_players(guild_id, limit=10):
     docs = db.collection("inhouse_mmr").document(str(guild_id)) \
