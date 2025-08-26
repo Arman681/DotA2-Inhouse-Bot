@@ -167,12 +167,15 @@ async def poll_live_match(match_id, guild, random_mode=False):
             print(f"[ERROR] Failed to adjust MMR: {e}")
     # Award 50 coins to all players who played in the match
     all_player_ids = winner_ids + loser_ids
+    batch = db.batch()
     for discord_id in all_player_ids:
-        try:
-            # Use update_balance from betting_manager
-            update_balance(guild.id, discord_id, 50)
-        except Exception as e:
-            print(f"[ERROR] Failed to award coins to user {discord_id}: {e}")
+        wallet_ref = db.collection("wallets").document(str(guild.id)).collection("users").document(str(discord_id))
+        batch.set(wallet_ref, {"balance": firestore.Increment(50)}, merge=True)
+    try:
+        batch.commit()
+        print(f"[DEBUG] Awarded 50 coins to {len(all_player_ids)} participants in match {match_id}")
+    except Exception as e:
+        print(f"[ERROR] Failed to commit batch coins: {e}")
     # Send match summary
     try:
         await channel.send(f"Match `{match_id}` has ended with a {winning_team} victory. Bets have been resolved and Inhouse-MMR updated.\n All participants received **50 coins** for playing.")
