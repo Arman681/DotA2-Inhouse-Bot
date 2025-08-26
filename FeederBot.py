@@ -95,6 +95,11 @@ def get_http_session() -> aiohttp.ClientSession:
         http_session = aiohttp.ClientSession()
     return http_session
 
+async def close_http_session():
+    global http_session
+    if http_session and not http_session.closed:
+        await http_session.close()
+
 # ========================================================================================================================
 # ============================================ ⚙️ Core Functions & Utilities ============================================
 # ========================================================================================================================
@@ -1383,4 +1388,10 @@ deps = {
     "save_preferred_roles_setting": save_preferred_roles_setting,
 }
 attach_commands(bot, deps)
-bot.run(TOKEN)
+
+if __name__ == "__main__":
+    try:
+        bot.run(TOKEN)  # blocks until SIGTERM / shutdown
+    finally:
+        # event loop used by bot.run() is gone; create a tiny loop to close cleanly
+        asyncio.run(close_http_session())
