@@ -54,8 +54,6 @@ live_embed_messages = {}   # {guild_id: message}
 polling_tasks = {}         # {guild_id: asyncio.Task} for per-server polling
 match_tracking_start_times = {}  # {guild_id: unix_timestamp}
 random_polling_flags = {}        # {guild_id: True/False}
-livematch_cooldowns = {}   # {guild_id: last_called_timestamp}
-livematch_timers = {}      # {guild_id: asyncio.Task}
 valid_team_combos = {}     # {guild_id: int} for how many valid team combinations were found
 prefix_cache = {}          # {guild_id: prefix}
 display_name = {}          # {steam_id: display_name}
@@ -1361,8 +1359,6 @@ deps = {
     "random_polling_flags": random_polling_flags,
     "match_tracking_start_times": match_tracking_start_times,
     "live_embed_messages": live_embed_messages,
-    "livematch_cooldowns": livematch_cooldowns,
-    "livematch_timers": livematch_timers,
     # lobby + helpers
     "lobby_players": lobby_players,
     "lobby_message": lobby_message,
