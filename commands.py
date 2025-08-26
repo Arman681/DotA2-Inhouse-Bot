@@ -1,5 +1,6 @@
 # commands.py
 import asyncio
+import math
 import time
 import discord
 from discord.ext import commands
@@ -43,8 +44,6 @@ def attach_commands(bot, deps):
     random_polling_flags        = deps["random_polling_flags"]
     match_tracking_start_times  = deps["match_tracking_start_times"]
     live_embed_messages         = deps["live_embed_messages"]
-    livematch_cooldowns         = deps["livematch_cooldowns"]
-    livematch_timers            = deps["livematch_timers"]
 
     # Lobby state + helpers
     lobby_players                = deps["lobby_players"]
@@ -64,7 +63,6 @@ def attach_commands(bot, deps):
     load_guild_prefix            = deps["load_guild_prefix"]
     save_league_guild_mapping    = deps["save_league_guild_mapping"]
     live_channel_ids             = deps["live_channel_ids"]
-    prefix_cache                 = deps["prefix_cache"]
 
     # Misc helpers
     get_discord_id_from_steam_id = deps["get_discord_id_from_steam_id"]
@@ -538,16 +536,11 @@ def attach_commands(bot, deps):
         await message.add_reaction("👍")
         await message.add_reaction("👎")
         await ctx.send("Lobby has been cleared and refreshed.")
-
+    
+    @commands.cooldown(1, 30, commands.BucketType.guild)
     @bot.command(name="livematch")
     async def livematch_cmd(ctx):
         guild_id = ctx.guild.id
-        now = time.time()
-        last_called = livematch_cooldowns.get(guild_id, 0)
-        if now - last_called < 30:
-            wait_time = int(30 - (now - last_called))
-            await ctx.send(f"⏳ You must wait {wait_time} seconds before using `!livematch` again.")
-            return
         match_id = active_match_ids.get(guild_id)
         if not match_id:
             await ctx.send("❌ There is no active match to display.")
@@ -567,20 +560,12 @@ def attach_commands(bot, deps):
         embed = await format_live_match_embed(match, ctx.guild)
         new_msg = await channel.send(embed=embed)
         live_embed_messages[guild_id] = new_msg
-        livematch_cooldowns[guild_id] = now
-        if guild_id in livematch_timers:
-            livematch_timers[guild_id].cancel()
-        async def clear_livematch_timer(gid):
-            try:
-                await asyncio.sleep(45)
-                if time.time() - livematch_cooldowns.get(gid, 0) >= 45:
-                    livematch_cooldowns.pop(gid, None)
-                    livematch_timers.pop(gid, None)
-            except asyncio.CancelledError:
-                pass
-        livematch_timers[guild_id] = asyncio.create_task(clear_livematch_timer(guild_id))
     @livematch_cmd.error
     async def livematch_cmd_error(ctx, error):
+        if isinstance(error, commands.CommandOnCooldown):
+            wait_time = math.ceil(error.retry_after)  # round up
+            await ctx.send(f"⏳ You must wait {wait_time} seconds before using `!livematch` again.")
+            return
         await ctx.send("⚠️ An error occurred while recalling the live match embed.")
 
     # ============================= 🔐 Admin-Only Commands ============================
