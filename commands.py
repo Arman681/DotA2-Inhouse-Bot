@@ -226,6 +226,7 @@ def attach_commands(bot, deps):
             lines.append(f"**#{rank}** - {name}: {mmr} MMR")
         await ctx.send("🏆 **Top 10 Inhouse Players**\n" + "\n".join(lines))
 
+    @commands.cooldown(1, 5, commands.BucketType.user)  # 1 use / 5s per user
     @bot.command(name="bet")
     async def bet(ctx, amount: int, team=None):
         if amount <= 0:
@@ -257,7 +258,7 @@ def attach_commands(bot, deps):
             steam_id = player.get("account_id")
             discord_id = get_discord_id_from_steam_id(str(steam_id))
             if discord_id == str(ctx.author.id):
-                player_team = player.get("team")  # 0/1
+                player_team = player.get("team")  # 0 = Radiant, 1 = Dire
                 break
         # If team not provided, fill it from player's team (if playing), else prompt
         if team is None:
@@ -278,14 +279,6 @@ def attach_commands(bot, deps):
         if team not in ["radiant", "dire"]:
             await ctx.send("❌ Invalid team. Choose `radiant` or `dire`.")
             return
-        # block betting opposite team if user is playing
-        player_team = None
-        for player in match.get("players", []):
-            steam_id = player.get("account_id")
-            discord_id = get_discord_id_from_steam_id(str(steam_id))
-            if discord_id == str(ctx.author.id):
-                player_team = player.get("team")  # 0 = Radiant, 1 = Dire
-                break
         if player_team is not None:
             if (player_team == 0 and team == "dire") or (player_team == 1 and team == "radiant"):
                 await ctx.send(
