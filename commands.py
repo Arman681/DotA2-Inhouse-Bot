@@ -295,13 +295,14 @@ def attach_commands(bot, deps):
                     f"You cannot place a bet on the **opposing team** during a match you are in."
                 )
                 return
-        entry_ref = db.collection("guild_specific_info").document(str(ctx.guild.id)).collection("bets").document(str(ctx.author.id))
+        entry_ref = db.collection("bets").document(str(ctx.guild.id)).collection("entries").document(str(ctx.author.id))
         existing_bet_doc = entry_ref.get()
-        previous_amount = 0
+        previous_bet = 0
+        delta = amount
         is_update = False
         if existing_bet_doc.exists:
             existing_bet = existing_bet_doc.to_dict()
-            previous_amount = existing_bet.get("amount", 0)
+            previous_bet = existing_bet.get("amount", 0)
             previous_team = existing_bet.get("team", "")
             if team != previous_team:
                 await ctx.send(
@@ -309,27 +310,28 @@ def attach_commands(bot, deps):
                     f"You cannot change teams once your bet is placed."
                 )
                 return
-            if amount <= previous_amount:
+            if amount <= previous_bet:
                 await ctx.send(
-                    f"❌ You already bet `{previous_amount}`. You can only **increase** your bet amount."
+                    f"❌ You already bet `{previous_bet}`. You can only **increase** your bet amount."
                 )
                 return
+            delta = amount - previous_bet
             is_update = True
-        old_balance = get_balance(ctx.guild.id, ctx.author.id)
-        success = place_bet(user_id, team, amount, ctx.guild.id, nickname)
-        new_balance = get_balance(ctx.guild.id, ctx.author.id)
-        if not success:
+        current_balance = get_balance(ctx.guild.id, ctx.author.id)
+        if (current_balance + previous_bet) < amount:
             await ctx.send("❌ You don’t have enough balance.")
         else:
+            place_bet(user_id, team, amount, delta, ctx.guild.id, nickname)
+            new_balance = current_balance - delta
             if is_update:
                 await ctx.send(
-                    f"🔁 You updated your bet from `{previous_amount}` to `{amount}` on **{team.capitalize()}**. "
-                    f"Your balance went from {old_balance} to {new_balance}."
+                    f"🔁 You updated your bet from `{previous_bet}` to `{amount}` on **{team.capitalize()}**. "
+                    f"Your balance went from {current_balance} to {new_balance}."
                 )
             else:
                 await ctx.send(
                     f"✅ You bet `{amount}` on **{team.capitalize()}** for this match. "
-                    f"Your balance went from {old_balance} to {new_balance}."
+                    f"Your balance went from {current_balance} to {new_balance}."
                 )
     @bet.error
     async def bet_error(ctx, error):
