@@ -249,7 +249,9 @@ def load_guild_prefix(guild_id):
     doc = db.collection("guild_specific_info").document(str(guild_id)).get()
     if doc.exists:
         data = doc.to_dict()
-        return data.get("prefix", {}).get("prefix", "!")  # nested get
+        prefix = data.get("prefix", {}).get("prefix", "!")
+        prefix_cache[guild_id] = prefix
+        return prefix
     return "!"
 
 # Saves the inhouse lobby password for a Discord server (guild) to Firestore.
@@ -559,7 +561,6 @@ async def fetch_hero_id_to_name_map():
                     print("[WARN] Invalid hero cache format. Refetching from API...")
         except Exception as e:
             print(f"[ERROR] Failed to load local hero cache: {e}")
-
     print("[INFO] 📡 Fetching hero data from Steam API...")
     url = "https://api.steampowered.com/IEconDOTA2_570/GetHeroes/v1/"
     params = {
