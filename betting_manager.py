@@ -14,10 +14,9 @@ def get_balance(guild_id, user_id):
             .collection("users").document(str(user_id)).get()
     return doc.to_dict().get("balance", 1000) if doc.exists else 1000
 
-def update_balance(guild_id, user_id, amount, nickname=None):
-    current = get_balance(guild_id, user_id)
+def update_balance(guild_id, user_id, delta, nickname=None):
     data = {
-        "balance": current + amount
+        "balance": firestore.Increment(int(delta))
     }
     if nickname:
         data["nickname"] = nickname
@@ -28,18 +27,9 @@ def update_balance(guild_id, user_id, amount, nickname=None):
 # 🔹 BETTING FUNCTIONS
 # ====================================
 
-def place_bet(user_id, team, amount, guild_id, nickname):
+def place_bet(user_id, team, amount, delta, guild_id, nickname):
     entry_ref = db.collection("bets").document(str(guild_id)).collection("entries").document(str(user_id))
-    # Check existing bet and refund if necessary
-    existing_bet_doc = entry_ref.get()
-    previous_amount = 0
-    if existing_bet_doc.exists:
-        existing_bet = existing_bet_doc.to_dict()
-        previous_amount = existing_bet.get("amount", 0)
-        update_balance(guild_id, user_id, previous_amount, nickname)
-    if get_balance(guild_id, user_id) < amount:
-        return False
-    update_balance(guild_id, user_id, -amount, nickname)
+    update_balance(guild_id, user_id, -delta, nickname)
     entry_ref.set({
         "nickname": nickname,
         "user_id": str(user_id),
