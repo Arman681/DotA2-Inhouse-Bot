@@ -83,12 +83,7 @@ def clear_guild_bets(guild_id):
     for entry in entries_ref:
         batch.delete(entry.reference)
     batch.commit()
-    # Clean up document if empty
-    remaining = list(db.collection("bets").document(str(guild_id)).collection("entries").stream())
-    if remaining:
-        print(f"[CLEAR] ❌ Some entries remain in guild {guild_id}")
-    elif not remaining:
-        print(f"[CLEAR] ✅ Deleted all bets for guild {guild_id}")
+    print(f"[CLEAR] ✅ Deleted all bets for guild {guild_id}")
 
 def clear_all_bets(bot):
     for guild in bot.guilds:
