@@ -40,9 +40,10 @@ def place_bet(user_id, team, amount, delta, guild_id, nickname):
     return True
 
 def resolve_bets(guild_id, winning_team):
-    entries = db.collection("bets").document(str(guild_id)).collection("entries").stream()
-    print(f"[RESOLVE_BETS] Resolving {sum(1 for _ in entries)} bets for guild: {guild_id}")
-    entries = db.collection("bets").document(str(guild_id)).collection("entries").stream()
+    entries = list(db.collection("bets").document(str(guild_id)).collection("entries").stream())
+    print(f"[RESOLVE_BETS] Resolving {len(entries)} bets for guild: {guild_id}")
+    batch = db.batch()
+    logs = [] # collect messages to send after commit: (outcome, user_id, amount, team)
     for doc in entries:
         data = doc.to_dict()
         user_id = data.get("user_id")
@@ -51,10 +52,24 @@ def resolve_bets(guild_id, winning_team):
         amount = data.get("amount", 0)
         if not user_id or not team:
             print(f"[WARN] Missing data in doc {doc.id}")
+            batch.delete(doc.reference)
             continue
-        if team == winning_team:
-            update_balance(guild_id, user_id, amount * 2, nickname)
-            print(f"[RESOLVE_BETS] ✅ {nickname} ({user_id}) won {amount * 2} on {winning_team}")
+        else:
+            if team == winning_team:
+                wallet_ref = db.collection("wallets").document(str(guild_id)).collection("users").document(str(user_id))
+                # stake + winnings in one atomic add, no read
+                batch.set(wallet_ref, {"balance": firestore.Increment(amount * 2)}, merge=True)
+                logs.append(("win", user_id, amount, team, nickname))
+            else:
+                logs.append(("lose", user_id, amount, team, nickname))
+            # clear the bet row either way
+            batch.delete(doc.reference)
+    # Commit all changes at once
+    batch.commit()
+    # Send logs to a designated channel or log them
+    for outcome, user_id, amount, team, nickname in logs:
+        if outcome == "win":
+            print(f"[RESOLVE_BETS] ✅ {nickname} ({user_id}) won {amount} on {team}")
         else:
             print(f"[RESOLVE_BETS] ❌ {nickname} ({user_id}) lost {amount} on {team}")
 
@@ -64,15 +79,16 @@ def resolve_bets(guild_id, winning_team):
 
 def clear_guild_bets(guild_id):
     entries_ref = db.collection("bets").document(str(guild_id)).collection("entries").stream()
+    batch = db.batch()
     for entry in entries_ref:
-        db.collection("bets").document(str(guild_id)).collection("entries").document(entry.id).delete()
+        batch.delete(entry.reference)
+    batch.commit()
     # Clean up document if empty
     remaining = list(db.collection("bets").document(str(guild_id)).collection("entries").stream())
-    if not remaining:
-        db.collection("bets").document(str(guild_id)).delete()
-        print(f"[CLEAR] ✅ Deleted all bets for guild {guild_id}")
-    else:
+    if remaining:
         print(f"[CLEAR] ❌ Some entries remain in guild {guild_id}")
+    elif not remaining:
+        print(f"[CLEAR] ✅ Deleted all bets for guild {guild_id}")
 
 def clear_all_bets(bot):
     for guild in bot.guilds:
