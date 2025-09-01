@@ -528,7 +528,6 @@ def attach_commands(bot, deps):
         save_lobby_players(guild_id, lobby_players[guild_id])
         await message.add_reaction("👍")
         await message.add_reaction("👎")
-        await ctx.send("Lobby has been cleared and refreshed.")
     
     @commands.cooldown(1, 30, commands.BucketType.guild)
     @bot.command(name="livematch")
