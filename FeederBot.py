@@ -156,7 +156,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
         _last_active_match_id.pop(guild.id, None)
         _last_selected_match_id.pop(guild.id, None)
         if channel:
-            await channel.send("⚠️ Match ended but no result was found. Polling has been stopped.")
+            await channel.send("Match ended but no result was found. Polling has been stopped.")
         return
     # Proceed with resolution
     winning_team = "radiant" if result["radiant_win"] else "dire"
@@ -988,7 +988,7 @@ async def on_raw_reaction_add(payload):
             team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id], guild_id)
             if not team_rolls[guild_id]:
                 await channel.send(
-                    "⚠️ I couldn't form teams with the current MMR threshold (≤100). "
+                    "Cannot form teams with the current MMR threshold (≤100). "
                     "Either set missing MMRs (`!cfg <steam_id>`) or let me try a relaxed threshold…"
                 )
                 # optional automatic fallback (see #2 below)
@@ -996,7 +996,7 @@ async def on_raw_reaction_add(payload):
                     lobby_players[guild_id], guild_id, max_mmr_diff=400  # try 400 first
                 )
             if not team_rolls[guild_id]:
-                await channel.send("❌ Still no valid combos. Please set MMRs or disable the strict threshold.")
+                await channel.send("Still no valid combos. Please set MMRs or disable the strict threshold.")
                 return
             valid_team_combos[guild_id] = valid_combo_count
             team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][0]
@@ -1024,14 +1024,14 @@ async def on_raw_reaction_add(payload):
         interval = 30  # polling interval
         elapsed = 0
         low_lobby_time = 0  # tracks how long lobby is underfilled
-        await channel.send("⌛ Waiting for the in-game match to appear on Steam... (up to 15 minutes)")
+        await channel.send("Waiting for the in-game match to appear on Steam... (up to 15 minutes)")
         while elapsed < timeout:
             current_lobby = lobby_players.get(guild_id, [])
             if len(current_lobby) < 10:
                 low_lobby_time += interval
                 print(f"[INFO] Lobby underfilled ({len(current_lobby)}/10) for {low_lobby_time} seconds")
                 if low_lobby_time >= 30:  # now 30 seconds
-                    await channel.send("❌ Lobby has not been full for 30 seconds. Match polling cancelled.")
+                    await channel.send("Lobby has not been full for 30 seconds. Match polling cancelled.")
                     return
             else:
                 if low_lobby_time > 0:
@@ -1049,7 +1049,7 @@ async def on_raw_reaction_add(payload):
                 polling_tasks[guild_id] = asyncio.create_task(poll_live_match(match_id, guild))
                 await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
         else:
-            await channel.send("⚠️ No live match was found within 15 minutes. Please restart the lobby.")
+            await channel.send("No live match was found within 15 minutes. Please restart the lobby.")
     elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
         # Get the member object from the guild
@@ -1065,7 +1065,7 @@ async def on_raw_reaction_add(payload):
             else:
                 roll_count[guild_id] += 1
             if guild_id not in team_rolls or not team_rolls[guild_id]:
-                await message.channel.send("⚠️ No team combinations found. Please press 🚀 first.")
+                await message.channel.send("No team combinations found. Please press 🚀 first.")
                 return
             index = roll_count[guild_id] - 1
             if index >= len(team_rolls[guild_id]):
