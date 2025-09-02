@@ -119,7 +119,7 @@ class ImmortalDraftSession:
         e.add_field(name="Team #2", value=f"{team2}\n**Team MMR:** {total2}", inline=True)
         e.add_field(name="\u200b", value="\u200b", inline=True)
 
-        status = "Draft complete" if self.locked else f"🪪 Turn: {now_captain.mention} (needs **{need}**)"
+        status = "Draft complete" if self.locked else f"Turn: {now_captain.mention} (needs **{need}**)"
         e.add_field(name="Status", value=status, inline=False)
         if not self.locked:
             reserve_left = max(0, int(self.reserve[who]))
