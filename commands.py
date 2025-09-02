@@ -4,6 +4,7 @@ import math
 import time
 import discord
 from discord.ext import commands
+from immortal_draft import ImmortalDraftSession, Candidate  # add near other imports
 
 def attach_commands(bot, deps):
     # ---- pull in all helpers/state you already have in FeederBot.py ----
@@ -49,6 +50,7 @@ def attach_commands(bot, deps):
     lobby_players                = deps["lobby_players"]
     lobby_message                = deps["lobby_message"]
     inhouse_mode                 = deps["inhouse_mode"]
+    captain_draft_state          = deps["captain_draft_state"]
     update_lobby_embed           = deps["update_lobby_embed"]
     build_lobby_embed            = deps["build_lobby_embed"]
     save_lobby_players           = deps["save_lobby_players"]
@@ -86,15 +88,15 @@ def attach_commands(bot, deps):
             is_authorized = await user_is_admin_or_has_role(ctx.author)
             if not is_authorized:
                 if targeting_other and using_force:
-                    await ctx.send("❌ You tried to configure another user **with `--force`**. Only admins or Inhouse Admins can do that.")
+                    await ctx.send("You tried to configure another user **with `--force`**. Only admins or Inhouse Admins can do that.")
                 elif targeting_other:
-                    await ctx.send("❌ Only admins or Inhouse Admins can configure **other users**.")
+                    await ctx.send("Only admins or Inhouse Admins can configure **other users**.")
                 else:  # using_force only
-                    await ctx.send("❌ `--force` can only be used by admins or Inhouse Admins.")
+                    await ctx.send("`--force` can only be used by admins or Inhouse Admins.")
                 return
         steam_id_32 = convert_to_steam32(steam_id)
         if steam_id_32 is None:
-            await ctx.send("❌ Invalid Steam ID provided.")
+            await ctx.send("Invalid Steam ID provided.")
             return
         player_ref = db.collection("players").document(str(target.id))
         snap = player_ref.get()
@@ -106,7 +108,7 @@ def attach_commands(bot, deps):
             if mmr is None and season_rank is not None and season_rank >= 80:
                 mmr = MMR_CAP_FOR_TOP_RANKS
                 await ctx.send(
-                    "⚠️ STRATZ does not provide season rank values beyond 80.\n"
+                    "STRATZ does not provide season rank values beyond 80.\n"
                     f"Your estimated MMR has been capped at **{MMR_CAP_FOR_TOP_RANKS}** "
                     f"based on your season rank ({season_rank})."
                 )
@@ -171,7 +173,7 @@ def attach_commands(bot, deps):
         if mmr is None and season_rank is not None and season_rank >= 80:
             mmr = MMR_CAP_FOR_TOP_RANKS
             await ctx.send(
-                "⚠️ STRATZ does not provide season rank values beyond 80.\n"
+                "STRATZ does not provide season rank values beyond 80.\n"
                 f"Your estimated MMR has been capped at **{MMR_CAP_FOR_TOP_RANKS}** "
                 f"based on your season rank ({season_rank})."
             )
@@ -199,7 +201,7 @@ def attach_commands(bot, deps):
     @cfg_cmd.error
     async def cfg_cmd_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("❗ Usage: `!cfg <steam_id>` (optional: `@user`)")
+            await ctx.send("Usage: `!cfg <steam_id>` (optional: `@user`)")
 
     @bot.command(name="mmr")
     async def mmr_lookup(ctx, member: discord.Member = None):
@@ -224,33 +226,33 @@ def attach_commands(bot, deps):
             member = ctx.guild.get_member(int(user_id))
             name = member.display_name if member else f"User {user_id}"
             lines.append(f"**#{rank}** - {name}: {mmr} MMR")
-        await ctx.send("🏆 **Top 10 Inhouse Players**\n" + "\n".join(lines))
+        await ctx.send("**Top 10 Inhouse Players**\n" + "\n".join(lines))
 
     @commands.cooldown(1, 5, commands.BucketType.user)  # 1 use / 5s per user
     @bot.command(name="bet")
     async def bet(ctx, amount: int, team=None):
         if amount <= 0:
-            await ctx.send("❌ Bet amount must be greater than 0.")
+            await ctx.send("Bet amount must be greater than 0.")
             return
         user_id = str(ctx.author.id)
         nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
         if ctx.guild.id not in active_match_ids:
-            await ctx.send("❌ There is no active match in progress to bet on.")
+            await ctx.send("There is no active match in progress to bet on.")
             return
         is_random = random_polling_flags.get(ctx.guild.id, False)
         match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=is_random)
         if not match:
-            await ctx.send("⚠️ Could not retrieve live match info. Betting may be closed.")
+            await ctx.send("Could not retrieve live match info. Betting may be closed.")
             return
         duration = match.get("scoreboard", {}).get("duration", 0)
         if is_random:
             start_time = match_tracking_start_times.get(ctx.guild.id)
             if start_time and (time.time() - start_time > 180):
-                await ctx.send("⏳ Bets are closed. More than 3 minutes have passed since this random match began tracking.")
+                await ctx.send("Bets are closed. More than 3 minutes have passed since this random match began tracking.")
                 return
         else:
             if duration >= 120:
-                await ctx.send("⏳ Bets are closed. The match has passed the 2:00 mark.")
+                await ctx.send("Bets are closed. The match has passed the 2:00 mark.")
                 return
         # --- Auto-detect bettor's team if they're playing ---
         player_team = None  # 0 = Radiant, 1 = Dire
@@ -265,24 +267,24 @@ def attach_commands(bot, deps):
             if player_team is not None:
                 team = "radiant" if player_team == 0 else "dire"
                 await ctx.send(
-                    f"🎯 Detected you’re playing on **{team.capitalize()}**. "
+                    f"Detected you’re playing on **{team.capitalize()}**. "
                     f"Placing your bet on **{team.capitalize()}** by default."
                 )
             else:
                 await ctx.send(
-                    "ℹ️ You’re not in the current match. Please specify a team:\n"
+                    "ℹYou’re not in the current match. Please specify a team:\n"
                     "`!bet <amount> <radiant|dire>`"
                 )
                 return
         # Normalize & validate team now that it’s known
         team = str(team).lower().strip()
         if team not in ["radiant", "dire"]:
-            await ctx.send("❌ Invalid team. Choose `radiant` or `dire`.")
+            await ctx.send("Invalid team. Choose `radiant` or `dire`.")
             return
         if player_team is not None:
             if (player_team == 0 and team == "dire") or (player_team == 1 and team == "radiant"):
                 await ctx.send(
-                    f"❌ You are currently playing on the **{'Radiant' if player_team == 0 else 'Dire'}** team.\n"
+                    f"You are currently playing on the **{'Radiant' if player_team == 0 else 'Dire'}** team.\n"
                     f"You cannot place a bet on the **opposing team** during a match you are in."
                 )
                 return
@@ -297,41 +299,41 @@ def attach_commands(bot, deps):
             previous_team = existing_bet.get("team", "")
             if team != previous_team:
                 await ctx.send(
-                    f"❌ You already bet on **{previous_team.capitalize()}**. "
+                    f"You already bet on **{previous_team.capitalize()}**. "
                     f"You cannot change teams once your bet is placed."
                 )
                 return
             if amount <= previous_bet:
                 await ctx.send(
-                    f"❌ You already bet `{previous_bet}`. You can only **increase** your bet amount."
+                    f"You already bet `{previous_bet}`. You can only **increase** your bet amount."
                 )
                 return
             delta = amount - previous_bet
             is_update = True
         current_balance = get_balance(ctx.guild.id, ctx.author.id)
         if (current_balance + previous_bet) < amount:
-            await ctx.send("❌ You don’t have enough balance.")
+            await ctx.send("You don’t have enough balance.")
         else:
             place_bet(user_id, team, amount, delta, ctx.guild.id, nickname)
             new_balance = current_balance - delta
             if is_update:
                 await ctx.send(
-                    f"🔁 You updated your bet from `{previous_bet}` to `{amount}` on **{team.capitalize()}**. "
+                    f"You updated your bet from `{previous_bet}` to `{amount}` on **{team.capitalize()}**. "
                     f"Your balance went from {current_balance} to {new_balance}."
                 )
             else:
                 await ctx.send(
-                    f"✅ You bet `{amount}` on **{team.capitalize()}** for this match. "
+                    f"You bet `{amount}` on **{team.capitalize()}** for this match. "
                     f"Your balance went from {current_balance} to {new_balance}."
                 )
     @bet.error
     async def bet_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("❗ Usage: `!bet <amount> [radiant|dire]`")
+            await ctx.send("Usage: `!bet <amount> [radiant|dire]`")
         elif isinstance(error, commands.BadArgument):
-            await ctx.send("❗ Invalid argument. Usage: `!bet <amount> [radiant|dire]` — make sure `<amount>` is a number.")
+            await ctx.send("Invalid argument. Usage: `!bet <amount> [radiant|dire]` — make sure `<amount>` is a number.")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while placing your bet.")
+            await ctx.send("An unexpected error occurred while placing your bet.")
 
     @bot.command(name="balance")
     async def balance(ctx, member: discord.Member = None):
@@ -339,22 +341,22 @@ def attach_commands(bot, deps):
         user_id = str(member.id)
         guild_id = str(ctx.guild.id)
         coins = get_balance(guild_id, user_id)
-        await ctx.send(f"💰 {member.display_name}'s balance: `{coins}` coins.")
+        await ctx.send(f"{member.display_name}'s balance: `{coins}` coins.")
 
     @bot.command(name="send")
     async def send_coins(ctx, amount: int, member: discord.Member):
         if amount <= 0:
-            await ctx.send("❌ Amount must be greater than 0.")
+            await ctx.send("Amount must be greater than 0.")
             return
         sender_id = str(ctx.author.id)
         receiver_id = str(member.id)
         guild_id = str(ctx.guild.id)
         sender_balance = get_balance(guild_id, sender_id)
         if sender_id == receiver_id:
-            await ctx.send("❌ You cannot send coins to yourself.")
+            await ctx.send("You cannot send coins to yourself.")
             return
         if sender_balance < amount:
-            await ctx.send(f"❌ You do not have enough coins. Your balance is `{sender_balance}`.")
+            await ctx.send(f"You do not have enough coins. Your balance is `{sender_balance}`.")
             return
         update_balance(guild_id, sender_id, -amount)
         update_balance(guild_id, receiver_id, amount)
@@ -362,40 +364,40 @@ def attach_commands(bot, deps):
     @send_coins.error
     async def send_coins_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("❗ Usage: `!send <amount> <@user>`")
+            await ctx.send("Usage: `!send <amount> <@user>`")
         elif isinstance(error, commands.BadArgument):
-            await ctx.send("❗ Invalid argument. Usage: `!send <amount> <@user>` — make sure `<amount>` is a number and `<@user>` is a valid user.")
+            await ctx.send("Invalid argument. Usage: `!send <amount> <@user>` — make sure `<amount>` is a number and `<@user>` is a valid user.")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while sending coins.")
+            await ctx.send("An unexpected error occurred while sending coins.")
 
     @bot.command(name="setpreferredroles")
     async def set_preferred_roles(ctx, r1: int, r2: int, r3: int, r4: int, r5: int, member: discord.Member = None):
         roles = [r1, r2, r3, r4, r5]
         if sorted(roles) != [1, 2, 3, 4, 5]:
-            await ctx.send("❌ Usage: !setpreferredroles '1 2 3 4 5' (enter each role starting from most preferred going to least preferred).")
+            await ctx.send("Usage: !setpreferredroles '1 2 3 4 5' (enter each role starting from most preferred going to least preferred).")
             return
         target = member or ctx.author
         if member and member != ctx.author:
             if not await user_is_admin_or_has_role(ctx.author):
-                await ctx.send("❌ You do not have permission to set roles for other users.")
+                await ctx.send("You do not have permission to set roles for other users.")
                 return
         user_id = str(target.id)
         doc_ref = db.collection("players").document(user_id)
         doc_ref.set({"preferred_roles": roles}, merge=True)
         if target == ctx.author:
-            await ctx.send(f"✅ {ctx.author.mention}, your preferred roles have been saved: {roles}")
+            await ctx.send(f"{ctx.author.mention}, your preferred roles have been saved: {roles}")
         else:
-            await ctx.send(f"✅ {ctx.author.mention} set preferred roles for {target.mention}: {roles}")
+            await ctx.send(f"{ctx.author.mention} set preferred roles for {target.mention}: {roles}")
     @set_preferred_roles.error
     async def set_preferred_roles_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("❌ You must provide 5 role numbers in order of preference.\nExample: `!setpreferredroles 3 2 4 5 1`")
+            await ctx.send("You must provide 5 role numbers in order of preference.\nExample: `!setpreferredroles 3 2 4 5 1`")
         elif isinstance(error, commands.BadArgument):
-            await ctx.send("❌ Invalid input. Make sure the first five values are numbers (1–5), followed optionally by a valid @user mention.")
+            await ctx.send("Invalid input. Make sure the first five values are numbers (1–5), followed optionally by a valid @user mention.")
         elif isinstance(error, commands.UserInputError):
-            await ctx.send("❌ Incorrect usage. Try: `!setpreferredroles 1 2 3 4 5` or `!setpreferredroles 1 2 3 4 5 @user`")
+            await ctx.send("Incorrect usage. Try: `!setpreferredroles 1 2 3 4 5` or `!setpreferredroles 1 2 3 4 5 @user`")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while processing your preferred roles.")
+            await ctx.send("An unexpected error occurred while processing your preferred roles.")
             raise error
 
     @bot.command(name="viewpreferredroles")
@@ -405,17 +407,17 @@ def attach_commands(bot, deps):
         doc_ref = db.collection("players").document(user_id)
         doc = doc_ref.get()
         if not doc.exists or "preferred_roles" not in doc.to_dict():
-            await ctx.send(f"ℹ️ {target.display_name} has not set their preferred roles.")
+            await ctx.send(f"{target.display_name} has not set their preferred roles.")
             return
         preferred_roles = doc.to_dict()["preferred_roles"]
         formatted = ", ".join(f"Pos {r}" for r in preferred_roles)
-        await ctx.send(f"📊 {target.mention}'s preferred roles (most to least preferred): {formatted}")
+        await ctx.send(f"{target.mention}'s preferred roles (most to least preferred): {formatted}")
     @view_preferred_roles.error
     async def view_preferred_roles_error(ctx, error):
         if isinstance(error, commands.BadArgument):
-            await ctx.send("❌ Invalid user. Make sure to mention a valid user in the server.")
+            await ctx.send("Invalid user. Make sure to mention a valid user in the server.")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while fetching preferred roles.")
+            await ctx.send("An unexpected error occurred while fetching preferred roles.")
             raise error
 
     # ========================== 🏠 Lobby Management Commands =========================
@@ -423,7 +425,7 @@ def attach_commands(bot, deps):
     @bot.command(name="add")
     async def add_to_lobby(ctx, *members: discord.Member):
         if not members:
-            await ctx.send("❗ Usage: `!add @player1 [@player2 ...]`")
+            await ctx.send("Usage: `!add @player1 [@player2 ...]`")
             return
         guild_id = ctx.guild.id
         if guild_id not in lobby_players:
@@ -449,7 +451,7 @@ def attach_commands(bot, deps):
     @bot.command(name="remove")
     async def remove_from_lobby(ctx, *members: discord.Member):
         if not members:
-            await ctx.send("❗ Usage: `!remove @player1 [@player2 ...]`")
+            await ctx.send("Usage: `!remove @player1 [@player2 ...]`")
             return
         guild_id = ctx.guild.id
         removed = []
@@ -481,7 +483,7 @@ def attach_commands(bot, deps):
         existing_players = lobby_players.get(guild_id, [])
         if mode:
             if not await user_is_admin_or_has_role(ctx.author):
-                await ctx.send("❌ You don't have permission to change the inhouse mode.")
+                await ctx.send("You don't have permission to change the inhouse mode.")
                 return
             selected_mode = mode.lower() if mode.lower() in ["regular", "immortal"] else "regular"
             save_inhouse_mode_for_guild(guild_id, selected_mode, server_name=ctx.guild.name, set_by=str(ctx.author))
@@ -512,7 +514,7 @@ def attach_commands(bot, deps):
     @bot.command(name="reset")
     async def reset(ctx, *args):
         if args:
-            await ctx.send("❗ Usage: `!reset` (no extra arguments allowed)")
+            await ctx.send("Usage: `!reset` (no extra arguments allowed)")
             return
         guild_id = ctx.guild.id
         lobby_players[guild_id] = []
@@ -535,12 +537,12 @@ def attach_commands(bot, deps):
         guild_id = ctx.guild.id
         match_id = active_match_ids.get(guild_id)
         if not match_id:
-            await ctx.send("❌ There is no active match to display.")
+            await ctx.send("There is no active match to display.")
             return
         is_random = random_polling_flags.get(guild_id, False)
         match = await fetch_live_match_for_guild(guild_id, random_mode=is_random)
         if not match:
-            await ctx.send("⚠️ Could not retrieve live match info.")
+            await ctx.send("Could not retrieve live match info.")
             return
         prev_msg = live_embed_messages.get(guild_id)
         channel = ctx.channel
@@ -556,9 +558,9 @@ def attach_commands(bot, deps):
     async def livematch_cmd_error(ctx, error):
         if isinstance(error, commands.CommandOnCooldown):
             wait_time = math.ceil(error.retry_after)  # round up
-            await ctx.send(f"⏳ You must wait {wait_time} seconds before using `!livematch` again.")
+            await ctx.send(f"You must wait {wait_time} seconds before using `!livematch` again.")
             return
-        await ctx.send("⚠️ An error occurred while recalling the live match embed.")
+        await ctx.send("An error occurred while recalling the live match embed.")
 
     # ============================= 🔐 Admin-Only Commands ============================
 
@@ -566,7 +568,7 @@ def attach_commands(bot, deps):
     @is_admin_or_has_role()
     async def setmmr(ctx, mmr: int, member: discord.Member):
         if mmr < 0 or mmr > 20000:
-            await ctx.send("❌ Invalid MMR value. Please provide a value between 0 and 20000.")
+            await ctx.send("Invalid MMR value. Please provide a value between 0 and 20000.")
             return
         if member not in ctx.guild.members:
             await ctx.send("That user is not in this server.")
@@ -580,9 +582,9 @@ def attach_commands(bot, deps):
     @setmmr.error
     async def set_mmr_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("❗ Usage: `!setmmr <mmr> @user`")
+            await ctx.send("Usage: `!setmmr <mmr> @user`")
         elif isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
     @bot.command(name="alert")
     @is_admin_or_has_role()
@@ -604,7 +606,7 @@ def attach_commands(bot, deps):
     @alert.error
     async def alert_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
     @bot.command(name="setpassword")
     @is_admin_or_has_role()
@@ -615,22 +617,22 @@ def attach_commands(bot, deps):
     @set_password.error
     async def set_password_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("❗ Usage: `!setpassword <new_password>`")
+            await ctx.send("Usage: `!setpassword <new_password>`")
         elif isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
     @bot.command(name="changeprefix")
     @is_admin_or_has_role()
     async def change_prefix(ctx, new_prefix: str):
         old_prefix = load_guild_prefix(ctx.guild.id)
         save_guild_prefix(ctx.guild.id, new_prefix, server_name=ctx.guild.name, set_by=str(ctx.author))
-        await ctx.send(f"✅ Command prefix changed from `{old_prefix}` to `{new_prefix}` for this server.")
+        await ctx.send(f"Command prefix changed from `{old_prefix}` to `{new_prefix}` for this server.")
     @change_prefix.error
     async def change_prefix_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("❗ Usage: `!changeprefix <new_prefix>`")
+            await ctx.send("Usage: `!changeprefix <new_prefix>`")
         elif isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' role.")
 
     @bot.command(name="viewlogs")
     @is_admin_or_has_role()
@@ -695,25 +697,25 @@ def attach_commands(bot, deps):
             else:
                 lines.append(f"\n🎯 **Preferred Roles Integration**: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n Set by: {preferred_roles_set_by}\n Time: {preferred_roles_time}")
         else:
-            lines.append("❌ No Firestore data found for this guild.")
+            lines.append("No Firestore data found for this guild.")
         await ctx.send("\n".join(lines))
     @viewlogs.error
     async def viewlogs_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while retrieving the logs.")
+            await ctx.send("An unexpected error occurred while retrieving the logs.")
 
     @bot.command(name="submitmatch")
     @is_admin_or_has_role()
     async def submitmatch(ctx, match_id: str):
-        await ctx.send("📊 Processing submitted match...")
+        await ctx.send("Processing submitted match...")
         if not match_id.isdigit():
-            await ctx.send("❗ Match ID must be a number.")
+            await ctx.send("Match ID must be a number.")
             return
         result = fetch_match_result(match_id)
         if not result:
-            await ctx.send("❌ Could not fetch match result. Check the match ID.")
+            await ctx.send("Could not fetch match result. Check the match ID.")
             return
         winner_ids = map_steam_ids_to_discord_ids(result["radiantplayers"] if result["radiant_win"] else result["direplayers"])
         loser_ids = map_steam_ids_to_discord_ids(result["direplayers"] if result["radiant_win"] else result["radiantplayers"])
@@ -727,31 +729,31 @@ def attach_commands(bot, deps):
                 update_balance(ctx.guild.id, discord_id, 50)
             except Exception as e:
                 print(f"[ERROR] Failed to award coins to user {discord_id}: {e}")
-        await ctx.send(f"✅ Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\nAll participants received **50 coins** for playing.")
+        await ctx.send(f"Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\nAll participants received **50 coins** for playing.")
     @submitmatch.error
     async def submitmatch_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("❗ Usage: `!submitmatch <match_id>`")
+            await ctx.send("Usage: `!submitmatch <match_id>`")
         elif isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         elif isinstance(error, commands.BadArgument):
-            await ctx.send("❗ Invalid match ID. It should be a numeric string like `8351234567`.")
+            await ctx.send("Invalid match ID. It should be a numeric string like `8351234567`.")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while submitting the match.")
+            await ctx.send("An unexpected error occurred while submitting the match.")
 
     @bot.command(name="bindleague")
     @is_admin_or_has_role()
     async def bind_league_to_guild(ctx, league_id: str):
         save_league_guild_mapping(ctx.guild.id, league_id, server_name=ctx.guild.name, bound_by=str(ctx.author))
-        await ctx.send(f"✅ League `{league_id}` bound to this server (Guild ID: `{ctx.guild.id}`).")
+        await ctx.send(f"League `{league_id}` bound to this server (Guild ID: `{ctx.guild.id}`).")
     @bind_league_to_guild.error
     async def bindleague_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("❗ Usage: `!bindleague <league_id>`")
+            await ctx.send("Usage: `!bindleague <league_id>`")
         elif isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while binding the league.")
+            await ctx.send("An unexpected error occurred while binding the league.")
 
     @bot.command(name="setlivechannel")
     @is_admin_or_has_role()
@@ -765,13 +767,13 @@ def attach_commands(bot, deps):
         doc_ref = db.collection("guild_specific_info").document(str(ctx.guild.id))
         doc_ref.set({"live_channel_id": data}, merge=True)
         live_channel_ids[ctx.guild.id] = channel_id
-        await ctx.send(f"✅ This channel has been set to receive live match updates.")
+        await ctx.send(f"This channel has been set to receive live match updates.")
     @set_live_channel.error
     async def setlivechannel_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while setting the live channel.")
+            await ctx.send("An unexpected error occurred while setting the live channel.")
 
     @bot.command(name="startpolling")
     @is_admin_or_has_role()
@@ -786,24 +788,24 @@ def attach_commands(bot, deps):
                 await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {ctx.guild.name}")
                 random_polling_flags[ctx.guild.id] = False
         else:
-            await channel.send("⚠️ No live match found for the bound league.")
+            await channel.send("No live match found for the bound league.")
     @start_polling.error
     async def start_polling_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
     @bot.command(name="stoppolling")
     @is_admin_or_has_role()
     async def stop_polling(ctx):
         if ctx.guild.id in polling_tasks and not polling_tasks[ctx.guild.id].done():
             polling_tasks[ctx.guild.id].cancel()
-            await ctx.send("🛑 Stopped polling for this server.")
+            await ctx.send("Stopped polling for this server.")
         else:
-            await ctx.send("ℹ️ No polling is currently running for this server.")
+            await ctx.send("ℹNo polling is currently running for this server.")
     @stop_polling.error
     async def stop_polling_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
     @bot.command(name="randompoll")
     @is_admin_or_has_role()
@@ -815,19 +817,19 @@ def attach_commands(bot, deps):
             if ctx.guild.id not in polling_tasks:
                 active_match_ids[ctx.guild.id] = match_id
                 polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild, random_mode=True))
-                await channel.send(f"[🎲] Started random match polling for match ID {match_id} in guild {ctx.guild.name}")
+                await channel.send(f"Started random match polling for match ID {match_id} in guild {ctx.guild.name}")
                 random_polling_flags[ctx.guild.id] = True
                 match_tracking_start_times[ctx.guild.id] = time.time()
             else:
-                await channel.send("⚠️ Polling is already running for this server.")
+                await channel.send("Polling is already running for this server.")
         else:
-            await channel.send("⚠️ No valid random live match found.")
+            await channel.send("No valid random live match found.")
     @random_poll.error
     async def random_poll_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while starting random match polling.")
+            await ctx.send("An unexpected error occurred while starting random match polling.")
             print(f"[ERROR] random_poll command: {error}")
 
     @bot.command(name="toggle_roles")
@@ -835,7 +837,7 @@ def attach_commands(bot, deps):
     async def toggle_preferred_roles(ctx, mode: str):
         mode = mode.lower()
         if mode not in ["on", "off"]:
-            await ctx.send("❗ Usage: `!toggle_roles on` or `!toggle_roles off`")
+            await ctx.send("Usage: `!toggle_roles on` or `!toggle_roles off`")
             return
         enabled = (mode == "on")
         save_preferred_roles_setting(ctx.guild.id, enabled, set_by=ctx.author)
@@ -847,23 +849,23 @@ def attach_commands(bot, deps):
         if isinstance(error, commands.MissingRequiredArgument):
             # e.g., user typed `!toggle_roles` with no argument
             await ctx.send(
-                "❌ Missing required argument `mode`.\n"
+                "Missing required argument `mode`.\n"
                 "Usage: `!toggle_roles on` or `!toggle_roles off`"
             )
         elif isinstance(error, commands.BadArgument):
             await ctx.send(
-                "❌ Invalid argument for `mode`. Use `on` or `off`.\n"
+                "Invalid argument for `mode`. Use `on` or `off`.\n"
                 "Usage: `!toggle_roles on` or `!toggle_roles off`"
             )
         elif isinstance(error, commands.UserInputError):
             await ctx.send(
-                "❌ Incorrect usage.\n"
+                "Incorrect usage.\n"
                 "Usage: `!toggle_roles on` or `!toggle_roles off`"
             )
         elif isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while toggling preferred roles.")
+            await ctx.send("An unexpected error occurred while toggling preferred roles.")
             print(f"[ERROR] toggle_preferred_roles command: {error}")
     
     @bot.command(name="lobbyroles")
@@ -873,7 +875,7 @@ def attach_commands(bot, deps):
         guild_id = ctx.guild.id
         # Must have a lobby and it must be full
         if guild_id not in lobby_players or len(lobby_players[guild_id]) != 10:
-            await ctx.send("❌ This command only works when the lobby is full (10/10).")
+            await ctx.send("This command only works when the lobby is full (10/10).")
             return
         # Build nice embed
         embed = discord.Embed(
@@ -901,9 +903,9 @@ def attach_commands(bot, deps):
     @lobby_roles.error
     async def lobby_roles_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
-            await ctx.send("⚠️ An unexpected error occurred while listing lobby roles.")
+            await ctx.send("An unexpected error occurred while listing lobby roles.")
     
     @bot.command(name="pose")
     @is_global_admin()
@@ -914,7 +916,7 @@ def attach_commands(bot, deps):
         if not raw.strip():
             return await ctx.send("Usage: `!pose @user <other command with args>`")
         if raw.strip().lower().startswith(("pose ", "!pose")):
-            return await ctx.send("❌ You can’t pose a `pose` command.")
+            return await ctx.send("You can’t pose a `pose` command.")
         # Resolve dynamic prefix
         prefix = await bot.get_prefix(ctx.message)
         if isinstance(prefix, (list, tuple)):
@@ -933,7 +935,7 @@ def attach_commands(bot, deps):
         proxy_msg = _MessageProxy(ctx.message, member, cmd_text)
         new_ctx = await bot.get_context(proxy_msg, cls=commands.Context)
         if not new_ctx.command:
-            return await ctx.send(f"⚠️ Unknown command in `pose`: `{raw.split()[0]}`")
+            return await ctx.send(f"Unknown command in `pose`: `{raw.split()[0]}`")
         # Let discord.py run checks and error handlers normally
         try:
             await bot.invoke(new_ctx)
@@ -941,16 +943,67 @@ def attach_commands(bot, deps):
             # Re-dispatch so your existing on_command_error shows the usual message
             bot.dispatch("command_error", new_ctx, e)
         except Exception as e:
-            await ctx.send(f"⚠️ Error while posing: `{e}`")
+            await ctx.send(f"Error while posing: `{e}`")
     @pose.error
     async def pose_error(ctx, error):
         """Local error handler for !pose."""
         if isinstance(error, commands.CheckFailure):
-            await ctx.send("❌ You do not have permission to use `!pose`.")
+            await ctx.send("You do not have permission to use `!pose`.")
         elif isinstance(error, commands.BadArgument):
-            await ctx.send("⚠️ Invalid member specified. Make sure to mention a valid user.")
+            await ctx.send("Invalid member specified. Make sure to mention a valid user.")
         else:
-            await ctx.send(f"⚠️ An unexpected error occurred in `!pose`: `{error}`")
+            await ctx.send(f"An unexpected error occurred in `!pose`: `{error}`")
+
+    @bot.command(name="immortaldraft")
+    @is_admin_or_has_role()
+    async def immortaldraft_cmd(ctx):
+        guild_id = ctx.guild.id
+
+        # Make sure we are in immortal mode with a full lobby
+        if inhouse_mode.get(guild_id) != "immortal":
+            return await ctx.reply("This command only works in Immortal mode.", mention_author=False)
+
+        players = lobby_players.get(guild_id, [])
+        if len(players) != 10:
+            return await ctx.reply("Immortal Draft requires exactly 10 players in the lobby.", mention_author=False)
+
+        draft_state = captain_draft_state.get(guild_id)
+        if not draft_state:
+            return await ctx.reply("No captains found. Press 🚀 in the lobby first.", mention_author=False)
+        # Captains + pool were already generated
+        captains, pool, _ = draft_state["pairs"][draft_state["index"]]
+        c1, c2 = captains
+        # Convert captains/pool into Member + Candidate objects
+        guild = ctx.guild
+        cap1 = guild.get_member(int(c1[0]))
+        cap2 = guild.get_member(int(c2[0]))
+        candidates = []
+        for uid, name, mmr in pool:
+            member = guild.get_member(int(uid))
+            if member:
+                candidates.append(Candidate(member, mmr))
+        candidates.sort(key=lambda c: c.mmr)
+        # Start the interactive draft
+        header = discord.Embed(
+            title="Starting Immortal Draft",
+            description=f"Captains auto-selected: {cap1.mention} vs {cap2.mention}\n"
+                        f"Draft order: **1–2–2–2–1**\n"
+                        f"Pick clock: **20s** + reserve **30s** per pick.\n"
+                        f"Players shown left→right by **actual MMR**.",
+            color=discord.Color.gold()
+        )
+        await ctx.send(embed=header)
+        session = ImmortalDraftSession(
+            bot=ctx.bot,
+            guild=guild,
+            channel=ctx.channel,
+            cap1=cap1,
+            cap2=cap2,
+            candidates=candidates,
+            per_pick_seconds=50
+        )
+        await session.start()
+
     # ================================ ℹ️ Help Command ================================
 
     @bot.command(name="help")
@@ -1006,5 +1059,5 @@ def attach_commands(bot, deps):
                 "**!randompoll** - Starts polling for random live matches in this server.\n"
             )
         else:
-            help_text = "❌ Unknown help category. Try `!help` or `!help admin`."
+            help_text = "Unknown help category. Try `!help` or `!help admin`."
         await ctx.send(f"{help_text}")
