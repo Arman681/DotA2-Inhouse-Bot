@@ -49,7 +49,6 @@ def attach_commands(bot, deps):
     lobby_players                = deps["lobby_players"]
     lobby_message                = deps["lobby_message"]
     inhouse_mode                 = deps["inhouse_mode"]
-    captain_draft_state          = deps["captain_draft_state"]
     update_lobby_embed           = deps["update_lobby_embed"]
     build_lobby_embed            = deps["build_lobby_embed"]
     save_lobby_players           = deps["save_lobby_players"]
