@@ -1369,6 +1369,7 @@ deps = {
     "lobby_players": lobby_players,
     "lobby_message": lobby_message,
     "inhouse_mode": inhouse_mode,
+    "captain_draft_state": captain_draft_state,
     "update_lobby_embed": update_lobby_embed,
     "build_lobby_embed": build_lobby_embed,
     "save_lobby_players": save_lobby_players,
