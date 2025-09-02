@@ -887,6 +887,11 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
         candidates=candidates,
     )
     await session.start()
+    # Reset the "running" flag when the draft session completes
+    if session.timer_task:
+        session.timer_task.add_done_callback(
+            lambda _t, gid=guild.id: immortal_draft_running.__setitem__(gid, False)
+        )
     return session
 
 # ================================ ⚖️ Team Balancing ================================
