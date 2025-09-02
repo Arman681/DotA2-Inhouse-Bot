@@ -1,5 +1,5 @@
 # immortal_draft.py
-import asyncio, datetime
+import asyncio
 import discord
 from discord import ui
 from typing import List, Dict, Optional, Tuple
@@ -36,11 +36,14 @@ class ImmortalDraftSession:
         self.teams: Dict[str, List[int]] = {"cap1": [], "cap2": []}
         self.per_pick_seconds = per_pick_seconds
         self.current_turn_index = 0
-        self.remaining_this_turn = self.per_pick_seconds
         self.message: Optional[discord.Message] = None
         self.view: Optional["ImmortalDraftView"] = None
         self.timer_task: Optional[asyncio.Task] = None
         self.locked = False
+        # 5s per pick + 60s reserve per captain (cumulative across the whole draft)
+        self.turn_base_seconds = 5
+        self.reserve = {"cap1": 60, "cap2": 60}  # each captain has their own pool
+        self.turn_remaining = self.turn_base_seconds
 
     def _turn_info(self) -> Tuple[str, int]:
         who, count = PICK_ORDER[self.current_turn_index]
@@ -61,7 +64,7 @@ class ImmortalDraftSession:
     def _next_turn(self):
         if self.current_turn_index < len(PICK_ORDER) - 1:
             self.current_turn_index += 1
-            self.remaining_this_turn = self.per_pick_seconds
+            self.turn_remaining = self.turn_base_seconds  # new pick window
         else:
             self.locked = True
 
@@ -119,9 +122,15 @@ class ImmortalDraftSession:
         status = "Draft complete" if self.locked else f"🪪 Turn: {now_captain.mention} (needs **{need}**)"
         e.add_field(name="Status", value=status, inline=False)
         if not self.locked:
-            e.add_field(name="Pick Timer",
-                        value=f"Time left: **{self.remaining_this_turn:02d}s** (20s + 30s reserve)",
-                        inline=False)
+            reserve_left = max(0, int(self.reserve[who]))
+            e.add_field(
+                name="Pick Timer",
+                value=(
+                    f"Turn time: **{int(self.turn_remaining):02d}s**  |  "
+                    f"Reserve ({now_captain.display_name}): **{reserve_left:02d}s**"
+                ),
+                inline=False
+            )
         e.set_footer(text="Order: 1–2–2–2–1 · Low→High MMR display")
         return e
 
@@ -145,23 +154,15 @@ class ImmortalDraftSession:
         who, _ = self._turn_info()
         self.teams[who].append(target_id)
         self.available_ids.remove(target_id)
-        if self._is_turn_over():
+        # disable & relabel the picked player’s button
+        if self.view:
+            self.view.mark_picked(target_id)
+        # if this captain still has another pick in this chunk, refresh the 5s window
+        if not self._is_turn_over():
+            self.turn_remaining = self.turn_base_seconds
+        else:
             self._next_turn()
         return True, "Picked!"
-
-    async def autopick_if_needed(self) -> bool:
-        if self.locked:
-            return False
-        target_id = self._autopick_member_id()
-        if target_id is None:
-            self.locked = True
-            return False
-        who, _ = self._turn_info()
-        self.teams[who].append(target_id)
-        self.available_ids.remove(target_id)
-        if self._is_turn_over():
-            self._next_turn()
-        return True
 
     async def start(self):
         self.view = ImmortalDraftView(self)
@@ -172,62 +173,97 @@ class ImmortalDraftSession:
         try:
             while not self.locked:
                 await asyncio.sleep(1)
-                self.remaining_this_turn -= 1
-                if self.remaining_this_turn <= 0:
-                    # timeout -> autopick
-                    changed = await self.autopick_if_needed()
-                    self.remaining_this_turn = self.per_pick_seconds
+                if self.locked:
+                    break
+                who, _ = self._turn_info()
+                if self.turn_remaining > 0:
+                    self.turn_remaining -= 1
+                else:
+                    # consume this captain's reserve if any
+                    if self.reserve[who] > 0:
+                        self.reserve[who] -= 1
+                    else:
+                        # out of time completely -> autopick one player
+                        await self._timeout_autopick()
+                # push UI update
                 if self.message:
                     await self.message.edit(embed=self.make_embed(), view=self.view)
-            # lock view when done
+            # finished: lock view and post results (your existing code)
             if self.view:
                 self.view.disable_all()
                 if self.message:
                     await self.message.edit(embed=self.make_embed(), view=self.view)
-            # announce final teams
             t1, t2, total1, total2 = self.team_lines()
             await self.channel.send(
                 embed=discord.Embed(
                     title="Draft Results",
-                    description=f"**Team #1 (Captain {self.cap1.display_name})**\n{t1}\n**MMR Total:** {total1}\n\n"
-                                f"**Team #2 (Captain {self.cap2.display_name})**\n{t2}\n**MMR Total:** {total2}\n\n"
-                                f"Move to your in-game lobby teams and begin Captains Mode.",
+                    description=(
+                        f"**Team #1 (Captain {self.cap1.display_name})**\n{t1}\n**MMR Total:** {total1}\n\n"
+                        f"**Team #2 (Captain {self.cap2.display_name})**\n{t2}\n**MMR Total:** {total2}\n\n"
+                        f"Move to your in-game lobby teams and begin Captains Mode."
+                    ),
                     color=discord.Color.green()
                 )
             )
         except asyncio.CancelledError:
             pass
+    
+    async def _timeout_autopick(self):
+        # autopick the highest remaining MMR (your existing policy)
+        target_id = self._autopick_member_id()
+        if target_id is None:
+            self.locked = True
+            return
+        who, _ = self._turn_info()
+        self.teams[who].append(target_id)
+        self.available_ids.remove(target_id)
+        if self.view:
+            self.view.mark_picked(target_id)
+        # if the captain still has another pick in this chunk, reset the 5s turn timer;
+        # otherwise advance to the next captain (reserve does NOT reset).
+        if not self._is_turn_over():
+            self.turn_remaining = self.turn_base_seconds
+        else:
+            self._next_turn()
 
 class ImmortalDraftView(ui.View):
     def __init__(self, session: ImmortalDraftSession):
         super().__init__(timeout=None)
         self.session = session
-        # Add one button per candidate (8 total)
+        self.button_by_id: dict[int, "PickButton"] = {}
         for cand in self.session.candidates:
-            self.add_item(PickButton(cand.member.id, cand.display()))
-
+            btn = PickButton(cand.member.id, cand.display())
+            self.button_by_id[cand.member.id] = btn   # <— store
+            self.add_item(btn)
     def disable_all(self):
         for child in self.children:
             if isinstance(child, ui.Button):
                 child.disabled = True
+    # mark a specific button as picked
+    def mark_picked(self, target_id: int):
+        btn = self.button_by_id.get(target_id)
+        if btn:
+            btn.mark_picked()
 
 class PickButton(ui.Button):
     def __init__(self, target_id: int, label_text: str):
         super().__init__(label=label_text, style=discord.ButtonStyle.secondary)
         self.target_id = target_id
-
+        self.base_label = label_text  # remember original text
+    # when this player is picked (manually or auto), disable & relabel the button
+    def mark_picked(self):
+        self.disabled = True
+        # buttons don’t render ~~strike~~ markdown; a plain suffix is clearest
+        self.label = f"{self.base_label} (picked)"
+        self.style = discord.ButtonStyle.danger
     async def callback(self, interaction: discord.Interaction):
         s = self.view.session  # type: ignore
-        # only current captain can pick
         if not s.pickable_for(interaction.user.id):
             return await interaction.response.send_message("Not your turn.", ephemeral=True)
         if self.target_id not in s.available_ids:
             return await interaction.response.send_message("Already taken.", ephemeral=True)
-
         ok, msg = await s.apply_pick(interaction.user.id, self.target_id)
         if not ok:
             return await interaction.response.send_message(msg, ephemeral=True)
-
-        # If taken, disable this button's label visually by prefixing ✓ and strike in embed
-        self.disabled = True
+        # refresh the message
         await interaction.response.edit_message(embed=s.make_embed(), view=self.view)
