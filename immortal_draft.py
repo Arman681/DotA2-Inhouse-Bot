@@ -135,16 +135,11 @@ class ImmortalDraftSession:
         return e
 
     def _autopick_member_id(self) -> Optional[int]:
-        if not self.available_ids:
-            return None
-        # Auto-pick highest remaining MMR (rightmost)
-        rightmost = None
-        max_mmr = -1
-        for c in self.candidates:
-            if c.member.id in self.available_ids and c.mmr >= max_mmr:
-                rightmost = c.member.id
-                max_mmr = c.mmr
-        return rightmost
+        # Auto-pick lowest remaining MMR (leftmost)
+        for c in self.candidates:            # candidates are sorted low→high at init
+            if c.member.id in self.available_ids:
+                return c.member.id
+        return None
 
     async def apply_pick(self, picker_id: int, target_id: int) -> Tuple[bool, str]:
         if not self.pickable_for(picker_id):
@@ -209,7 +204,7 @@ class ImmortalDraftSession:
             pass
     
     async def _timeout_autopick(self):
-        # autopick the highest remaining MMR (your existing policy)
+        # autopick the lowest remaining MMR
         target_id = self._autopick_member_id()
         if target_id is None:
             self.locked = True
