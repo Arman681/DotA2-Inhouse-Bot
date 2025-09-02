@@ -4,7 +4,6 @@ import math
 import time
 import discord
 from discord.ext import commands
-from immortal_draft import ImmortalDraftSession, Candidate  # add near other imports
 
 def attach_commands(bot, deps):
     # ---- pull in all helpers/state you already have in FeederBot.py ----
@@ -60,6 +59,7 @@ def attach_commands(bot, deps):
     save_inhouse_mode_for_guild  = deps["save_inhouse_mode_for_guild"]
     save_preferred_roles_setting = deps["save_preferred_roles_setting"]
     refresh_lobby_member_mmr     = deps["refresh_lobby_member_mmr"]
+    start_immortal_draft         = deps["start_immortal_draft"]
 
     # Guild settings
     save_guild_prefix            = deps["save_guild_prefix"]
@@ -959,55 +959,14 @@ def attach_commands(bot, deps):
         else:
             await ctx.send(f"An unexpected error occurred in `!pose`: `{error}`")
 
-    @bot.command(name="immortaldraft")
+    @bot.command(name="immortaldraft", help="Launch the Immortal Draft using the current lobby captains and pool.")
     @is_admin_or_has_role()
     async def immortaldraft_cmd(ctx):
-        guild_id = ctx.guild.id
-
-        # Make sure we are in immortal mode with a full lobby
-        if inhouse_mode.get(guild_id) != "immortal":
-            return await ctx.reply("This command only works in Immortal mode.", mention_author=False)
-
-        players = lobby_players.get(guild_id, [])
-        if len(players) != 10:
-            return await ctx.reply("Immortal Draft requires exactly 10 players in the lobby.", mention_author=False)
-
-        draft_state = captain_draft_state.get(guild_id)
-        if not draft_state:
-            return await ctx.reply("No captains found. Press 🚀 in the lobby first.", mention_author=False)
-        # Captains + pool were already generated
-        captains, pool, _ = draft_state["pairs"][draft_state["index"]]
-        c1, c2 = captains
-        # Convert captains/pool into Member + Candidate objects
-        guild = ctx.guild
-        cap1 = guild.get_member(int(c1[0]))
-        cap2 = guild.get_member(int(c2[0]))
-        candidates = []
-        for uid, name, mmr in pool:
-            member = guild.get_member(int(uid))
-            if member:
-                candidates.append(Candidate(member, mmr))
-        candidates.sort(key=lambda c: c.mmr)
-        # Start the interactive draft
-        header = discord.Embed(
-            title="Starting Immortal Draft",
-            description=f"Captains auto-selected: {cap1.mention} vs {cap2.mention}\n"
-                        f"Draft order: **1–2–2–2–1**\n"
-                        f"Pick clock: **20s** + reserve **30s** per pick.\n"
-                        f"Players shown left→right by **actual MMR**.",
-            color=discord.Color.gold()
-        )
-        await ctx.send(embed=header)
-        session = ImmortalDraftSession(
-            bot=ctx.bot,
-            guild=guild,
-            channel=ctx.channel,
-            cap1=cap1,
-            cap2=cap2,
-            candidates=candidates,
-            per_pick_seconds=50
-        )
-        await session.start()
+        try:
+            await start_immortal_draft(ctx.bot, ctx.guild, ctx.channel)
+        except Exception as e:
+            # keep errors quiet but informative for admins
+            await ctx.reply(f"Failed to start Immortal Draft: `{e}`", mention_author=False)
 
     # ================================ ℹ️ Help Command ================================
 
