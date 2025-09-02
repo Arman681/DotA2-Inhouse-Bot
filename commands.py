@@ -59,6 +59,7 @@ def attach_commands(bot, deps):
     load_inhouse_mode_for_guild  = deps["load_inhouse_mode_for_guild"]
     save_inhouse_mode_for_guild  = deps["save_inhouse_mode_for_guild"]
     save_preferred_roles_setting = deps["save_preferred_roles_setting"]
+    refresh_lobby_member_mmr     = deps["refresh_lobby_member_mmr"]
 
     # Guild settings
     save_guild_prefix            = deps["save_guild_prefix"]
@@ -128,6 +129,7 @@ def attach_commands(bot, deps):
                 f"🔄 {target.mention}, your Steam ID `{steam_id}` has been force-updated "
                 f"with an estimated MMR of **{mmr if mmr is not None else 'N/A'}**."
             )
+            await refresh_lobby_member_mmr(ctx.guild, target, mmr)
             return
         # Case A
         if existing_steam_id is not None and isinstance(existing_mmr, (int, float)):
@@ -165,6 +167,7 @@ def attach_commands(bot, deps):
             }, merge=True)
             if mmr is not None:
                 await ctx.send(f"{target.mention}, your MMR has been set to **{mmr}**.")
+                await refresh_lobby_member_mmr(ctx.guild, target, mmr)
             else:
                 await ctx.send(f"{target.mention}, Steam ID was linked earlier, but I still couldn’t determine your MMR.")
             return
@@ -194,6 +197,7 @@ def attach_commands(bot, deps):
                 f"{target.mention}, your Steam ID `{steam_id}` has been linked "
                 f"with an estimated MMR of **{mmr}**."
             )
+            await refresh_lobby_member_mmr(ctx.guild, target, mmr)
         else:
             await ctx.send(
                 f"{target.mention}, Steam ID linked, but MMR could not be determined."
@@ -577,6 +581,7 @@ def attach_commands(bot, deps):
             user_ref = db.collection("players").document(str(member.id))
             user_ref.set({"mmr": mmr}, merge=True)
             await ctx.send(f"{member.mention}'s MMR has been manually set to **{mmr}**.")
+            await refresh_lobby_member_mmr(ctx.guild, member, mmr)
         except Exception as e:
             await ctx.send(f"Failed to set MMR due to an error: {e}")
     @setmmr.error
