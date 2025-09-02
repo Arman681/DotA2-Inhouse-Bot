@@ -62,6 +62,7 @@ display_name = {}          # {steam_id: display_name}
 _last_fetch_stats = {}         # {guild_id: (checked_total, passed_total)}
 _last_active_match_id = {}     # {guild_id: last_match_id}
 _last_selected_match_id = {}   # {guild_id: selected_match_id}
+immortal_draft_running: dict[int, bool] = {}   # guild_id -> started?
 
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
@@ -1065,7 +1066,7 @@ async def on_raw_reaction_add(payload):
                     await channel.send(f"{user.mention} left the full lobby. Lobby is now 9/10.")
                     # Remove 🚀 and ♻️
                     for reaction in message.reactions:
-                        if str(reaction.emoji) in ["🚀", "♻️"]:
+                        if str(reaction.emoji) in ["🚀", "♻️", "⚔️"]:
                             await message.clear_reaction(reaction.emoji)
                 break
     elif emoji == "🚀" and len(lobby_players[guild_id]) == 10:
@@ -1103,6 +1104,8 @@ async def on_raw_reaction_add(payload):
         await message.add_reaction("👍")
         await message.add_reaction("👎")
         await message.add_reaction("♻️")
+        if mode == "immortal":
+            await message.add_reaction("⚔️")
         await message.remove_reaction(payload.emoji, user)
         # Start live match polling if not already started
         match = None
@@ -1136,6 +1139,47 @@ async def on_raw_reaction_add(payload):
                 await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
         else:
             await channel.send("No live match was found within 15 minutes. Please restart the lobby.")
+    elif emoji == "⚔️":
+        # Only allow in immortal mode
+        if inhouse_mode.get(guild_id, "regular") != "immortal":
+            # silently ignore; final "always remove" will clear the reaction
+            pass
+        else:
+            # Must have a captain pair chosen by the 🚀 flow
+            state = captain_draft_state.get(guild_id)
+            if not state or "pairs" not in state or "index" not in state:
+                # no captain pair configured; do nothing (final remove below)
+                pass
+            else:
+                # Resolve the two captain IDs allowed to start the draft
+                try:
+                    captains, pool, _ = state["pairs"][state["index"]]
+                    c1_id, _, _ = captains[0]
+                    c2_id, _, _ = captains[1]
+                    allowed_ids = {int(c1_id), int(c2_id)}
+                except Exception:
+                    allowed_ids = set()
+                if user_id not in allowed_ids:
+                    # Non-captain pressed ⚔️ — do nothing (final remove below)
+                    pass
+                else:
+                    # Guard against double-starts
+                    if not immortal_draft_running.get(guild_id):
+                        immortal_draft_running[guild_id] = True
+                        # Optional: clear ⚔️ from the message so it can't be pressed again
+                        try:
+                            await message.clear_reaction("⚔️")
+                        except Exception:
+                            pass
+                        # Start the Immortal Draft in this channel
+                        try:
+                            await start_immortal_draft(bot, guild, channel)
+                        except Exception as e:
+                            immortal_draft_running[guild_id] = False  # allow retry if failed
+                            try:
+                                await channel.send(f"Failed to start Immortal Draft: `{e}`")
+                            except Exception:
+                                pass
     elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
         # Get the member object from the guild
@@ -1340,7 +1384,7 @@ def build_immortal_embed(captains, pool, guild, reroll_count):
     embed.add_field(name="Captain 2", value=f"{c2[1]} ({c2[2]})", inline=True)
     embed.add_field(
         name="🧩 Draft Pool",
-        value=", ".join(f"{p[1]} ({p[2]})" for p in sorted(pool, key=lambda x: x[2], reverse=True)),
+        value=", ".join(f"{p[1]} ({p[2]})" for p in sorted(pool, key=lambda x: x[2])),
         inline=False
     )
     password = load_lobby_password_for_guild(guild.id)
