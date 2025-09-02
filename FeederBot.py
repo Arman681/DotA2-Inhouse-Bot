@@ -802,6 +802,25 @@ def get_preferred_roles(player_id):
             return data["preferred_roles"]
     return None  # Neutral: no preferences set
 
+async def refresh_lobby_member_mmr(guild: discord.Guild, member: discord.Member, new_mmr=None):
+    """If member is in the current guild's lobby, update their MMR (if provided
+    or fetch from Firestore) and refresh the lobby embed."""
+    gid = guild.id
+    if gid not in lobby_players:
+        return  # nothing to do
+    # Find user in the lobby list [(user_id, name, mmr), ...]
+    for idx, (uid, name, old_mmr) in enumerate(list(lobby_players[gid])):
+        if uid == member.id:
+            mmr_val = new_mmr
+            if mmr_val is None:
+                snap = db.collection("players").document(str(member.id)).get()
+                data = snap.to_dict() if snap.exists else {}
+                mmr_val = data.get("mmr", old_mmr)
+            lobby_players[gid][idx] = (uid, name, mmr_val)
+            save_lobby_players(gid, lobby_players[gid])
+            await update_lobby_embed(guild)   # edits the existing lobby message
+            break
+
 # ================================ ⚖️ Team Balancing ================================
 
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
@@ -1377,6 +1396,7 @@ deps = {
     "save_lobby_password_for_guild": save_lobby_password_for_guild,
     "load_inhouse_mode_for_guild": load_inhouse_mode_for_guild,
     "save_inhouse_mode_for_guild": save_inhouse_mode_for_guild,
+    "refresh_lobby_member_mmr": refresh_lobby_member_mmr,
     # guild settings
     "save_guild_prefix": save_guild_prefix,
     "load_guild_prefix": load_guild_prefix,
