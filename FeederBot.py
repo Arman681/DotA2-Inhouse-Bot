@@ -26,6 +26,7 @@ from commands import attach_commands
 from mmr_manager import adjust_mmr, get_inhouse_mmr, get_top_players
 from betting_manager import clear_guild_bets, get_balance, place_bet, resolve_bets, clear_all_bets, update_balance
 from match_tracker import fetch_match_result
+from immortal_draft import ImmortalDraftSession, Candidate
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -821,6 +822,72 @@ async def refresh_lobby_member_mmr(guild: discord.Guild, member: discord.Member,
             await update_lobby_embed(guild)   # edits the existing lobby message
             break
 
+# FeederBot.py
+async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextChannel):
+    """
+    Launch an Immortal Draft using the captains/pool chosen when 🚀 was pressed.
+    Reads from captain_draft_state[guild_id] and lobby_players[guild_id].
+    """
+    gid = guild.id
+    # Require immortal mode + a full lobby
+    mode = inhouse_mode.get(gid)
+    if mode != "immortal":
+        await channel.send("This command only works after starting an **Immortal** lobby.")
+        return
+    players = lobby_players.get(gid, [])
+    if len(players) != 10:
+        await channel.send("Immortal Draft requires exactly **10** players in the lobby.")
+        return
+    # Pull captains + pool from the state set when 🚀 was pressed
+    state = captain_draft_state.get(gid)
+    if not state or "pairs" not in state or "index" not in state:
+        await channel.send("No captains found. Press 🚀 in the Immortal lobby first.")
+        return
+    try:
+        captains, pool, _diff = state["pairs"][state["index"]]
+    except Exception:
+        await channel.send("Could not read captain pair. Try pressing 🚀 again.")
+        return
+    # Resolve captains (tuples are (user_id, name, mmr))
+    c1_id, _c1_name, _c1_mmr = captains[0]
+    c2_id, _c2_name, _c2_mmr = captains[1]
+    cap1 = guild.get_member(int(c1_id))
+    cap2 = guild.get_member(int(c2_id))
+    if not cap1 or not cap2:
+        await channel.send("One or both captains are no longer in the server.")
+        return
+    # Build Candidate objects from the 8-player pool (tuples are (user_id, name, mmr))
+    candidates = []
+    for uid, _name, mmr in pool:
+        m = guild.get_member(int(uid))
+        if m and not m.bot:
+            candidates.append(Candidate(member=m, mmr=int(mmr)))
+    if len(candidates) != 8:
+        await channel.send("Need **8 non-captain** players available for the draft.")
+        return
+    # Announce and start
+    header = discord.Embed(
+        title="Starting Immortal Draft",
+        description=(
+            f"Captains: {cap1.mention} vs {cap2.mention}\n"
+            f"Draft order: **1–2–2–2–1**\n"
+            f"Pick clock: **5s per pick** + **60s personal reserve** (cumulative)\n"
+            f"Players are shown low→high by **actual MMR**."
+        ),
+        color=discord.Color.gold()
+    )
+    await channel.send(embed=header)
+    session = ImmortalDraftSession(
+        bot=bot,
+        guild=guild,
+        channel=channel,
+        cap1=cap1,
+        cap2=cap2,
+        candidates=candidates,
+    )
+    await session.start()
+    return session
+
 # ================================ ⚖️ Team Balancing ================================
 
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
@@ -1397,6 +1464,7 @@ deps = {
     "load_inhouse_mode_for_guild": load_inhouse_mode_for_guild,
     "save_inhouse_mode_for_guild": save_inhouse_mode_for_guild,
     "refresh_lobby_member_mmr": refresh_lobby_member_mmr,
+    "start_immortal_draft": start_immortal_draft,
     # guild settings
     "save_guild_prefix": save_guild_prefix,
     "load_guild_prefix": load_guild_prefix,
