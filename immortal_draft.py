@@ -10,7 +10,6 @@ class Candidate:
     def __init__(self, member: discord.Member, mmr: int):
         self.member = member
         self.mmr = mmr
-
     def display(self) -> str:
         return f"{self.member.display_name} · {self.mmr}"
 
@@ -114,11 +113,9 @@ class ImmortalDraftSession:
         e.add_field(name="Captain #1", value=f"{self.cap1.mention}", inline=True)
         e.add_field(name="Captain #2", value=f"{self.cap2.mention}", inline=True)
         e.add_field(name="\u200b", value="\u200b", inline=True)
-
         e.add_field(name="Team #1", value=f"{team1}\n**Team MMR:** {total1}", inline=True)
         e.add_field(name="Team #2", value=f"{team2}\n**Team MMR:** {total2}", inline=True)
         e.add_field(name="\u200b", value="\u200b", inline=True)
-
         status = "Draft complete" if self.locked else f"Turn: {now_captain.mention} (needs **{need}**)"
         e.add_field(name="Status", value=status, inline=False)
         if not self.locked:
