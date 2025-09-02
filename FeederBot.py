@@ -1279,11 +1279,13 @@ async def on_guild_join(guild):
 # ============================= 📋 Lobby Embed Functions =============================
 
 # Builds and returns a lobby embed showing current players and the server's password.
-def build_lobby_embed(guild, mode="regular"):
+def build_lobby_embed(guild, mode: Optional[str] = None):
     guild_id = guild.id
-    if guild_id not in inhouse_mode:
-        inhouse_mode[guild_id] = load_inhouse_mode_for_guild(guild.id)
-        mode = inhouse_mode[guild_id]
+    if mode is None:
+        mode = inhouse_mode.get(guild_id, "regular")
+        if mode is None:
+            mode = load_inhouse_mode_for_guild(guild.id)
+            inhouse_mode[guild_id] = mode
     embed = discord.Embed(
         title="DotA2 Inhouse Lobby",
         #description=f"**Mode:** `{mode.capitalize()}`\n({len(lobby_players[guild.id])}/10)",
