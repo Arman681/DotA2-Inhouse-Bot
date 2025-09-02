@@ -847,7 +847,7 @@ def attach_commands(bot, deps):
         enabled = (mode == "on")
         save_preferred_roles_setting(ctx.guild.id, enabled, set_by=ctx.author)
         await update_lobby_embed(ctx.guild)
-        status = "enabled ✅" if enabled else "disabled ❌"
+        status = "enabled" if enabled else "disabled"
         await ctx.send(f"Preferred roles integration is now {status} for team balancing.")
     @toggle_preferred_roles.error
     async def toggle_preferred_roles_error(ctx, error):
