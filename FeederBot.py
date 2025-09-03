@@ -63,6 +63,10 @@ _last_fetch_stats = {}         # {guild_id: (checked_total, passed_total)}
 _last_active_match_id = {}     # {guild_id: last_match_id}
 _last_selected_match_id = {}   # {guild_id: selected_match_id}
 immortal_draft_running: dict[int, bool] = {}   # guild_id -> started?
+# --- Captain selection policy ---
+ALLOWED_CAPTAIN_POLICIES = {"min_diff", "top2_if_close", "simulate"}
+captain_policy_by_guild: dict[int, str] = {}          # e.g. { 123: "min_diff" }
+captain_policy_threshold_by_guild: dict[int, int] = {} # e.g. { 123: 150 } (only for top2_if_close)
 
 MAX_ROLLS = 5  # for regular
 IMMORTAL_MAX_ROLLS = 3  # for immortal
@@ -243,7 +247,6 @@ def save_guild_prefix(guild_id, prefix, server_name=None, set_by=None):
         "prefix": prefix,
         "prefix_set_by": set_by,
         "prefix_timestamp": firestore.SERVER_TIMESTAMP,
-        "server_name": server_name,
     }
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"prefix": data}, merge=True)
@@ -354,6 +357,45 @@ def load_preferred_roles_setting(guild_id):
     if doc.exists:
         return doc.to_dict().get("preferred_roles_setting", {}).get("preferred_roles_enabled", True)  # Default: enabled
     return True
+
+def get_captain_policy(guild_id: int) -> tuple[str, int | None]:
+    # Memory cache first
+    if guild_id in captain_policy_by_guild:
+        return captain_policy_by_guild[guild_id], captain_policy_threshold_by_guild.get(guild_id)
+    # Load from Firestore
+    doc = db.collection("guild_specific_info").document(str(guild_id)).get()
+    if doc.exists:
+        data = doc.to_dict() or {}
+        nested = data.get("captain_policy", {})
+        pol = nested.get("captain_policy", "min_diff")
+        thr = nested.get("captain_policy_threshold")  # may be None
+    else:
+        pol, thr = "min_diff", None
+    captain_policy_by_guild[guild_id] = pol
+    if thr is not None:
+        captain_policy_threshold_by_guild[guild_id] = int(thr)
+    else:
+        captain_policy_threshold_by_guild.pop(guild_id, None)
+    return pol, thr
+
+def set_captain_policy(guild_id: int, policy: str, threshold: int | None = None, set_by: str | None = None) -> None:
+    if policy not in ALLOWED_CAPTAIN_POLICIES:
+        raise ValueError(f"Invalid policy: {policy}")
+    # update in-memory cache
+    captain_policy_by_guild[guild_id] = policy
+    if threshold is not None:
+        captain_policy_threshold_by_guild[guild_id] = int(threshold)
+    elif policy != "top2_if_close":
+        captain_policy_threshold_by_guild.pop(guild_id, None)
+    data = {
+        "captain_policy": policy,
+        "captain_policy_set_by": set_by,
+        "captain_policy_timestamp": firestore.SERVER_TIMESTAMP,
+    }
+    if policy == "top2_if_close":
+        data["captain_policy_threshold"] = int(threshold or 150)
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"captain_policy": data}, merge=True)
 
 # ============================ 🎯 MMR, STRATZ, and Steam Integration ============================
 
@@ -795,6 +837,58 @@ def get_all_captain_pairs(players):
     pairs.sort(key=lambda x: x[2])  # sort by diff
     return pairs  # List of (captain_pair, pool, diff)
 
+# Choose which captain pair to start on among all_pairs ([(captains, pool, diff), ...])
+def choose_captain_pair_index(
+    players: list[tuple[int, str, int]],   # [(user_id, name, mmr)]
+    all_pairs: list[tuple[tuple[tuple[int, str, int], tuple[int, str, int]], list[tuple[int, str, int]], int]],
+    policy: str = "min_diff",              # "min_diff" | "top2_if_close" | "simulate"
+    threshold: int = 150                   # used by top2_if_close
+) -> int:
+    """
+    Return the index into all_pairs for the preferred captain pair.
+    all_pairs[i] = (captains=(pA, pB), pool=[...8 players...], diff=<mmr gap between captains>)
+    """
+    # Safety: empty/all sanity
+    if not all_pairs:
+        return 0
+    # min_diff -> all_pairs already sorted by diff asc in your current code
+    if policy == "min_diff":
+        return 0
+    # top2_if_close -> if top-2 gap <= threshold, pick that pair; else min_diff (index 0)
+    if policy == "top2_if_close":
+        sorted_players = sorted(players, key=lambda x: x[2])  # low->high
+        top2 = (sorted_players[-2], sorted_players[-1])
+        top2_ids = {top2[0][0], top2[1][0]}
+        top2_diff = abs(top2[1][2] - top2[0][2])
+        if top2_diff <= threshold:
+            for i, (caps, _pool, _d) in enumerate(all_pairs):
+                if {caps[0][0], caps[1][0]} == top2_ids:
+                    return i
+        return 0
+    # simulate -> evaluate all pairs by expected team MMR diff after greedy 1-2-2-2-1 picks
+    if policy == "simulate":
+        def simulate_score(caps, pool):
+            # Include captain MMRs in team totals (they play on the teams they captain)
+            cap1, cap2 = caps
+            totals = {"cap1": cap1[2], "cap2": cap2[2]}
+            remaining = sorted(pool, key=lambda x: x[2])  # low->high
+            pick_order = [("cap1", 1), ("cap2", 2), ("cap1", 2), ("cap2", 2), ("cap1", 1)]
+            for who, cnt in pick_order:
+                for _ in range(cnt):
+                    if not remaining:
+                        break
+                    pick = remaining.pop()  # greedy: take highest remaining
+                    totals[who] += pick[2]
+            return abs(totals["cap1"] - totals["cap2"])
+        best_i, best_score = 0, None
+        for i, (caps, pool, _d) in enumerate(all_pairs):
+            s = simulate_score(caps, pool)
+            if best_score is None or s < best_score:
+                best_i, best_score = i, s
+        return best_i
+    # Fallback
+    return 0
+
 # Retrieves a player's saved role preferences from Firestore
 def get_preferred_roles(player_id):
     doc = db.collection("players").document(str(player_id)).get()
@@ -1097,13 +1191,22 @@ async def on_raw_reaction_add(payload):
             roll_count[guild_id] = 1
         elif mode == "immortal":
             all_pairs = get_all_captain_pairs(lobby_players[guild_id])
+            pol, thr = get_captain_policy(guild_id)
+            # pick the starting pair index according to your policy
+            # choices: "min_diff" (current), "top2_if_close", "simulate"
+            preferred_index = choose_captain_pair_index(
+                lobby_players[guild_id],
+                all_pairs,
+                policy=pol,
+                threshold=(thr if isinstance(thr, int) else 200)
+            )
             captain_draft_state[guild_id] = {
                 "pairs": all_pairs,
-                "index": 0
+                "index": preferred_index
             }
-            captains, pool, _ = all_pairs[0]
+            captains, pool, _ = all_pairs[preferred_index]
             original_teams[guild_id] = (captains, pool)
-            embed = build_immortal_embed(captains, pool, guild, 0)
+            embed = build_immortal_embed(captains, pool, guild, preferred_index)
         await message.edit(embed=embed)
         await message.clear_reactions()
         await message.add_reaction("👍")
@@ -1509,6 +1612,7 @@ deps = {
     "captain_draft_state": captain_draft_state,
     "update_lobby_embed": update_lobby_embed,
     "build_lobby_embed": build_lobby_embed,
+    "build_immortal_embed": build_immortal_embed,
     "save_lobby_players": save_lobby_players,
     "save_lobby_message_id": save_lobby_message_id,
     "save_lobby_password_for_guild": save_lobby_password_for_guild,
@@ -1516,6 +1620,10 @@ deps = {
     "save_inhouse_mode_for_guild": save_inhouse_mode_for_guild,
     "refresh_lobby_member_mmr": refresh_lobby_member_mmr,
     "start_immortal_draft": start_immortal_draft,
+    "get_captain_policy": get_captain_policy,
+    "set_captain_policy": set_captain_policy,
+    "choose_captain_pair_index": choose_captain_pair_index,
+    "get_all_captain_pairs": get_all_captain_pairs,
     # guild settings
     "save_guild_prefix": save_guild_prefix,
     "load_guild_prefix": load_guild_prefix,
