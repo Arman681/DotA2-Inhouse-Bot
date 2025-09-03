@@ -48,7 +48,6 @@ def attach_commands(bot, deps):
     # Lobby state + helpers
     lobby_players                = deps["lobby_players"]
     lobby_message                = deps["lobby_message"]
-    inhouse_mode                 = deps["inhouse_mode"]
     update_lobby_embed           = deps["update_lobby_embed"]
     build_lobby_embed            = deps["build_lobby_embed"]
     save_lobby_players           = deps["save_lobby_players"]
@@ -59,12 +58,19 @@ def attach_commands(bot, deps):
     save_preferred_roles_setting = deps["save_preferred_roles_setting"]
     refresh_lobby_member_mmr     = deps["refresh_lobby_member_mmr"]
     start_immortal_draft         = deps["start_immortal_draft"]
+    get_captain_policy           = deps["get_captain_policy"]
+    set_captain_policy           = deps["set_captain_policy"]
+    choose_captain_pair_index    = deps["choose_captain_pair_index"]
 
     # Guild settings
     save_guild_prefix            = deps["save_guild_prefix"]
     load_guild_prefix            = deps["load_guild_prefix"]
     save_league_guild_mapping    = deps["save_league_guild_mapping"]
     live_channel_ids             = deps["live_channel_ids"]
+    inhouse_mode = deps["inhouse_mode"]
+    captain_draft_state = deps["captain_draft_state"]
+    get_all_captain_pairs = deps["get_all_captain_pairs"]
+    build_immortal_embed = deps["build_immortal_embed"]
 
     # Misc helpers
     get_discord_id_from_steam_id = deps["get_discord_id_from_steam_id"]
@@ -966,6 +972,63 @@ def attach_commands(bot, deps):
         except Exception as e:
             # keep errors quiet but informative for admins
             await ctx.reply(f"Failed to start Immortal Draft: `{e}`", mention_author=False)
+    
+    @bot.command(name="captainpolicy", help="Show or set the captain selection policy: min_diff | top2_if_close [threshold] | simulate")
+    @is_admin_or_has_role()
+    async def captainpolicy_cmd(ctx, policy: str = None, threshold: int = None):
+        gid = ctx.guild.id
+        # Show current setting
+        if policy is None:
+            pol, thr = get_captain_policy(gid)
+            extra = f" (threshold {thr})" if pol == "top2_if_close" and thr is not None else ""
+            return await ctx.reply(f"Captain policy: **{pol}**{extra}\nOptions: `min_diff`, `top2_if_close [threshold]`, `simulate`.", mention_author=False)
+        policy = policy.lower()
+        if policy not in {"min_diff", "top2_if_close", "simulate"}:
+            return await ctx.reply("Invalid policy. Use: `min_diff`, `top2_if_close [threshold]`, or `simulate`.", mention_author=False)
+        # For top2_if_close, require or default threshold
+        if policy == "top2_if_close":
+            if threshold is None:
+                threshold = 150
+        else:
+            threshold = None
+        try:
+            set_captain_policy(gid, policy, threshold, set_by=str(ctx.author))
+        except Exception as e:
+            return await ctx.reply(f"Failed to save policy: `{e}`", mention_author=False)
+        msg = f"Captain policy set to **{policy}**"
+        if policy == "top2_if_close":
+            msg += f" with threshold **{threshold}s**" if isinstance(threshold, int) else ""
+        # If we’re already in Immortal mode with 10 players and a lobby embed, re-seed
+        applied = False
+        try:
+            if inhouse_mode.get(gid) == "immortal" and len(lobby_players.get(gid, [])) == 10:
+                # recompute pairs + preferred index and refresh the lobby display
+                all_pairs = get_all_captain_pairs(lobby_players[gid])
+                # reuse the saved threshold (or 150 if none)
+                thr = threshold if threshold is not None else get_captain_policy(gid)[1] or 150
+                from_feeder = deps.get("choose_captain_pair_index")
+                if from_feeder:
+                    preferred_index = from_feeder(lobby_players[gid], all_pairs, policy, thr)
+                else:
+                    # simple import-less fallback (min_diff = 0)
+                    preferred_index = 0 if policy == "min_diff" else 0
+                captain_draft_state[gid] = {"pairs": all_pairs, "index": preferred_index}
+                captains, pool, _ = all_pairs[preferred_index]
+                embed = build_immortal_embed(captains, pool, ctx.guild, preferred_index)
+                msg = lobby_message.get(gid)
+                if msg:
+                    try:
+                        await msg.edit(embed=embed)
+                        applied = True
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        if applied:
+            msg += " (applied to the current lobby)."
+        else:
+            msg += " (will take effect next time captains are generated)."
+        await ctx.reply(msg, mention_author=False)
 
     # ================================ ℹ️ Help Command ================================
 
@@ -1017,9 +1080,14 @@ def attach_commands(bot, deps):
                 "**!viewlogs --verbose** - View full detailed logs for this server.\n"
                 "**!bindleague `league_id`** - Binds a Steam league ID to the current Discord server for live match tracking.\n"
                 "**!setlivechannel** - Sets the current text channel as the destination for live match embed updates.\n"
+                "**!setcaptainpolicy `policy`** - Sets the captain selection policy for the lobby.\n"
+                "Policies: • `min_diff` — Choose the pair with the lowest MMR difference (default) \n"
+                "           • `top2_if_close` — If the top 2 players are close in MMR, prioritize them as captains \n"
+                "           • `simulate` — Simulate a draft to determine captains based on role fit and MMR \n"
                 "**!startpolling** - Starts live match polling for the bound league in this server.\n"
                 "**!stoppolling** - Stops live match polling for this server.\n"
                 "**!randompoll** - Starts polling for random live matches in this server.\n"
+                "**!immortal_draft** - Starts immortal draft."
             )
         else:
             help_text = "Unknown help category. Try `!help` or `!help admin`."
