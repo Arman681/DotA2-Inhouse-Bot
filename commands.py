@@ -644,6 +644,7 @@ def attach_commands(bot, deps):
         elif isinstance(error, commands.CheckFailure):
             await ctx.send("You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' role.")
 
+    @commands.cooldown(1, 60, commands.BucketType.guild)
     @bot.command(name="viewlogs")
     @is_admin_or_has_role()
     async def viewlogs(ctx, *, flags: str = ""):
@@ -706,12 +707,35 @@ def attach_commands(bot, deps):
                 lines.append(f"\n🎯 **Preferred Roles Integration**:\n  • Status: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n  • Set by: {preferred_roles_set_by}\n  • Timestamp: {preferred_roles_time}\n  • Field: preferred_roles_enabled = {preferred_roles_enabled}")
             else:
                 lines.append(f"\n🎯 **Preferred Roles Integration**: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n Set by: {preferred_roles_set_by}\n Time: {preferred_roles_time}")
+            # --- Captain Policy (policy + optional threshold) ---
+            captain_data = data.get("captain_policy", {}) or {}
+            # Values as stored by set_captain_policy()
+            pol = captain_data.get("captain_policy")              # "min_diff" | "top2_if_close" | "simulate"
+            thr = captain_data.get("captain_policy_threshold")    # int or None
+            pol_set_by = captain_data.get("captain_policy_set_by", "Unknown")
+            pol_time = captain_data.get("captain_policy_timestamp", "Unknown")
+            # Fallback to runtime getter (provides default "min_diff" when not set)
+            if pol is None:
+                try:
+                    pol, thr = get_captain_policy(guild_id)
+                except Exception:
+                    pol, thr = "min_diff", None
+            # Build one-line summary + extras
+            threshold_note = f" (threshold {thr})" if pol == "top2_if_close" and thr is not None else ""
+            if verbose:
+                lines.append(
+                    f"\n🧭 **Captain Policy**:\n  • Value: `{pol}`{threshold_note}\n  • Set by: {pol_set_by}\n  • Timestamp: `{pol_time}`\n  • Full Doc: `{captain_data}`")
+            else:
+                lines.append(f"\n🧭 **Captain Policy**: `{pol}`{threshold_note}\n Set by: {pol_set_by}\n Time: {pol_time}")
         else:
             lines.append("No Firestore data found for this guild.")
         await ctx.send("\n".join(lines))
     @viewlogs.error
     async def viewlogs_error(ctx, error):
-        if isinstance(error, commands.CheckFailure):
+        if isinstance(error, commands.CommandOnCooldown):
+            wait = math.ceil(error.retry_after)
+            await ctx.send(f"⏳ Please wait {wait}s before using `!viewlogs` again.")
+        elif isinstance(error, commands.CheckFailure):
             await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
             await ctx.send("An unexpected error occurred while retrieving the logs.")
