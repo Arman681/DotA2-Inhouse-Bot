@@ -1206,7 +1206,7 @@ async def on_raw_reaction_add(payload):
             }
             captains, pool, _ = all_pairs[preferred_index]
             original_teams[guild_id] = (captains, pool)
-            embed = build_immortal_embed(captains, pool, guild, preferred_index)
+            embed = build_immortal_embed(captains, pool, guild, 1)
         await message.edit(embed=embed)
         await message.clear_reactions()
         await message.add_reaction("👍")
@@ -1323,10 +1323,10 @@ async def on_raw_reaction_add(payload):
                     "index": 0
                 }
             draft_state = captain_draft_state[guild_id]
-            draft_state["index"] = (draft_state["index"] + 1) % (max_rolls + 1)
+            draft_state["index"] = (draft_state["index"] + 1) % max_rolls
             captains, pool, _ = draft_state["pairs"][draft_state["index"]]
             original_teams[guild_id] = (captains, pool)
-            embed = build_immortal_embed(captains, pool, guild, draft_state["index"])
+            embed = build_immortal_embed(captains, pool, guild, draft_state["index"] + 1)
         await message.edit(embed=embed)
         await message.remove_reaction(payload.emoji, user)
     if updated:
