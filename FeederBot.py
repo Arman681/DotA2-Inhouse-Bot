@@ -1487,9 +1487,13 @@ def build_team_embed(team1, team2, score1, score2, roles1=None, roles2=None, gui
 # Builds the embed message for an Immortal Mode draft lobby, showing captains, pool, and reroll info
 def build_immortal_embed(captains, pool, guild, reroll_count):
     c1, c2 = captains
+    pol, thr = get_captain_policy(guild.id)
+    policy_display = pol
+    if pol == "top2_if_close":
+        policy_display = f"{pol} (threshold: {thr or 200})"
     embed = discord.Embed(
         title="🛡️ Immortal Draft Inhouse Lobby",
-        description=f"Captains: {c1[1]} ({c1[2]}) vs {c2[1]} ({c2[2]})\nRoll #{reroll_count}/{IMMORTAL_MAX_ROLLS}",
+        description=f"Captains: {c1[1]} ({c1[2]}) vs {c2[1]} ({c2[2]})\nRoll #{reroll_count}/{IMMORTAL_MAX_ROLLS}\nCaptain Pair Policy: **{policy_display}**",
         color=discord.Color.orange()
     )
     embed.add_field(name="Captain 1", value=f"{c1[1]} ({c1[2]})", inline=True)
