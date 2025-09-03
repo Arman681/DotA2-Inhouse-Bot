@@ -1295,6 +1295,8 @@ async def on_raw_reaction_add(payload):
         # Check if they are admin or have special roles
         if not await user_is_admin_or_has_role(member):
             return
+        if immortal_draft_running.get(guild_id):
+            return
         # REGULAR INHOUSE REROLL
         if mode == "regular":
             max_rolls = MAX_ROLLS
