@@ -975,60 +975,66 @@ def attach_commands(bot, deps):
     
     @bot.command(name="captainpolicy", help="Show or set the captain selection policy: min_diff | top2_if_close [threshold] | simulate")
     @is_admin_or_has_role()
-    async def captainpolicy_cmd(ctx, policy: str = None, threshold: int = None):
+    async def captainpolicy(ctx, policy: str = None, threshold: int | None = None):
         gid = ctx.guild.id
         # Show current setting
         if policy is None:
             pol, thr = get_captain_policy(gid)
             extra = f" (threshold {thr})" if pol == "top2_if_close" and thr is not None else ""
-            return await ctx.reply(f"Captain policy: **{pol}**{extra}\nOptions: `min_diff`, `top2_if_close [threshold]`, `simulate`.", mention_author=False)
+            return await ctx.reply(
+                f"📋 Captain policy: **{pol}**{extra}\n"
+                "Options: `min_diff`, `top2_if_close [threshold]`, `simulate`.",
+                mention_author=False
+            )
         policy = policy.lower()
         if policy not in {"min_diff", "top2_if_close", "simulate"}:
-            return await ctx.reply("Invalid policy. Use: `min_diff`, `top2_if_close [threshold]`, or `simulate`.", mention_author=False)
-        # For top2_if_close, require or default threshold
+            return await ctx.reply(
+                "❌ Invalid policy. Use: `min_diff`, `top2_if_close [threshold]`, or `simulate`.",
+                mention_author=False
+            )
+        # Handle threshold for top2_if_close
         if policy == "top2_if_close":
-            if threshold is None:
-                threshold = 150
+            try:
+                threshold = 200 if threshold is None else int(threshold)
+            except (TypeError, ValueError):
+                return await ctx.reply("Threshold must be an integer.", mention_author=False)
         else:
             threshold = None
+        # Save
         try:
             set_captain_policy(gid, policy, threshold, set_by=str(ctx.author))
         except Exception as e:
             return await ctx.reply(f"Failed to save policy: `{e}`", mention_author=False)
-        msg = f"Captain policy set to **{policy}**"
+        # Build confirmation text first
+        confirm = f"✅ Captain policy set to **{policy}**"
         if policy == "top2_if_close":
-            msg += f" with threshold **{threshold}s**" if isinstance(threshold, int) else ""
-        # If we’re already in Immortal mode with 10 players and a lobby embed, re-seed
+            confirm += f" (threshold **{threshold}**)"
         applied = False
+        # If we’re in Immortal mode with a full lobby, re-seed the lobby embed now
         try:
             if inhouse_mode.get(gid) == "immortal" and len(lobby_players.get(gid, [])) == 10:
-                # recompute pairs + preferred index and refresh the lobby display
                 all_pairs = get_all_captain_pairs(lobby_players[gid])
-                # reuse the saved threshold (or 150 if none)
-                thr = threshold if threshold is not None else get_captain_policy(gid)[1] or 150
-                from_feeder = deps.get("choose_captain_pair_index")
-                if from_feeder:
-                    preferred_index = from_feeder(lobby_players[gid], all_pairs, policy, thr)
-                else:
-                    # simple import-less fallback (min_diff = 0)
-                    preferred_index = 0 if policy == "min_diff" else 0
+                thr = threshold if threshold is not None else (get_captain_policy(gid)[1] or 200)
+                chooser = deps.get("choose_captain_pair_index") or choose_captain_pair_index
+                preferred_index = chooser(lobby_players[gid], all_pairs, policy=policy, threshold=thr)
                 captain_draft_state[gid] = {"pairs": all_pairs, "index": preferred_index}
                 captains, pool, _ = all_pairs[preferred_index]
-                embed = build_immortal_embed(captains, pool, ctx.guild, preferred_index)
-                msg = lobby_message.get(gid)
-                if msg:
-                    try:
-                        await msg.edit(embed=embed)
-                        applied = True
-                    except Exception:
-                        pass
+                # reroll display uses 1-based count
+                lobby_embed = build_immortal_embed(captains, pool, ctx.guild, preferred_index + 1)
+                lobby_msg = lobby_message.get(gid)
+                if lobby_msg:
+                    await lobby_msg.edit(embed=lobby_embed)
+                    applied = True
         except Exception:
             pass
-        if applied:
-            msg += " (applied to the current lobby)."
+        confirm += " (applied to the current lobby)." if applied else " (will take effect next time captains are generated)."
+        await ctx.reply(confirm, mention_author=False)
+    @captainpolicy.error
+    async def captainpolicy_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.send("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
-            msg += " (will take effect next time captains are generated)."
-        await ctx.reply(msg, mention_author=False)
+            await ctx.send(f"An unexpected error occurred while setting the captain policy: `{error}`")
 
     # ================================ ℹ️ Help Command ================================
 
@@ -1080,10 +1086,10 @@ def attach_commands(bot, deps):
                 "**!viewlogs --verbose** - View full detailed logs for this server.\n"
                 "**!bindleague `league_id`** - Binds a Steam league ID to the current Discord server for live match tracking.\n"
                 "**!setlivechannel** - Sets the current text channel as the destination for live match embed updates.\n"
-                "**!setcaptainpolicy `policy`** - Sets the captain selection policy for the lobby.\n"
+                "**!captainpolicy `policy`** - Sets the captain selection policy for the lobby.\n"
                 "Policies: • `min_diff` — Choose the pair with the lowest MMR difference (default) \n"
-                "           • `top2_if_close` — If the top 2 players are close in MMR, prioritize them as captains \n"
-                "           • `simulate` — Simulate a draft to determine captains based on role fit and MMR \n"
+                "           • `top2_if_close` `threshold` — If the top 2 players are close in MMR, prioritize them as captains and set a threshold\n"
+                "           • `simulate` — Simulate a draft to determine the captain pairs that lead to the most balanced teams after a plausible draft\n"
                 "**!startpolling** - Starts live match polling for the bound league in this server.\n"
                 "**!stoppolling** - Stops live match polling for this server.\n"
                 "**!randompoll** - Starts polling for random live matches in this server.\n"
@@ -1091,4 +1097,5 @@ def attach_commands(bot, deps):
             )
         else:
             help_text = "Unknown help category. Try `!help` or `!help admin`."
-        await ctx.send(f"{help_text}")
+        for chunk in [help_text[i:i+2000] for i in range(0, len(help_text), 2000)]:
+            await ctx.send(chunk)
