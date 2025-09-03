@@ -1140,7 +1140,7 @@ async def on_raw_reaction_add(payload):
     updated = False
     # Initialize data if needed
     lobby_players.setdefault(guild_id, [])
-    roll_count.setdefault(guild_id, 0)
+    roll_count.setdefault(guild_id, 1)
     team_rolls.setdefault(guild_id, [])
     original_teams.setdefault(guild_id, None)
     if emoji == "👍":
@@ -1187,8 +1187,8 @@ async def on_raw_reaction_add(payload):
             valid_team_combos[guild_id] = valid_combo_count
             team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][0]
             original_teams[guild_id] = (team1, team2, score1, score2, roles1, roles2)
-            embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
             roll_count[guild_id] = 1
+            embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
         elif mode == "immortal":
             all_pairs = get_all_captain_pairs(lobby_players[guild_id])
             pol, thr = get_captain_policy(guild_id)
