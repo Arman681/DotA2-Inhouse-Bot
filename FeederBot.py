@@ -20,6 +20,7 @@ import firebase_setup  # ensures Firebase is initialized before anything else
 from itertools import combinations
 from concurrent.futures import ThreadPoolExecutor
 from discord.ext import commands, tasks
+from discord import ui
 from dotenv import load_dotenv
 from firebase_admin import firestore
 from commands import attach_commands
@@ -889,6 +890,13 @@ def choose_captain_pair_index(
     # Fallback
     return 0
 
+def _find_lobby_tuple(gid: int, user_id: int):
+    """Return (user_id, display_name, mmr) for a lobby member, or None."""
+    for tup in lobby_players.get(gid, []):
+        if tup[0] == user_id:
+            return tup
+    return None
+
 # Retrieves a player's saved role preferences from Firestore
 def get_preferred_roles(player_id):
     doc = db.collection("players").document(str(player_id)).get()
@@ -1213,7 +1221,8 @@ async def on_raw_reaction_add(payload):
         await message.add_reaction("👎")
         await message.add_reaction("♻️")
         if mode == "immortal":
-            await message.add_reaction("⚔️")
+            await message.add_reaction("⚔️") # start draft
+            await message.add_reaction("🎯") # manual captain selection
         await message.remove_reaction(payload.emoji, user)
         # Start live match polling if not already started
         match = None
@@ -1288,6 +1297,24 @@ async def on_raw_reaction_add(payload):
                                 await channel.send(f"Failed to start Immortal Draft: `{e}`")
                             except Exception:
                                 pass
+    elif emoji == "🎯" and len(lobby_players[guild_id]) == 10:
+        # Only in Immortal mode
+        if inhouse_mode.get(guild_id, "regular") != "immortal":
+            await channel.send("Manual captain selection is only for **Immortal** mode.")
+            await message.remove_reaction(payload.emoji, user)
+            return
+        # Permission gate
+        if not await user_is_admin_or_has_role(user):
+            await channel.send(f"{user.mention} you need **Inhouse Admin** or server admin to select captains.")
+            await message.remove_reaction(payload.emoji, user)
+            return
+        # Post the selection view (admin chooses both captains)
+        view = ManualCaptainSelectView(guild, user, lobby_players[guild_id])
+        await channel.send(
+            "Select **two captains** for Immortal Draft (you have 2 minutes).",
+            view=view
+        )
+        await message.remove_reaction(payload.emoji, user)
     elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
         """# Get the member object from the guild
@@ -1323,9 +1350,14 @@ async def on_raw_reaction_add(payload):
                     "index": 0
                 }
             draft_state = captain_draft_state[guild_id]
-            draft_state["index"] = (draft_state["index"] + 1) % max_rolls
-            captains, pool, _ = draft_state["pairs"][draft_state["index"]]
-            original_teams[guild_id] = (captains, pool)
+            if draft_state and draft_state.get("manual"):
+                # Keep same captains/pool
+                captains, pool, _ = draft_state["pairs"][draft_state["index"]]
+                original_teams[guild_id] = (captains, pool)
+            else:
+                draft_state["index"] = (draft_state["index"] + 1) % max_rolls
+                captains, pool, _ = draft_state["pairs"][draft_state["index"]]
+                original_teams[guild_id] = (captains, pool)
             embed = build_immortal_embed(captains, pool, guild, draft_state["index"] + 1)
         await message.edit(embed=embed)
         await message.remove_reaction(payload.emoji, user)
@@ -1577,6 +1609,79 @@ async def format_live_match_embed(match, guild):
         inline=False
     )
     return embed
+
+class ManualCaptainSelectView(ui.View):
+    def __init__(self, guild: discord.Guild, chooser: discord.Member, players: list[tuple[int,str,int]]):
+        super().__init__(timeout=120)
+        self.guild = guild
+        self.chooser = chooser
+        self.players = players
+        self.selected: list[int] = []
+        # 10 players -> 5 per row looks nice; adjust if desired
+        for i, (uid, name, mmr) in enumerate(players):
+            row = i // 5
+            label = f"{name} · {mmr}"
+            self.add_item(CaptainSelectButton(uid, label, row=row))
+
+    async def on_timeout(self):
+        for c in self.children:
+            if isinstance(c, ui.Button):
+                c.disabled = True
+
+class CaptainSelectButton(ui.Button):
+    def __init__(self, user_id: int, label: str, row: int | None = None):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary, row=row)
+        self.user_id = user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        view: ManualCaptainSelectView = self.view  # type: ignore
+        if interaction.user.id != view.chooser.id:
+            return await interaction.response.send_message("Only the admin who started selection can pick captains.", ephemeral=True)
+        if self.user_id in view.selected:
+            return await interaction.response.send_message("Already selected.", ephemeral=True)
+        # mark this selection
+        view.selected.append(self.user_id)
+        self.disabled = True
+        self.style = discord.ButtonStyle.success
+        await interaction.response.edit_message(view=view)
+        # when we have 2, finalize
+        if len(view.selected) == 2:
+            gid = view.guild.id
+            p1 = _find_lobby_tuple(gid, view.selected[0])
+            p2 = _find_lobby_tuple(gid, view.selected[1])
+            if not p1 or not p2:
+                return await interaction.followup.send("Could not resolve selected captains from the lobby.", ephemeral=True)
+            # pool = remaining 8 players
+            pool = [p for p in view.players if p[0] not in (p1[0], p2[0])]
+            # shape matches existing draft state: [((p1,p2), pool, diff)]
+            diff = abs(p1[2] - p2[2])
+            captain_draft_state[gid] = {"pairs": [((p1, p2), pool, diff)], "index": 0, "manual": True}
+            # update the lobby embed with chosen captains + pool
+            try:
+                embed = build_immortal_embed((p1, p2), pool, view.guild, reroll_count=1)
+                msg = lobby_message.get(gid)
+                if msg:
+                    await msg.edit(embed=embed)
+                    # ensure ⚔️ is present to start draft
+                    try:
+                        await msg.clear_reaction("⚔️")
+                    except Exception:
+                        pass
+                    await msg.add_reaction("⚔️")
+            except Exception as e:
+                await interaction.followup.send(f"Failed to update embed: `{e}`", ephemeral=True)
+                return
+            await interaction.followup.send(
+                f"Captains set: <@{p1[0]}> vs <@{p2[0]}>. Press ⚔️ to start the Immortal Draft."
+            )
+            # lock view
+            for c in view.children:
+                if isinstance(c, ui.Button):
+                    c.disabled = True
+            try:
+                await interaction.edit_original_response(view=view)
+            except Exception:
+                pass
 
 deps = {
     # checks
