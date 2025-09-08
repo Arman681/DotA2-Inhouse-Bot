@@ -44,6 +44,10 @@ class ImmortalDraftSession:
         self.reserve = {"cap1": 60, "cap2": 60}  # each captain has their own pool
         self.turn_remaining = self.turn_base_seconds
 
+    async def _refresh_ui(self):
+        if self.message:
+            await self.message.edit(embed=self.make_embed(), view=self.view)
+
     def _turn_info(self) -> Tuple[str, int]:
         who, count = PICK_ORDER[self.current_turn_index]
         return who, count
@@ -149,6 +153,7 @@ class ImmortalDraftSession:
         # disable & relabel the picked player’s button
         if self.view:
             self.view.mark_picked(target_id)
+        await self._refresh_ui()
         # if this captain still has another pick in this chunk, refresh the 5s window
         if not self._is_turn_over():
             self.turn_remaining = self.turn_base_seconds
@@ -211,6 +216,7 @@ class ImmortalDraftSession:
         self.available_ids.remove(target_id)
         if self.view:
             self.view.mark_picked(target_id)
+        await self._refresh_ui()
         # if the captain still has another pick in this chunk, reset the 5s turn timer;
         # otherwise advance to the next captain (reserve does NOT reset).
         if not self._is_turn_over():
@@ -223,8 +229,9 @@ class ImmortalDraftView(ui.View):
         super().__init__(timeout=None)
         self.session = session
         self.button_by_id: dict[int, "PickButton"] = {}
-        for cand in self.session.candidates:
-            btn = PickButton(cand.member.id, cand.display())
+        for idx, cand in enumerate(self.session.candidates):
+            row = idx // 4
+            btn = PickButton(cand.member.id, cand.display(), row=row)
             self.button_by_id[cand.member.id] = btn   # <— store
             self.add_item(btn)
     def disable_all(self):
@@ -238,8 +245,8 @@ class ImmortalDraftView(ui.View):
             btn.mark_picked()
 
 class PickButton(ui.Button):
-    def __init__(self, target_id: int, label_text: str):
-        super().__init__(label=label_text, style=discord.ButtonStyle.secondary)
+    def __init__(self, target_id: int, label_text: str, row: int | None = None):
+        super().__init__(label=label_text, style=discord.ButtonStyle.secondary, row=row)
         self.target_id = target_id
         self.base_label = label_text  # remember original text
     # when this player is picked (manually or auto), disable & relabel the button
