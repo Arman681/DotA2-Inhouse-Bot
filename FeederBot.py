@@ -1244,7 +1244,7 @@ async def on_raw_reaction_add(payload):
             if guild_id not in polling_tasks:
                 active_match_ids[guild_id] = match_id
                 polling_tasks[guild_id] = asyncio.create_task(poll_live_match(match_id, guild))
-                await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {guild.name}")
+                await channel.send(f"Started match polling for match ID {match_id} in {guild.name}")
         else:
             await channel.send("No live match was found within 15 minutes. Please restart the lobby.")
     elif emoji == "⚔️":
