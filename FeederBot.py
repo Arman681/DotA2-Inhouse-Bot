@@ -890,12 +890,33 @@ def choose_captain_pair_index(
     # Fallback
     return 0
 
-def _find_lobby_tuple(gid: int, user_id: int):
+def find_lobby_tuple(gid: int, user_id: int):
     """Return (user_id, display_name, mmr) for a lobby member, or None."""
     for tup in lobby_players.get(gid, []):
         if tup[0] == user_id:
             return tup
     return None
+
+def clear_manual_if_lobby_changed(gid: int) -> bool:
+    """
+    If manual captain selection was set and the lobby has changed since,
+    clear captain_draft_state and return True. Otherwise return False.
+    """
+    state = captain_draft_state.get(gid)
+    if not state or not state.get("manual"):
+        return False
+    try:
+        captains, pool, _ = state["pairs"][state["index"]]
+    except Exception:
+        # corrupted/invalid state → clear
+        captain_draft_state.pop(gid, None)
+        return True
+    original_ids = {p[0] for p in captains} | {p[0] for p in pool}    # 10 ids
+    current_ids  = {uid for uid, _, _ in lobby_players.get(gid, [])}  # current lobby
+    if original_ids != current_ids:
+        captain_draft_state.pop(gid, None)
+        return True
+    return False
 
 # Retrieves a player's saved role preferences from Firestore
 def get_preferred_roles(player_id):
@@ -1162,6 +1183,8 @@ async def on_raw_reaction_add(payload):
             lobby_players[guild_id].append((user.id, display_name, mmr))
             updated = True
             save_lobby_players(guild_id, lobby_players[guild_id])
+            if clear_manual_if_lobby_changed(guild_id):
+                await channel.send("⚠️ Lobby changed—manual captain selection cleared.")
     elif emoji == "👎":
         was_full = len(lobby_players[guild_id]) == 10
         for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
@@ -1169,6 +1192,8 @@ async def on_raw_reaction_add(payload):
                 del lobby_players[guild_id][i]
                 updated = True
                 save_lobby_players(guild_id, lobby_players[guild_id])
+                if clear_manual_if_lobby_changed(guild_id):
+                    await channel.send("⚠️ Lobby changed—manual captain selection cleared.")
                 if len(lobby_players[guild_id]) == 9 and was_full:
                     await channel.send(f"{user.mention} left the full lobby. Lobby is now 9/10.")
                     # Remove 🚀 and ♻️
@@ -1627,6 +1652,13 @@ class ManualCaptainSelectView(ui.View):
         for c in self.children:
             if isinstance(c, ui.Button):
                 c.disabled = True
+        # UI refresh + channel notice
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+                await self.message.channel.send("Manual captain selection timed out — press 🎯 to try again.")
+        except Exception:
+            pass
 
 class CaptainSelectButton(ui.Button):
     def __init__(self, user_id: int, label: str, row: int | None = None):
@@ -1647,8 +1679,8 @@ class CaptainSelectButton(ui.Button):
         # when we have 2, finalize
         if len(view.selected) == 2:
             gid = view.guild.id
-            p1 = _find_lobby_tuple(gid, view.selected[0])
-            p2 = _find_lobby_tuple(gid, view.selected[1])
+            p1 = find_lobby_tuple(gid, view.selected[0])
+            p2 = find_lobby_tuple(gid, view.selected[1])
             if not p1 or not p2:
                 return await interaction.followup.send("Could not resolve selected captains from the lobby.", ephemeral=True)
             # pool = remaining 8 players
