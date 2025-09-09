@@ -207,6 +207,10 @@ def attach_commands(bot, deps):
             await ctx.send(
                 f"{target.mention}, Steam ID linked, but MMR could not be determined."
             )
+        guild_id = str(ctx.guild.id)
+        user_id  = str(target.id)
+        nickname = target.nick or target.display_name
+        update_balance(guild_id, user_id, 0, nickname=nickname)  # delta 0 seeds to 1000
     @cfg_cmd.error
     async def cfg_cmd_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
