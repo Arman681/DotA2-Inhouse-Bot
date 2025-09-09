@@ -10,18 +10,29 @@ db = firestore.client()
 # ====================================
 
 def get_balance(guild_id, user_id):
-    doc = db.collection("wallets").document(str(guild_id)) \
-            .collection("users").document(str(user_id)).get()
-    return doc.to_dict().get("balance", 1000) if doc.exists else 1000
+    ref = db.collection("wallets").document(str(guild_id)) \
+            .collection("users").document(str(user_id))
+    snap = ref.get()
+    if snap.exists:
+        return snap.to_dict().get("balance", 1000)
+    # Auto-seed
+    ref.set({"balance": 1000}, merge=True)
+    return 1000
 
 def update_balance(guild_id, user_id, delta, nickname=None):
-    data = {
-        "balance": firestore.Increment(int(delta))
-    }
+    ref = db.collection("wallets").document(str(guild_id)) \
+           .collection("users").document(str(user_id))
+    snap = ref.get()
+    if snap.exists and isinstance(snap.to_dict(), dict):
+        current = snap.to_dict().get("balance", 1000)
+    else:
+        # Seed brand-new wallets at 1000 to match get_balance()
+        current = 1000
+    new_balance = int(current) + int(delta)
+    payload = {"balance": new_balance}
     if nickname:
-        data["nickname"] = nickname
-    db.collection("wallets").document(str(guild_id)) \
-      .collection("users").document(str(user_id)).set(data, merge=True)
+        payload["nickname"] = nickname
+    ref.set(payload, merge=True)
 
 # ====================================
 # 🔹 BETTING FUNCTIONS
