@@ -1441,7 +1441,7 @@ async def on_guild_join(guild):
 def build_lobby_embed(guild, mode: Optional[str] = None):
     guild_id = guild.id
     if mode is None:
-        mode = inhouse_mode.get(guild_id, "regular")
+        mode = inhouse_mode.get(guild_id)
         if mode is None:
             mode = load_inhouse_mode_for_guild(guild.id)
             inhouse_mode[guild_id] = mode
