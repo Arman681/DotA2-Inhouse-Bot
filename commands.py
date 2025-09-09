@@ -281,7 +281,7 @@ def attach_commands(bot, deps):
                 )
             else:
                 await ctx.send(
-                    "ℹYou’re not in the current match. Please specify a team:\n"
+                    "You’re not in the current match. Please specify a team:\n"
                     "`!bet <amount> <radiant|dire>`"
                 )
                 return
