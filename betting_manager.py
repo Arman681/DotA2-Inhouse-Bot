@@ -9,14 +9,17 @@ db = firestore.client()
 # 🔹 WALLET FUNCTIONS
 # ====================================
 
-def get_balance(guild_id, user_id):
+def get_balance(guild_id, user_id, nickname=None):
     ref = db.collection("wallets").document(str(guild_id)) \
             .collection("users").document(str(user_id))
     snap = ref.get()
     if snap.exists:
         return snap.to_dict().get("balance", 1000)
     # Auto-seed
-    ref.set({"balance": 1000}, merge=True)
+    payload = {"balance": 1000}
+    if nickname:
+        payload["nickname"] = nickname
+    ref.set(payload, merge=True)
     return 1000
 
 def update_balance(guild_id, user_id, delta, nickname=None):
@@ -69,7 +72,7 @@ def resolve_bets(guild_id, winning_team):
             if team == winning_team:
                 wallet_ref = db.collection("wallets").document(str(guild_id)).collection("users").document(str(user_id))
                 # stake + winnings in one atomic add, no read
-                batch.set(wallet_ref, {"balance": firestore.Increment(amount * 2)}, merge=True)
+                batch.set(wallet_ref, {"balance": firestore.Increment(amount * 2), "nickname": nickname}, merge=True)
                 logs.append(("win", user_id, amount, team, nickname))
             else:
                 logs.append(("lose", user_id, amount, team, nickname))

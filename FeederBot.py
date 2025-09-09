@@ -180,7 +180,11 @@ async def poll_live_match(match_id, guild, random_mode=False):
     batch = db.batch()
     for discord_id in all_player_ids:
         wallet_ref = db.collection("wallets").document(str(guild.id)).collection("users").document(str(discord_id))
-        batch.set(wallet_ref, {"balance": firestore.Increment(50)}, merge=True)
+        for discord_id in all_player_ids:
+            member = guild.get_member(int(discord_id))
+            nickname = member.display_name if member else str(discord_id)
+            # use your betting_manager helper so nickname is persisted
+            update_balance(guild.id, str(discord_id), 50, nickname=nickname)
     try:
         batch.commit()
         print(f"[DEBUG] Awarded 50 coins to {len(all_player_ids)} participants in match {match_id}")

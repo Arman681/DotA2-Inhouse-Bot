@@ -323,7 +323,7 @@ def attach_commands(bot, deps):
                 return
             delta = amount - previous_bet
             is_update = True
-        current_balance = get_balance(ctx.guild.id, ctx.author.id)
+        current_balance = get_balance(ctx.guild.id, ctx.author.id, nickname=nickname)
         if (current_balance + previous_bet) < amount:
             await ctx.send("You don’t have enough balance.")
         else:
@@ -353,7 +353,7 @@ def attach_commands(bot, deps):
         member = member or ctx.author
         user_id = str(member.id)
         guild_id = str(ctx.guild.id)
-        coins = get_balance(guild_id, user_id)
+        coins = get_balance(guild_id, user_id, nickname=member.display_name)
         await ctx.send(f"{member.display_name}'s balance: `{coins}` coins.")
 
     @bot.command(name="send")
@@ -364,7 +364,7 @@ def attach_commands(bot, deps):
         sender_id = str(ctx.author.id)
         receiver_id = str(member.id)
         guild_id = str(ctx.guild.id)
-        sender_balance = get_balance(guild_id, sender_id)
+        sender_balance = get_balance(guild_id, sender_id, nickname=ctx.author.display_name)
         if sender_id == receiver_id:
             await ctx.send("You cannot send coins to yourself.")
             return
