@@ -342,9 +342,9 @@ def attach_commands(bot, deps):
     @bet.error
     async def bet_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: `!bet <amount> [radiant|dire]`")
+            await ctx.reply("Usage: !bet `<amount>` `[radiant|dire]`")
         elif isinstance(error, commands.BadArgument):
-            await ctx.reply("Invalid argument. Usage: `!bet <amount> [radiant|dire]` — make sure `<amount>` is a number.")
+            await ctx.reply("Invalid argument. Usage: !bet `<amount>` `[radiant|dire]` — make sure `<amount>` is a number.")
         else:
             await ctx.reply("An unexpected error occurred while placing your bet.")
 
@@ -377,9 +377,9 @@ def attach_commands(bot, deps):
     @send_coins.error
     async def send_coins_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: `!send <amount> <@user>`")
+            await ctx.reply("Usage: !send `<amount>` `<@user>`")
         elif isinstance(error, commands.BadArgument):
-            await ctx.reply("Invalid argument. Usage: `!send <amount> <@user>` — make sure `<amount>` is a number and `<@user>` is a valid user.")
+            await ctx.reply("Invalid argument. Usage: !send `<amount>` `<@user>` — make sure `<amount>` is a number and `<@user>` is a valid user.")
         else:
             await ctx.reply("An unexpected error occurred while sending coins.")
 
@@ -392,7 +392,7 @@ def attach_commands(bot, deps):
         target = member or ctx.author
         if member and member != ctx.author:
             if not await user_is_admin_or_has_role(ctx.author):
-                await ctx.reply("You do not have permission to set roles for other users.")
+                await ctx.reply("You do not have permission to set roles for other users. Only admins or Inhouse Admins can do that.")
                 return
         user_id = str(target.id)
         doc_ref = db.collection("players").document(user_id)
@@ -404,7 +404,7 @@ def attach_commands(bot, deps):
     @set_preferred_roles.error
     async def set_preferred_roles_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("You must provide 5 role numbers in order of preference.\nExample: `!setpreferredroles 3 2 4 5 1`")
+            await ctx.reply("You must provide 5 role numbers in order of most preferred to least preferred, **spaced out**.\nExample: `!setpreferredroles 3 2 4 5 1`")
         elif isinstance(error, commands.BadArgument):
             await ctx.reply("Invalid input. Make sure the first five values are numbers (1–5), followed optionally by a valid @user mention.")
         elif isinstance(error, commands.UserInputError):
@@ -438,7 +438,7 @@ def attach_commands(bot, deps):
     @bot.command(name="add")
     async def add_to_lobby(ctx, *members: discord.Member):
         if not members:
-            await ctx.reply("Usage: `!add @player1 [@player2 ...]`")
+            await ctx.reply("Usage: !add `@player1` `[@player2 ...]`")
             return
         guild_id = ctx.guild.id
         if guild_id not in lobby_players:
@@ -464,7 +464,7 @@ def attach_commands(bot, deps):
     @bot.command(name="remove")
     async def remove_from_lobby(ctx, *members: discord.Member):
         if not members:
-            await ctx.reply("Usage: `!remove @player1 [@player2 ...]`")
+            await ctx.reply("Usage: !remove `@player1` `[@player2 ...]`")
             return
         guild_id = ctx.guild.id
         removed = []
@@ -527,7 +527,7 @@ def attach_commands(bot, deps):
     @bot.command(name="reset")
     async def reset(ctx, *args):
         if args:
-            await ctx.reply("Usage: `!reset` (no extra arguments allowed)")
+            await ctx.reply("Usage: !reset (no extra arguments allowed)")
             return
         guild_id = ctx.guild.id
         lobby_players[guild_id] = []
@@ -596,7 +596,7 @@ def attach_commands(bot, deps):
     @setmmr.error
     async def set_mmr_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: `!setmmr <mmr> @user`")
+            await ctx.reply("Usage: !setmmr `<mmr>` `<@user>`")
         elif isinstance(error, commands.CheckFailure):
             await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
@@ -631,7 +631,7 @@ def attach_commands(bot, deps):
     @set_password.error
     async def set_password_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: `!setpassword <new_password>`")
+            await ctx.reply("Usage: !setpassword `<new_password>`")
         elif isinstance(error, commands.CheckFailure):
             await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
@@ -644,7 +644,7 @@ def attach_commands(bot, deps):
     @change_prefix.error
     async def change_prefix_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: `!changeprefix <new_prefix>`")
+            await ctx.reply("Usage: !changeprefix `<new_prefix>`")
         elif isinstance(error, commands.CheckFailure):
             await ctx.reply("You do not have permission to change the prefix. You must be a server admin or have the 'Inhouse Admin' role.")
 
@@ -771,7 +771,7 @@ def attach_commands(bot, deps):
     @submitmatch.error
     async def submitmatch_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: `!submitmatch <match_id>`")
+            await ctx.reply("Usage: !submitmatch `<match_id>`")
         elif isinstance(error, commands.CheckFailure):
             await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         elif isinstance(error, commands.BadArgument):
@@ -787,7 +787,7 @@ def attach_commands(bot, deps):
     @bind_league_to_guild.error
     async def bindleague_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: `!bindleague <league_id>`")
+            await ctx.reply("Usage: !bindleague `<league_id>`")
         elif isinstance(error, commands.CheckFailure):
             await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
@@ -875,7 +875,7 @@ def attach_commands(bot, deps):
     async def toggle_preferred_roles(ctx, mode: str):
         mode = mode.lower()
         if mode not in ["on", "off"]:
-            await ctx.reply("Usage: `!toggle_roles on` or `!toggle_roles off`")
+            await ctx.reply("Usage: !toggle_roles `<on|off>`")
             return
         enabled = (mode == "on")
         save_preferred_roles_setting(ctx.guild.id, enabled, set_by=ctx.author)
@@ -888,17 +888,17 @@ def attach_commands(bot, deps):
             # e.g., user typed `!toggle_roles` with no argument
             await ctx.reply(
                 "Missing required argument `mode`.\n"
-                "Usage: `!toggle_roles on` or `!toggle_roles off`"
+                "Usage: !toggle_roles `<on|off>`"
             )
         elif isinstance(error, commands.BadArgument):
             await ctx.reply(
                 "Invalid argument for `mode`. Use `on` or `off`.\n"
-                "Usage: `!toggle_roles on` or `!toggle_roles off`"
+                "Usage: !toggle_roles `<on|off>`"
             )
         elif isinstance(error, commands.UserInputError):
             await ctx.reply(
                 "Incorrect usage.\n"
-                "Usage: `!toggle_roles on` or `!toggle_roles off`"
+                "Usage: !toggle_roles `<on|off>`"
             )
         elif isinstance(error, commands.CheckFailure):
             await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
@@ -952,7 +952,7 @@ def attach_commands(bot, deps):
         Usage: !pose @user <other command and args>
         """
         if not raw.strip():
-            return await ctx.reply("Usage: `!pose @user <other command with args>`")
+            return await ctx.reply("Usage: !pose `<@user>` `<other command with args>`")
         if raw.strip().lower().startswith(("pose ", "!pose")):
             return await ctx.reply("You can’t pose a `pose` command.")
         # Resolve dynamic prefix
