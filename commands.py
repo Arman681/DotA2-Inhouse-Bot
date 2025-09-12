@@ -213,8 +213,8 @@ def attach_commands(bot, deps):
         update_balance(guild_id, user_id, 0, nickname=nickname)  # delta 0 seeds to 1000
     @cfg_cmd.error
     async def cfg_cmd_error(ctx, error):
-        if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: `!cfg <steam_id>` (optional: `@user`)")
+        if isinstance(error, (commands.MissingRequiredArgument, commands.BadArgument, commands.UserInputError)):
+            await ctx.reply("Usage: !cfg `<steam_id>` (optional (admin-only): `[@user]` `[--force]`)")
 
     @bot.command(name="mmr")
     async def mmr_lookup(ctx, member: discord.Member = None):
