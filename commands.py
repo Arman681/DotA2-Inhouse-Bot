@@ -505,10 +505,10 @@ def attach_commands(bot, deps):
         inhouse_mode[guild_id] = selected_mode
         if guild_id not in lobby_players:
             lobby_players[guild_id] = existing_players
-        try:
+        """try:
             await ctx.message.delete()
         except discord.Forbidden:
-            pass
+            pass"""
         if guild_id in lobby_message:
             try:
                 await lobby_message[guild_id].delete()
