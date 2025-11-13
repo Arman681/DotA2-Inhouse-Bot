@@ -823,7 +823,7 @@ def attach_commands(bot, deps):
             if ctx.guild.id not in polling_tasks:
                 active_match_ids[ctx.guild.id] = match_id
                 polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild, random_mode=False))
-                await channel.send(f"[🚀] Started match polling for match ID {match_id} in guild {ctx.guild.name}")
+                await channel.send(f"Started match polling for match ID {match_id} in guild {ctx.guild.name}")
                 random_polling_flags[ctx.guild.id] = False
         else:
             await channel.send("No live match found for the bound league.")
