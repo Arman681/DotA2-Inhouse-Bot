@@ -58,6 +58,7 @@ match_tracking_start_times = {}  # {guild_id: unix_timestamp}
 random_polling_flags = {}        # {guild_id: True/False}
 valid_team_combos = {}     # {guild_id: int} for how many valid team combinations were found
 prefix_cache = {}          # {guild_id: prefix}
+rocket_lock = {}           # {guild_id: True/False}
 display_name = {}          # {steam_id: display_name}
 # Debug log de-dupers to avoid noisy repeats during polling
 _last_fetch_stats = {}         # {guild_id: (checked_total, passed_total)}
@@ -1199,85 +1200,101 @@ async def on_raw_reaction_add(payload):
                             await message.clear_reaction(reaction.emoji)
                 break
     elif emoji == "🚀" and len(lobby_players[guild_id]) == 10:
-        mode = inhouse_mode.get(guild_id, "regular")
-        if mode == "regular":
-            team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id], guild_id)
-            if not team_rolls[guild_id]:
-                await channel.send(
-                    "Cannot form teams with the current MMR threshold (≤100). "
-                    "Either set missing MMRs (`!cfg <steam_id>`) or let me try a relaxed threshold…"
-                )
-                # optional automatic fallback (see #2 below)
-                team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(
-                    lobby_players[guild_id], guild_id, max_mmr_diff=400  # try 400 first
-                )
-            if not team_rolls[guild_id]:
-                await channel.send("Still no valid combos. Please set MMRs or disable the strict threshold.")
-                return
-            valid_team_combos[guild_id] = valid_combo_count
-            team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][0]
-            original_teams[guild_id] = (team1, team2, score1, score2, roles1, roles2)
-            roll_count[guild_id] = 1
-            embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
-        elif mode == "immortal":
-            all_pairs = get_all_captain_pairs(lobby_players[guild_id])
-            pol, thr = get_captain_policy(guild_id)
-            # pick the starting pair index according to your policy
-            # choices: "min_diff" (current), "top2_if_close", "simulate"
-            preferred_index = choose_captain_pair_index(
-                lobby_players[guild_id],
-                all_pairs,
-                policy=pol,
-                threshold=(thr if isinstance(thr, int) else 200)
-            )
-            captain_draft_state[guild_id] = {
-                "pairs": all_pairs,
-                "index": preferred_index
-            }
-            captains, pool, _ = all_pairs[preferred_index]
-            original_teams[guild_id] = (captains, pool)
-            embed = build_immortal_embed(captains, pool, guild, 1)
-        await message.edit(embed=embed)
-        await message.clear_reactions()
-        await message.add_reaction("👍")
-        await message.add_reaction("👎")
-        await message.add_reaction("♻️")
-        if mode == "immortal":
-            await message.add_reaction("⚔️") # start draft
-            await message.add_reaction("🎯") # manual captain selection
-        await message.remove_reaction(payload.emoji, user)
-        # Start live match polling if not already started
-        match = None
-        timeout = 15 * 60  # 15 minutes
-        interval = 30  # polling interval
-        elapsed = 0
-        low_lobby_time = 0  # tracks how long lobby is underfilled
-        await channel.send("Waiting for the in-game match to appear on Steam... (up to 15 minutes)")
-        while elapsed < timeout:
-            current_lobby = lobby_players.get(guild_id, [])
-            if len(current_lobby) < 10:
-                low_lobby_time += interval
-                print(f"[INFO] Lobby underfilled ({len(current_lobby)}/10) for {low_lobby_time} seconds")
-                if low_lobby_time >= 30:  # now 30 seconds
-                    await channel.send("Lobby has not been full for 30 seconds. Match polling cancelled.")
+        # --- 🚀 double-click guard -----------------------------------------
+        # If we're already processing a rocket for this guild, ignore extras
+        if rocket_lock.get(guild_id, False):
+            print(f"[INFO] Ignoring extra 🚀 press in guild {guild_id} (already processing).")
+            await message.remove_reaction(payload.emoji, user)
+            return
+        # Also ignore if a match is already being tracked/polled
+        if guild_id in active_match_ids or guild_id in polling_tasks:
+            print(f"[INFO] Ignoring 🚀 press in guild {guild_id} (match already active).")
+            await message.remove_reaction(payload.emoji, user)
+            return
+        # Lock this guild's rocket press
+        rocket_lock[guild_id] = True
+        try:
+            mode = inhouse_mode.get(guild_id, "regular")
+            if mode == "regular":
+                team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id], guild_id)
+                if not team_rolls[guild_id]:
+                    await channel.send(
+                        "Cannot form teams with the current MMR threshold (≤100). "
+                        "Either set missing MMRs (`!cfg <steam_id>`) or let me try a relaxed threshold…"
+                    )
+                    # optional automatic fallback (see #2 below)
+                    team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(
+                        lobby_players[guild_id], guild_id, max_mmr_diff=400  # try 400 first
+                    )
+                if not team_rolls[guild_id]:
+                    await channel.send("Still no valid combos. Please set MMRs or disable the strict threshold.")
                     return
-            else:
-                if low_lobby_time > 0:
-                    print("[INFO] Lobby refilled to 10/10 — resetting grace timer.")
-                low_lobby_time = 0
-            match = await fetch_live_match_for_guild(guild.id)
+                valid_team_combos[guild_id] = valid_combo_count
+                team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][0]
+                original_teams[guild_id] = (team1, team2, score1, score2, roles1, roles2)
+                roll_count[guild_id] = 1
+                embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
+            elif mode == "immortal":
+                all_pairs = get_all_captain_pairs(lobby_players[guild_id])
+                pol, thr = get_captain_policy(guild_id)
+                # pick the starting pair index according to your policy
+                # choices: "min_diff" (current), "top2_if_close", "simulate"
+                preferred_index = choose_captain_pair_index(
+                    lobby_players[guild_id],
+                    all_pairs,
+                    policy=pol,
+                    threshold=(thr if isinstance(thr, int) else 200)
+                )
+                captain_draft_state[guild_id] = {
+                    "pairs": all_pairs,
+                    "index": preferred_index
+                }
+                captains, pool, _ = all_pairs[preferred_index]
+                original_teams[guild_id] = (captains, pool)
+                embed = build_immortal_embed(captains, pool, guild, 1)
+            await message.edit(embed=embed)
+            await message.clear_reactions()
+            await message.add_reaction("👍")
+            await message.add_reaction("👎")
+            await message.add_reaction("♻️")
+            if mode == "immortal":
+                await message.add_reaction("⚔️") # start draft
+                await message.add_reaction("🎯") # manual captain selection
+            await message.remove_reaction(payload.emoji, user)
+            # Start live match polling if not already started
+            match = None
+            timeout = 15 * 60  # 15 minutes
+            interval = 30  # polling interval
+            elapsed = 0
+            low_lobby_time = 0  # tracks how long lobby is underfilled
+            await channel.send("Waiting for the in-game match to appear on Steam... (up to 15 minutes)")
+            while elapsed < timeout:
+                current_lobby = lobby_players.get(guild_id, [])
+                if len(current_lobby) < 10:
+                    low_lobby_time += interval
+                    print(f"[INFO] Lobby underfilled ({len(current_lobby)}/10) for {low_lobby_time} seconds")
+                    if low_lobby_time >= 30:  # now 30 seconds
+                        await channel.send("Lobby has not been full for 30 seconds. Match polling cancelled.")
+                        return
+                else:
+                    if low_lobby_time > 0:
+                        print("[INFO] Lobby refilled to 10/10 — resetting grace timer.")
+                    low_lobby_time = 0
+                match = await fetch_live_match_for_guild(guild.id)
+                if match:
+                    break
+                await asyncio.sleep(interval)
+                elapsed += interval
             if match:
-                break
-            await asyncio.sleep(interval)
-            elapsed += interval
-        if match:
-            match_id = match.get("match_id")
-            if guild_id not in polling_tasks:
-                active_match_ids[guild_id] = match_id
-                polling_tasks[guild_id] = asyncio.create_task(poll_live_match(match_id, guild))
-                await channel.send(f"Started match polling for match ID {match_id} in {guild.name}")
-        else:
-            await channel.send("No live match was found within 15 minutes. Please restart the lobby.")
+                match_id = match.get("match_id")
+                if guild_id not in polling_tasks:
+                    active_match_ids[guild_id] = match_id
+                    polling_tasks[guild_id] = asyncio.create_task(poll_live_match(match_id, guild))
+                    await channel.send(f"Started match polling for match ID {match_id} in {guild.name}")
+            else:
+                await channel.send("No live match was found within 15 minutes. Please restart the lobby.")
+        finally:
+            rocket_lock[guild_id] = False
     elif emoji == "⚔️":
         # Only allow in immortal mode
         if inhouse_mode.get(guild_id, "regular") != "immortal":
