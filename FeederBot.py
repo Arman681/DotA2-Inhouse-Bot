@@ -84,7 +84,7 @@ if os.path.exists(HERO_CACHE_FILE):
     except Exception:
         hero_id_map = {}
 
-# ============================== 🛠️ Bot Configuration ==============================
+# ============================== Bot Configuration ==============================
 
 # Resolves the correct command prefix for the bot, based on the message's guild.
 async def resolve_command_prefix(bot, message):
@@ -109,7 +109,7 @@ async def close_http_session():
         await http_session.close()
 
 # ========================================================================================================================
-# ============================================ ⚙️ Core Functions & Utilities ============================================
+# ============================================ Core Functions & Utilities ============================================
 # ========================================================================================================================
 
 # Polls a live Dota 2 match, updates Discord with status, and resolves bets/MMR after the match ends
@@ -200,7 +200,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
     _last_active_match_id.pop(guild.id, None)
     _last_selected_match_id.pop(guild.id, None)
 
-# =============================== 🔐 Permission Checks ===============================
+# =============================== Permission Checks ===============================
 
 # Custom check that allows admins or specific roles to use commands
 def is_admin_or_has_role():
@@ -228,7 +228,7 @@ async def user_is_admin_or_has_role(member):
     allowed_roles = ["Inhouse Admin"]
     return any(role.name in allowed_roles for role in member.roles)
 
-# ========================== 🔥 Firestore Access & Persistence ==========================
+# ========================== Firestore Access & Persistence ==========================
 
 # Saves a player's config data (Steam info, MMR, etc.) to Firestore under their Discord user ID.
 def save_player_config(user_id, data):
@@ -396,7 +396,7 @@ def set_captain_policy(guild_id: int, policy: str, threshold: int | None = None,
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc_ref.set({"captain_policy": data}, merge=True)
 
-# ============================ 🎯 MMR, STRATZ, and Steam Integration ============================
+# ============================ MMR, STRATZ, and Steam Integration ============================
 
 # Maps Dota 2 STRATZ seasonRank values to estimated MMR values.
 season_rank_to_mmr = {
@@ -504,7 +504,7 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
 # Fetches the current live Dota 2 match for a guild using Steam API, filtered by bound league ID or in random mode
 async def fetch_live_match_for_guild(guild_id, random_mode=False):
     """Fetches a live match for the manually bound league_id in this guild."""
-    # ✅ Step 1: Fetch bound_league_id from Firestore
+    # Step 1: Fetch bound_league_id from Firestore
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc = doc_ref.get()
     if not doc.exists:
@@ -515,7 +515,7 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
     if not random_mode and not bound_league_id:
         print(f"[WARN] No bound_league_id found in Firestore for guild {guild_id}")
         return None
-    # ✅ Step 2: Fetch matches from Steam API
+    # Step 2: Fetch matches from Steam API
     url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
     params = {"key": STEAM_API_KEY}
     try:
@@ -556,14 +556,14 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
                 print(f"[DEBUG] Checked {stats[0]} total live matches from Steam API.")
                 print(f"[DEBUG] {stats[1]} passed scoreboard and duration filters.")
                 _last_fetch_stats[guild_id] = stats
-            # ✅ Step 3: Filter by league ID
+            # Step 3: Filter by league ID
             bound_matches = valid_matches if random_mode else [
                 m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
             ]
             if not bound_matches:
                 print(f"[INFO] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
                 return None
-            # ✅ Step 4: Reuse previous match ID if still valid
+            # Step 4: Reuse previous match ID if still valid
             last_match_id = active_match_ids.get(guild_id)
             prev_active_id = _last_active_match_id.get(guild_id)
             if prev_active_id != last_match_id:
@@ -637,7 +637,7 @@ def get_mmr(user):
         return info.get("mmr", 0)
     return 0
 
-# ============================ 👥 Player & Lobby Utilities ============================
+# ============================ Player & Lobby Utilities ============================
 
 # Returns a set of user IDs across all servers that the bot is currently in (non-bot members only).
 def get_active_user_ids():
@@ -944,7 +944,6 @@ async def refresh_lobby_member_mmr(guild: discord.Guild, member: discord.Member,
             await update_lobby_embed(guild)   # edits the existing lobby message
             break
 
-# FeederBot.py
 async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextChannel):
     """
     Launch an Immortal Draft using the captains/pool chosen when 🚀 was pressed.
@@ -1015,7 +1014,7 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
         )
     return session
 
-# ================================ ⚖️ Team Balancing ================================
+# ================================ Team Balancing ================================
 
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
 def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
@@ -1084,7 +1083,7 @@ def calculate_role_fit_score(team, preference_map=None, mmr_map=None):
     return total_score, assignments
 
 # ========================================================================================================================
-# ================================================ 🎯 Bot Event Handlers ================================================
+# ================================================ Bot Event Handlers ================================================
 # ========================================================================================================================
 
 # Runs once when the bot starts and begins the MMR refresh task.
@@ -1449,10 +1448,10 @@ async def on_guild_join(guild):
         print(f"Could not DM the owner of {guild.name}.")
 
 # ========================================================================================================================
-# ============================================== 🖼️ Embed Builders Section ==============================================
+# ============================================== Embed Builders Section ==============================================
 # ========================================================================================================================
 
-# ============================= 📋 Lobby Embed Functions =============================
+# ============================= Lobby Embed Functions =============================
 
 # Builds and returns a lobby embed showing current players and the server's password.
 def build_lobby_embed(guild, mode: Optional[str] = None):
@@ -1504,7 +1503,7 @@ async def update_all_lobbies():
     for guild in bot.guilds:
         await update_lobby_embed(guild)
 
-# ============================== ⚔️ Team Embed Function ==============================
+# ============================== Team Embed Function ==============================
 
 # Creates and returns a Discord embed object displaying the two teams with their MMRs and password.
 def build_team_embed(team1, team2, score1, score2, roles1=None, roles2=None, guild=None, preference_map=None, mmr_map=None):
