@@ -992,14 +992,14 @@ def attach_commands(bot, deps):
         else:
             await ctx.reply(f"An unexpected error occurred in `!pose`: `{error}`")
 
-    @bot.command(name="immortaldraft", help="Launch the Immortal Draft using the current lobby captains and pool.")
+    """@bot.command(name="immortaldraft", help="Launch the Immortal Draft using the current lobby captains and pool.")
     @is_admin_or_has_role()
     async def immortaldraft_cmd(ctx):
         try:
             await start_immortal_draft(ctx.bot, ctx.guild, ctx.channel)
         except Exception as e:
             # keep errors quiet but informative for admins
-            await ctx.reply(f"Failed to start Immortal Draft: `{e}`", mention_author=False)
+            await ctx.reply(f"Failed to start Immortal Draft: `{e}`", mention_author=False)"""
     
     @bot.command(name="captainpolicy", help="Show or set the captain selection policy: min_diff | top2_if_close [threshold] | simulate")
     @is_admin_or_has_role()
@@ -1072,7 +1072,7 @@ def attach_commands(bot, deps):
         if category == "":
             help_text = (
                 "\n**📜 Available Commands:**\n\n"
-                "__**👥 General Commands**__\n"
+                "__**General Commands**__\n"
                 "**!cfg `steam_id`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
                 "**!setpreferredroles `1 2 3 4 5` `@user`** - Set your role preferences from most to least preferred (admin can set for others).\n"
                 "**!viewpreferredroles `@user`** - View preferred roles for yourself or another user.\n"
@@ -1082,46 +1082,50 @@ def attach_commands(bot, deps):
                 "**!leaderboard** - View top 10 inhouse MMR players in this server\n"
                 "**!send `amount` `@user`** - Send coins to another user in the server\n"
                 "**!livematch** - Recall and refresh the live match embed in the channel (30s cooldown)\n\n"
-                "__**🏠 Lobby Management**__\n"
+                "__**Lobby Management**__\n"
                 "**!add `@user1` `@user2` ...** - Manually add one or more users to the lobby.\n"
                 "**!remove `@user1` `@user2` ...** - Manually remove one or more users from the lobby.\n"
                 "**!lobby** - Create or refresh the inhouse lobby.\n"
                 "**!reset** - Clear the current lobby and start fresh.\n\n"
-                "__**🎲 Betting Commands**__\n"
+                "__**Betting Commands**__\n"
                 "**!bet `amt` `radiant|dire`** - Bet coins on the current inhouse match\n"
                 "**!balance `@user`** - Show your or another user’s coin balance\n\n"
-                "__**🔐 Admin Commands**__\n"
+                "__**Admin Commands**__\n"
                 "Use `!help admin` to see the list of admin-only commands.\n"
             )
         elif category == "admin":
             help_text = (
-                "\n__**🔐 Admin Commands**__\n"
-                "**!cfg <steam_id> [@member] [--force]** - Link a player's Steam ID and fetch their MMR.\n"
-                "- Without `--force`: Will not overwrite an existing Steam ID and MMR.\n"
-                "- With `--force`: Forcibly updates a user's Steam ID and MMR, even if already set.\n"
-                "**!lobby `mode`** - Sets the lobby mode for the inhouse \n"
-                "Modes: • `regular` — Regular Captain’s Mode (MMR-balanced teams) \n"
-                "           • `immortal` — Captain’s Mode with Immortal Draft (captains pick teams) \n"
-                "**!toggle_roles `on|off`** - Enable or disable preferred role usage in team balancing.\n"
-                "**!lobbyroles** - Show preferred roles for all 10 current lobby players (requires full lobby).\n"
-                "**!setmmr `mmr` `@user`** - Manually set a user's MMR.\n"
-                "**!setpreferredroles `1 2 3 4 5` @user** - Set preferred roles for another user.\n"
-                "**!setpassword `new_password`** - Change the inhouse lobby password.\n"
-                "**!changeprefix `new_prefix`** - Changes the prefix of the bot commands.\n"
-                "**!submitmatch `match_id`** - Report match and resolve MMR + bets\n"
-                "**!alert** - Mention all 10 players when the lobby is full.\n"
-                "**!viewlogs** - View recent lobby or user config logs.\n"
-                "**!viewlogs --verbose** - View full detailed logs for this server.\n"
-                "**!bindleague `league_id`** - Binds a Steam league ID to the current Discord server for live match tracking.\n"
-                "**!setlivechannel** - Sets the current text channel as the destination for live match embed updates.\n"
-                "**!captainpolicy `policy`** - Sets the captain selection policy for the lobby.\n"
-                "Policies: • `min_diff` — Choose the pair with the lowest MMR difference (default) \n"
-                "           • `top2_if_close` `threshold` — If the top 2 players are close in MMR, prioritize them as captains and set a threshold\n"
-                "           • `simulate` — Simulate a draft to determine the captain pairs that lead to the most balanced teams after a plausible draft\n"
-                "**!startpolling** - Starts live match polling for the bound league in this server.\n"
-                "**!stoppolling** - Stops live match polling for this server.\n"
-                "**!randompoll** - Starts polling for random live matches in this server.\n"
-                "**!immortal_draft** - Starts immortal draft."
+                "\n__**Admin Commands**__\n\n"
+                "__**Player & Lobby Management**__\n"
+                "**!cfg `<steam_id>` `[@member]` `[--force]`** - Link a player's Steam ID and fetch their MMR\n"
+                "  • Without `--force`: Will not overwrite existing Steam ID and MMR\n"
+                "  • With `--force`: Forcibly updates Steam ID and MMR, even if already set\n"
+                "**!setmmr `<mmr>` `<@user>`** - Manually set a user's MMR\n"
+                "**!setpreferredroles `<1 2 3 4 5>` `<@user>`** - Set preferred roles for another user\n"
+                "**!alert** - Mention all 10 players when the lobby is full\n\n"
+                "__**Lobby Configuration**__\n"
+                "**!lobby `<mode>`** - Set the inhouse mode for this server\n"
+                "  • `regular` — Regular Captain's Mode (MMR-balanced teams)\n"
+                "  • `immortal` — Captain's Mode with Immortal Draft (captains pick teams)\n"
+                "**!setpassword `<new_password>`** - Change the inhouse lobby password\n"
+                "**!toggle_roles `<on|off>`** - Enable/disable preferred role usage in team balancing\n"
+                "**!lobbyroles** - Show preferred roles for all 10 lobby players (requires full lobby)\n\n"
+                "__**Bot Settings**__\n"
+                "**!changeprefix `<new_prefix>`** - Change the bot command prefix for this server\n"
+                "**!viewlogs** - View recent configuration logs for this server\n"
+                "**!viewlogs --verbose** - View detailed logs with full Firestore data\n\n"
+                "__**Captain & Draft Settings**__\n"
+                "**!captainpolicy `<policy>` `[threshold]`** - Set captain selection policy\n"
+                "  • `min_diff` — Choose pair with lowest MMR difference (default)\n"
+                "  • `top2_if_close` `<threshold>` — Prioritize top 2 if within threshold\n"
+                "  • `simulate` — Simulate draft to find most balanced captain pair\n\n"
+                "__**Match Tracking**__\n"
+                "**!bindleague `<league_id>`** - Bind a Steam league ID for live match tracking\n"
+                "**!setlivechannel** - Set current channel for live match updates\n"
+                "**!startpolling** - Start live match polling for the bound league\n"
+                "**!stoppolling** - Stop live match polling\n"
+                "**!randompoll** - Start polling for random public live matches\n"
+                "**!submitmatch `<match_id>`** - Submit match result and resolve MMR + bets\n"
             )
         else:
             help_text = "Unknown help category. Try `!help` or `!help admin`."
