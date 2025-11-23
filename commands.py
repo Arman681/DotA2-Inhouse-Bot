@@ -243,7 +243,42 @@ def attach_commands(bot, deps):
 
     @commands.cooldown(1, 5, commands.BucketType.user)  # 1 use / 5s per user
     @bot.command(name="bet")
-    async def bet(ctx, amount: int, team=None):
+    async def bet(ctx, *args):
+        DEFAULT_BET = 100
+        # Allow:
+        # !bet
+        # !bet 200
+        # !bet radiant
+        # !bet 200 radiant
+        # !bet radiant 200
+        amount = None
+        team = None
+        for arg in args:
+            lower = arg.lower()
+            if lower in ("radiant", "dire"):
+                # If they somehow gave two different teams, bail out
+                if team is not None and team != lower:
+                    await ctx.reply("Please specify only one team: `radiant` or `dire`.")
+                    return
+                team = lower
+            else:
+                # Treat anything else as the amount
+                if amount is not None:
+                    await ctx.reply(
+                        "Too many numbers. Usage: `!bet [amount] [radiant|dire]`."
+                    )
+                    return
+                try:
+                    amount = int(arg)
+                except ValueError:
+                    await ctx.reply(
+                        "Invalid argument. Usage: `!bet [amount] [radiant|dire]` "
+                        "(`amount` must be a number)."
+                    )
+                    return
+        # Default to 100 coins if no amount was explicitly given
+        if amount is None:
+            amount = DEFAULT_BET
         if amount <= 0:
             await ctx.reply("Bet amount must be greater than 0.")
             return
@@ -253,6 +288,7 @@ def attach_commands(bot, deps):
             await ctx.reply("There is no active match in progress to bet on.")
             return
         is_random = random_polling_flags.get(ctx.guild.id, False)
+        auto_detected = False # whether we auto-detected the bettor's team
         match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=is_random)
         if not match:
             await ctx.reply("Could not retrieve live match info. Betting may be closed.")
@@ -279,14 +315,11 @@ def attach_commands(bot, deps):
         if team is None:
             if player_team is not None:
                 team = "radiant" if player_team == 0 else "dire"
-                await ctx.reply(
-                    f"Detected you’re playing on **{team.capitalize()}**. "
-                    f"Placing your bet on **{team.capitalize()}** by default."
-                )
+                auto_detected = True # they didn't specify, but we found it
             else:
                 await ctx.reply(
                     "You’re not in the current match. Please specify a team:\n"
-                    "`!bet <amount> <radiant|dire>`"
+                    "Example: `!bet radiant` (bets 100 coins) or `!bet 200 radiant`."
                 )
                 return
         # Normalize & validate team now that it’s known
@@ -329,24 +362,27 @@ def attach_commands(bot, deps):
         else:
             place_bet(user_id, team, amount, delta, ctx.guild.id, nickname)
             new_balance = current_balance - delta
+            prefix = ""
+            if auto_detected:
+                prefix = (
+                    f"Detected you’re playing on **{team.capitalize()}**. "
+                    f"Placing your bet on **{team.capitalize()}** by default.\n"
+                )
             if is_update:
                 await ctx.reply(
+                    prefix +
                     f"You updated your bet from `{previous_bet}` to `{amount}` on **{team.capitalize()}**. "
                     f"Your balance went from {current_balance} to {new_balance}."
                 )
             else:
                 await ctx.reply(
+                    prefix +
                     f"You bet `{amount}` on **{team.capitalize()}** for this match. "
                     f"Your balance went from {current_balance} to {new_balance}."
                 )
     @bet.error
     async def bet_error(ctx, error):
-        if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: !bet `<amount>` `[radiant|dire]`")
-        elif isinstance(error, commands.BadArgument):
-            await ctx.reply("Invalid argument. Usage: !bet `<amount>` `[radiant|dire]` — make sure `<amount>` is a number.")
-        else:
-            await ctx.reply("An unexpected error occurred while placing your bet.")
+        await ctx.reply("An unexpected error occurred while placing your bet. Usage: `!bet [amount] [radiant|dire]`.")
 
     @bot.command(name="balance")
     async def balance(ctx, member: discord.Member = None):
