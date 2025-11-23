@@ -85,4 +85,11 @@ async def adjust_mmr(bot, winner_ids, loser_ids, guild_id, gain=50, loss=50):
 def get_top_players(guild_id, limit=10):
     docs = db.collection("inhouse_mmr").document(str(guild_id)) \
              .collection("users").order_by("mmr", direction=firestore.Query.DESCENDING).limit(limit).stream()
-    return [(doc.id, doc.to_dict().get("mmr", 1000)) for doc in docs]
+    results = []
+    for doc in docs:
+        data = doc.to_dict() or {}
+        uid = doc.id
+        nickname = data.get("nickname", f"User {uid}")
+        mmr = data.get("mmr", 1000)
+        results.append((uid, nickname, mmr))
+    return results
