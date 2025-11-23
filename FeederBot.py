@@ -114,7 +114,7 @@ async def close_http_session():
 
 # Polls a live Dota 2 match, updates Discord with status, and resolves bets/MMR after the match ends
 async def poll_live_match(match_id, guild, random_mode=False):
-    print(f"[MATCH] Started polling match {match_id} for guild {guild.name} (random_mode={random_mode})")
+    print(f"[poll_live_match] Started polling match {match_id} for guild {guild.name} (random_mode={random_mode})")
     # 💡 Prevent using any previous embed
     live_embed_messages.pop(guild.id, None)
     channel_id = live_channel_ids.get(guild.id)
@@ -125,7 +125,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
         try:
             match = await fetch_live_match_for_guild(guild.id, random_mode=random_mode)
             if not match:
-                print(f"[MATCH] Match {match_id} no longer reported as live. Stopping Steam polling.")
+                print(f"[poll_live_match] Match {match_id} no longer reported as live. Stopping Steam polling.")
                 break  # Exit polling loop and move to STRATZ result retry
             # Update embed every 15 seconds
             embed = await format_live_match_embed(match, guild)
@@ -141,7 +141,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
                     new_msg = await channel.send(embed=embed)
                     live_embed_messages[guild.id] = new_msg
         except Exception as e:
-            print(f"[ERROR] poll_live_match() for guild {str(guild.id)}: {e}")
+            print(f"[poll_live_match] Error for guild {str(guild.id)}: {e}")
     # Match is no longer live — try STRATZ for up to ~5 minutes
     max_retries = 10
     retry_delay = 30  # seconds
@@ -150,10 +150,10 @@ async def poll_live_match(match_id, guild, random_mode=False):
         result = await asyncio.to_thread(fetch_match_result, match_id)
         if result:
             break
-        print(f"[RETRY] No match result yet for match {match_id}. Retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
+        print(f"[poll_live_match] No match result yet for match {match_id}. Retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
         await asyncio.sleep(retry_delay)
     if not result:
-        print(f"[ERROR] No match result found for match {match_id} after {max_retries} attempts. Skipping bet resolution.")
+        print(f"[poll_live_match] No match result found for match {match_id} after {max_retries} attempts. Skipping bet resolution.")
         # Clean up memory even if result is missing
         active_match_ids.pop(guild.id, None)
         polling_tasks.pop(guild.id, None)
@@ -175,21 +175,21 @@ async def poll_live_match(match_id, guild, random_mode=False):
         try:
             await adjust_mmr(bot, winner_ids, loser_ids, guild.id)
         except Exception as e:
-            print(f"[ERROR] Failed to adjust MMR: {e}")
+            print(f"[poll_live_match] Failed to adjust MMR: {e}")
     # Award 50 coins to all players who played in the match
     all_player_ids = winner_ids + loser_ids
     for discord_id in all_player_ids:
         member = guild.get_member(int(discord_id))
         nickname = member.display_name if member else str(discord_id)
-        # use your betting_manager helper so nickname is persisted
+        # use betting_manager helper so nickname is persisted
         update_balance(guild.id, str(discord_id), 50, nickname=nickname)
-    print(f"[DEBUG] Awarded 50 coins to {len(all_player_ids)} participants in match {match_id}")
+    print(f"[poll_live_match] Awarded 50 coins to {len(all_player_ids)} participants in match {match_id}")
     # Send match summary
     try:
         await channel.send(f"Match `{match_id}` has ended with a {winning_team} victory. Bets have been resolved and Inhouse-MMR updated.\n All participants received **50 coins** for playing.")
-        print(f"[DEBUG] Match summary sent to channel ID: {channel.id}")
+        print(f"[poll_live_match] Match summary sent to channel ID: {channel.id}")
     except Exception as e:
-        print(f"[ERROR] Failed to send match summary: {e}")
+        print(f"[poll_live_match] Failed to send match summary: {e}")
     # Clean up memory
     active_match_ids.pop(guild.id, None)
     polling_tasks.pop(guild.id, None)
@@ -465,13 +465,13 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
                             return mmr, season_rank, "STRATZ"
                         else:
                             # <-- 200 but no rank: log why we're falling back
-                            print(f"[INFO] STRATZ 200 but no seasonRank for steam_id={steam_id}; falling back to OpenDota")
+                            print(f"[fetch_mmr] STRATZ 200 but no seasonRank for steam_id={steam_id}; falling back to OpenDota")
                             break  # No seasonRank -> skip retries and go fallback
                 else:
                     # Log non-200 response
                     txt = (await response.text()).strip()
                     print(
-                        f"[WARN] STRATZ {response.status} "
+                        f"[fetch_mmr] STRATZ {response.status} "
                         f"(attempt {attempt+1}/{max_retries}) "
                         f"for steam_id={steam_id}: {txt[:180]}"
                     )
@@ -480,7 +480,7 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
                     break  # Non-retryable error, break out
         except Exception as e:
             print(
-                f"[ERROR] STRATZ request failed "
+                f"[fetch_mmr] STRATZ request failed "
                 f"(attempt {attempt+1}/{max_retries}) for steam_id={steam_id}: {e}"
             )
     # ---------- 2) OpenDota fallback ----------
@@ -489,7 +489,7 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
         async with get_http_session().get(od_url, timeout=8) as r:
             if r.status != 200:
                 txt = (await r.text()).strip()
-                print(f"[WARN] OpenDota {r.status} for steam_id={steam_id}: {txt[:180]}")
+                print(f"[fetch_mmr] OpenDota {r.status} for steam_id={steam_id}: {txt[:180]}")
                 return None, None, None
             j = await r.json()
             rank_tier = j.get("rank_tier")  # e.g. 55 => Legend 5
@@ -498,7 +498,7 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
             mmr = season_rank_to_mmr.get(rank_tier)
             return mmr, rank_tier, "OpenDota"
     except Exception as e:
-        print(f"[ERROR] OpenDota fallback failed for steam_id={steam_id}: {e}")
+        print(f"[fetch_mmr] OpenDota fallback failed for steam_id={steam_id}: {e}")
     return None, None, None
 
 # Fetches the current live Dota 2 match for a guild using Steam API, filtered by bound league ID or in random mode
@@ -508,12 +508,12 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc = doc_ref.get()
     if not doc.exists:
-        print(f"[WARN] No guild_specific_info found for guild {guild_id}")
+        print(f"[fetch_live_match_for_guild] No guild_specific_info found for guild {guild_id}")
         return None
     league_info = doc.to_dict().get("league_id", {})
     bound_league_id = league_info.get("bound_league_id")
     if not random_mode and not bound_league_id:
-        print(f"[WARN] No bound_league_id found in Firestore for guild {guild_id}")
+        print(f"[fetch_live_match_for_guild] No bound_league_id found in Firestore for guild {guild_id}")
         return None
     # Step 2: Fetch matches from Steam API
     url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
@@ -521,7 +521,7 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
     try:
         async with get_http_session().get(url, params=params, timeout=5) as response:
             if response.status != 200:
-                print(f"[ERROR] Steam API returned {response.status}")
+                print(f"[fetch_live_match_for_guild] Steam API returned {response.status}")
                 return None
             result = await response.json()
             matches = result.get("result", {}).get("games", [])
@@ -545,7 +545,7 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
                     valid_matches.append(m)
             if not valid_matches:
                 if guild_id in active_match_ids:
-                    print(f"[INFO] Clearing expired match for guild {guild_id}")
+                    print(f"[fetch_live_match_for_guild] Clearing expired match for guild {guild_id}")
                     del active_match_ids[guild_id]
                     _last_fetch_stats.pop(guild_id, None)
                     _last_active_match_id.pop(guild_id, None)
@@ -553,29 +553,29 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
                 return None
             stats = (len(matches), len(valid_matches))
             if _last_fetch_stats.get(guild_id) != stats:
-                print(f"[DEBUG] Checked {stats[0]} total live matches from Steam API.")
-                print(f"[DEBUG] {stats[1]} passed scoreboard and duration filters.")
+                print(f"[fetch_live_match_for_guild] Checked {stats[0]} total live matches from Steam API.")
+                print(f"[fetch_live_match_for_guild] {stats[1]} passed scoreboard and duration filters.")
                 _last_fetch_stats[guild_id] = stats
             # Step 3: Filter by league ID
             bound_matches = valid_matches if random_mode else [
                 m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
             ]
             if not bound_matches:
-                print(f"[INFO] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
+                print(f"[fetch_live_match_for_guild] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
                 return None
             # Step 4: Reuse previous match ID if still valid
             last_match_id = active_match_ids.get(guild_id)
             prev_active_id = _last_active_match_id.get(guild_id)
             if prev_active_id != last_match_id:
                 if last_match_id:
-                    print(f"[DEBUG] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
+                    print(f"[fetch_live_match_for_guild] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
                 else:
-                    print(f"[DEBUG] Step 4 skipped: No active match found for guild {guild_id}")
+                    print(f"[fetch_live_match_for_guild] Step 4 skipped: No active match found for guild {guild_id}")
                 _last_active_match_id[guild_id] = last_match_id
             selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
             if selected_match is None:
                 if random_mode and last_match_id:
-                    print(f"[INFO] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
+                    print(f"[fetch_live_match_for_guild] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
                     return None
                 selected_match = random.choice(bound_matches)
                 active_match_ids[guild_id] = selected_match["match_id"]
@@ -584,15 +584,15 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
             prev_sel_id = _last_selected_match_id.get(guild_id)
             if prev_sel_id != sel_id:
                 if last_match_id and sel_id == last_match_id:
-                    print(f"[DEBUG] Reusing existing match_id {last_match_id} for guild {guild_id}")
+                    print(f"[fetch_live_match_for_guild] Reusing existing match_id {last_match_id} for guild {guild_id}")
                 else:
-                    print(f"[DEBUG] Picked new match_id {sel_id} for guild {guild_id}")
+                    print(f"[fetch_live_match_for_guild] Picked new match_id {sel_id} for guild {guild_id}")
                 _last_selected_match_id[guild_id] = sel_id
             # -------------------------------------------------------------
             selected_match["guild_id"] = guild_id
             return selected_match
     except Exception as e:
-        print(f"[ERROR] fetch_live_match_for_guild() Steam API error: {e}")
+        print(f"[fetch_live_match_for_guild] Steam API error: {e}")
         return None
 
 # Loads hero ID-to-name mapping from local cache or Steam API if cache is missing or invalid
@@ -603,13 +603,13 @@ async def fetch_hero_id_to_name_map():
             with open(HERO_CACHE_FILE, "r") as f:
                 data = json.load(f)
                 if isinstance(data, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
-                    print("[INFO] ✅ Loaded hero ID cache from local file.")
+                    print("[fetch_hero_id_to_name_map] ✅ Loaded hero ID cache from local file.")
                     return data
                 else:
-                    print("[WARN] Invalid hero cache format. Refetching from API...")
+                    print("[fetch_hero_id_to_name_map] Invalid hero cache format. Refetching from API...")
         except Exception as e:
-            print(f"[ERROR] Failed to load local hero cache: {e}")
-    print("[INFO] 📡 Fetching hero data from Steam API...")
+            print(f"[fetch_hero_id_to_name_map] Failed to load local hero cache: {e}")
+    print("[fetch_hero_id_to_name_map] 📡 Fetching hero data from Steam API...")
     url = "https://api.steampowered.com/IEconDOTA2_570/GetHeroes/v1/"
     params = {
         "language": "en_us",
@@ -623,10 +623,10 @@ async def fetch_hero_id_to_name_map():
             hero_map = {str(hero["id"]): hero["localized_name"] for hero in heroes}
             with open(HERO_CACHE_FILE, "w") as f:
                 json.dump(hero_map, f)
-            print("[INFO] 💾 Saved hero ID map to cache.")
+            print("[fetch_hero_id_to_name_map] 💾 Saved hero ID map to cache.")
             return hero_map
     except Exception as e:
-        print(f"[ERROR] Failed to fetch hero data from Steam API: {e}")
+        print(f"[fetch_hero_id_to_name_map] Failed to fetch hero data from Steam API: {e}")
         return {}
 
 # Gets the stored MMR value for a given Discord user, or returns 0 if not found.
@@ -654,7 +654,7 @@ def get_discord_id_from_steam_id(steam_id: str) -> Optional[str]:
     try:
         steam_id_int = int(steam_id)
     except ValueError:
-        print(f"[ERROR] Invalid Steam ID input: {steam_id}")
+        print(f"[get_discord_id_from_steam_id] Invalid Steam ID input: {steam_id}")
         return None
     players_ref = db.collection("players")
     query = players_ref.where(field_path="steam_id", op_string="==", value=steam_id_int).stream()
@@ -670,8 +670,8 @@ def map_steam_ids_to_discord_ids(steam_ids):
             if discord_id:
                 discord_ids.append(discord_id)
             else:
-                print(f"[WARN] No Discord user found for Steam ID {steam_id}")
-        print(f"[INFO] Mapped {len(discord_ids)}/{len(steam_ids)} Steam IDs to Discord IDs")
+                print(f"[map_steam_ids_to_discord_ids] No Discord user found for Steam ID {steam_id}")
+        print(f"[map_steam_ids_to_discord_ids] Mapped {len(discord_ids)}/{len(steam_ids)} Steam IDs to Discord IDs")
         return discord_ids
 
 # Gets a player's Steam display name using their 32-bit account ID
@@ -691,7 +691,7 @@ async def get_steam_display_name(account_id_32):
                 display_name[account_id_32] = steam_display_name
                 return steam_display_name
     except Exception as e:
-        print(f"[ERROR] get_steam_display_name: {e}")
+        print(f"[get_steam_display_name] Error: {e}")
     return f"SteamID {account_id_32}"
 
 # Gets a player's display name from Discord if mapped, otherwise fetches from Steam
@@ -729,7 +729,7 @@ async def refresh_all_mmrs():
             # throttle between users
             await asyncio.sleep(0.3) # ensure stratz api call limit is not exceeded
         except Exception as e:
-            print(f"[ERROR] Failed to fetch MMR for {steam_id} ({user_id}): {e}")
+            print(f"[refresh_all_mmrs] Failed to fetch MMR for {steam_id} ({user_id}): {e}")
             await asyncio.sleep(0.3)
             continue
         # Skip if: no rank, Immortal-or-higher, or no mapped MMR
@@ -758,12 +758,12 @@ async def refresh_all_mmrs():
                     "old_source": old_source, "new_source": source,
                 })
             except Exception as e:
-                print(f"[ERROR] Failed to update Firestore for {user_id}: {e}")
+                print(f"[refresh_all_mmrs] Failed to update Firestore for {user_id}: {e}")
     # Refresh lobby embeds across all servers
     try:
         await update_all_lobbies()
     except Exception as e:
-        print(f"[ERROR] Failed to update lobby embeds: {e}")
+        print(f"[refresh_all_mmrs] Failed to update lobby embeds: {e}")
     # Final one-shot debug summary
     if updates_log:
         print("[MMR REFRESH CHANGES]")
@@ -1039,7 +1039,7 @@ def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
         if mmr_diff > max_mmr_diff:
             continue
         combos_to_score.append((team1, team2, mmr_diff))
-    print(f"[INFO] Found {len(combos_to_score)} valid team combinations (MMR diff ≤ {max_mmr_diff})")
+    print(f"[calculate_balanced_teams] Found {len(combos_to_score)} valid team combinations (MMR diff ≤ {max_mmr_diff})")
     if not combos_to_score:
         # Nothing to score—callers must guard against empty results
         team_rolls[guild_id] = []
@@ -1102,20 +1102,20 @@ async def on_ready():
         guild_id = int(doc.id)
         guild = bot.get_guild(guild_id)
         if not guild:
-            print(f"[WARN] Could not find guild object for guild ID {guild_id}")
+            print(f"[on_ready] Could not find guild object for guild ID {guild_id}")
             continue
         # Load live channel ID
         live_channel_id = data.get("live_channel_id", {}).get("live_channel_id", 0)
         try: 
             live_channel_ids[int(doc.id)] = int(live_channel_id)
-            """print(f"[DEBUG] Guild {doc.id} (type: {type(doc.id).__name__}) → Channel {live_channel_id} (type: {type(live_channel_id).__name__})")"""
+            """print(f"[on_ready] Guild {doc.id} (type: {type(doc.id).__name__}) → Channel {live_channel_id} (type: {type(live_channel_id).__name__})")"""
         except (ValueError, TypeError):
-            print(f"[WARNING] Skipping guild {doc.id} due to invalid live_channel_id: {live_channel_id}")
+            print(f"[on_ready] Skipping guild {doc.id} due to invalid live_channel_id: {live_channel_id}")
         # Restore lobby players
         restored_players = load_lobby_players(guild_id)
         if restored_players:
             lobby_players[guild_id] = restored_players
-            print(f"[INIT] Restored {len(restored_players)} players in lobby for guild {guild_id}")
+            print(f"[on_ready] Restored {len(restored_players)} players in lobby for guild {guild_id}")
         # Restore lobby message
         lobby_msg_id = load_lobby_message_id(guild_id)
         if lobby_msg_id:
@@ -1124,16 +1124,16 @@ async def on_ready():
                     msg = await channel.fetch_message(int(lobby_msg_id))
                     if msg.author.id == bot.user.id:
                         lobby_message[guild_id] = msg
-                        print(f"[INIT] Restored lobby message for guild {guild_id}")
+                        print(f"[on_ready] Restored lobby message for guild {guild_id}")
                         break
                 except:
                     continue
     # Start the periodic MMR refresh task **after** restores finish
     if not refresh_all_mmrs.is_running():
         refresh_all_mmrs.start()
-        print("[INIT] Started refresh_all_mmrs task.")
+        print("[on_ready] Started refresh_all_mmrs task.")
     _ = get_http_session()  # ensure session exists
-    print("[HTTP] Shared aiohttp session is ready")
+    print("[on_ready] Shared aiohttp session is ready")
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
@@ -1202,12 +1202,12 @@ async def on_raw_reaction_add(payload):
         # --- 🚀 double-click guard -----------------------------------------
         # If we're already processing a rocket for this guild, ignore extras
         if rocket_lock.get(guild_id, False):
-            print(f"[INFO] Ignoring extra 🚀 press in guild {guild_id} (already processing).")
+            print(f"[on_raw_reaction_add] Ignoring extra 🚀 press in guild {guild_id} (already processing).")
             await message.remove_reaction(payload.emoji, user)
             return
         # Also ignore if a match is already being tracked/polled
         if guild_id in active_match_ids or guild_id in polling_tasks:
-            print(f"[INFO] Ignoring 🚀 press in guild {guild_id} (match already active).")
+            print(f"[on_raw_reaction_add] Ignoring 🚀 press in guild {guild_id} (match already active).")
             await message.remove_reaction(payload.emoji, user)
             return
         # Lock this guild's rocket press
@@ -1271,13 +1271,13 @@ async def on_raw_reaction_add(payload):
                 current_lobby = lobby_players.get(guild_id, [])
                 if len(current_lobby) < 10:
                     low_lobby_time += interval
-                    print(f"[INFO] Lobby underfilled ({len(current_lobby)}/10) for {low_lobby_time} seconds")
+                    print(f"[on_raw_reaction_add] Lobby underfilled ({len(current_lobby)}/10) for {low_lobby_time} seconds")
                     if low_lobby_time >= 30:  # now 30 seconds
                         await channel.send("Lobby has not been full for 30 seconds. Match polling cancelled.")
                         return
                 else:
                     if low_lobby_time > 0:
-                        print("[INFO] Lobby refilled to 10/10 — resetting grace timer.")
+                        print("[on_raw_reaction_add] Lobby refilled to 10/10 — resetting grace timer.")
                     low_lobby_time = 0
                 match = await fetch_live_match_for_guild(guild.id)
                 if match:
@@ -1445,7 +1445,7 @@ async def on_guild_join(guild):
                 embed=welcome_embed
             )
     except discord.Forbidden:
-        print(f"Could not DM the owner of {guild.name}.")
+        print(f"[on_guild_join] Could not DM the owner of {guild.name}.")
 
 # ========================================================================================================================
 # ============================================== Embed Builders Section ==============================================
@@ -1634,7 +1634,7 @@ async def format_live_match_embed(match, guild):
             dire_players.append(entry)
     # Only warn about incomplete teams once the scoreboard exists (i.e., post-draft)
     if sb and (len(radiant_players) != 5 or len(dire_players) != 5):
-        print(f"[WARN] Expected 5 players per team. Got Radiant={len(radiant_players)}, Dire={len(dire_players)}")
+        print(f"[format_live_match_embed] Expected 5 players per team. Got Radiant={len(radiant_players)}, Dire={len(dire_players)}")
     # Pad with placeholders so columns remain stable during draft
     while len(radiant_players) < 5: radiant_players.append("—")
     while len(dire_players) < 5:    dire_players.append("—")
