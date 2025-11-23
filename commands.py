@@ -235,10 +235,26 @@ def attach_commands(bot, deps):
             await ctx.reply("No leaderboard data found for this server.")
             return
         lines = []
-        for rank, (user_id, mmr) in enumerate(top_players, start=1):
+        for rank, (user_id, stored_nickname, mmr) in enumerate(top_players, start=1):
+            # If they’re still in the server, use their current display name
             member = ctx.guild.get_member(int(user_id))
-            name = member.display_name if member else f"User {user_id}"
-            lines.append(f"**#{rank}** - {name}: {mmr} MMR")
+            if member:
+                name = member.display_name
+            else:
+                # Fall back to the nickname stored in inhouse_mmr
+                name = stored_nickname or "Unknown"
+
+                # If that nickname is useless, try the main players collection
+                if name.lower() == "unknown":
+                    player_doc = db.collection("players").document(str(user_id)).get()
+                    if player_doc.exists:
+                        pdata = player_doc.to_dict() or {}
+                        name = (
+                            pdata.get("discord_nickname")
+                            or pdata.get("steam_name")
+                            or name
+                        )
+            lines.append(f"**#{rank}** - {name}: {mmr}")
         await ctx.reply("**Top 10 Inhouse Players**\n" + "\n".join(lines))
 
     @commands.cooldown(1, 5, commands.BucketType.user)  # 1 use / 5s per user
