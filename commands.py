@@ -509,7 +509,7 @@ def attach_commands(bot, deps):
             added.append(display_name)
         if added:
             await update_lobby_embed(ctx.guild)
-            await ctx.reply(f"Added to lobby: {', '.join(added)}")
+            #await ctx.reply(f"Added to lobby: {', '.join(added)}")
         else:
             await ctx.reply("No new members were added.")
 
@@ -538,7 +538,7 @@ def attach_commands(bot, deps):
                 for reaction in message.reactions:
                     if str(reaction.emoji) in ["🚀", "♻️"]:
                         await message.clear_reaction(reaction.emoji)
-                await ctx.reply(f"Removed from lobby: {', '.join(removed)}")
+                #await ctx.reply(f"Removed from lobby: {', '.join(removed)}")
         else:
             await ctx.reply("None of the specified members were in the lobby.")
 
