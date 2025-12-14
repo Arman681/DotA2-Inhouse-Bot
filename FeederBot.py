@@ -59,6 +59,7 @@ random_polling_flags = {}        # {guild_id: True/False}
 valid_team_combos = {}     # {guild_id: int} for how many valid team combinations were found
 prefix_cache = {}          # {guild_id: prefix}
 rocket_lock = {}           # {guild_id: True/False}
+match_wait_tasks = {}      # {guild_id: asyncio.Task} waiting for Steam match
 display_name = {}          # {steam_id: display_name}
 # Debug log de-dupers to avoid noisy repeats during polling
 _last_fetch_stats = {}         # {guild_id: (checked_total, passed_total)}
@@ -594,6 +595,45 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
     except Exception as e:
         print(f"[fetch_live_match_for_guild] Steam API error: {e}")
         return None
+    
+async def wait_for_match_then_start_polling(guild_id: int, guild: discord.Guild, channel: discord.TextChannel):
+    timeout = 15 * 60
+    interval = 30
+    elapsed = 0
+    low_lobby_time = 0
+    try:
+        await channel.send("Waiting for the in-game match to appear on Steam... (up to 15 minutes)")
+        while elapsed < timeout:
+            current_lobby = lobby_players.get(guild_id, [])
+            # If lobby drops below 10 for 30 seconds, cancel.
+            if len(current_lobby) < 10:
+                low_lobby_time += interval
+                print(f"[wait_for_match] Lobby underfilled ({len(current_lobby)}/10) for {low_lobby_time} seconds")
+                if low_lobby_time >= 30:
+                    await channel.send("Lobby has not been full for 30 seconds. Match polling cancelled.")
+                    return
+            else:
+                if low_lobby_time > 0:
+                    print("[wait_for_match] Lobby refilled to 10/10 — resetting grace timer.")
+                low_lobby_time = 0
+            match = await fetch_live_match_for_guild(guild.id)
+            if match:
+                match_id = match.get("match_id")
+                if guild_id not in polling_tasks:
+                    active_match_ids[guild_id] = match_id
+                    polling_tasks[guild_id] = asyncio.create_task(poll_live_match(match_id, guild))
+                    await channel.send(f"Started match polling for match ID {match_id} in {guild.name}")
+                return
+            await asyncio.sleep(interval)
+            elapsed += interval
+        await channel.send("No live match was found within 15 minutes. Please restart the lobby.")
+    except asyncio.CancelledError:
+        # This is normal if the lobby changes (👍/👎) and we cancel the task.
+        print(f"[wait_for_match] Cancelled wait task for guild {guild_id}")
+        return
+    finally:
+        # Always clear the registry entry so 🚀 can start a new wait later.
+        match_wait_tasks.pop(guild_id, None)
 
 # Loads hero ID-to-name mapping from local cache or Steam API if cache is missing or invalid
 async def fetch_hero_id_to_name_map():
@@ -1014,6 +1054,20 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
         )
     return session
 
+def cancel_match_wait(guild_id: int):
+    """Cancel the 'wait for Steam match' task for this guild if it exists."""
+    task = match_wait_tasks.pop(guild_id, None)
+    if task and not task.done():
+        task.cancel()
+
+def reset_team_state_for_guild(guild_id: int):
+    """Clear generated team state so the lobby can be re-rolled cleanly."""
+    team_rolls.pop(guild_id, None)
+    original_teams.pop(guild_id, None)
+    roll_count.pop(guild_id, None)
+    valid_team_combos.pop(guild_id, None)
+    captain_draft_state.pop(guild_id, None)  # optional but helps immortal mode edge cases
+
 # ================================ Team Balancing ================================
 
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
@@ -1180,6 +1234,10 @@ async def on_raw_reaction_add(payload):
             lobby_players[guild_id].append((user.id, display_name, mmr))
             updated = True
             save_lobby_players(guild_id, lobby_players[guild_id])
+            # Lobby changed after teams/rocket may have been started — allow re-🚀
+            cancel_match_wait(guild_id)
+            reset_team_state_for_guild(guild_id)
+            rocket_lock[guild_id] = False
             if clear_manual_if_lobby_changed(guild_id):
                 await channel.send("⚠️ Lobby changed—manual captain selection cleared.")
     elif emoji == "👎":
@@ -1189,6 +1247,10 @@ async def on_raw_reaction_add(payload):
                 del lobby_players[guild_id][i]
                 updated = True
                 save_lobby_players(guild_id, lobby_players[guild_id])
+                # Lobby changed after teams/rocket may have been started — allow re-🚀
+                cancel_match_wait(guild_id)
+                reset_team_state_for_guild(guild_id)
+                rocket_lock[guild_id] = False
                 if clear_manual_if_lobby_changed(guild_id):
                     await channel.send("⚠️ Lobby changed—manual captain selection cleared.")
                 if len(lobby_players[guild_id]) == 9 and was_full:
@@ -1260,38 +1322,9 @@ async def on_raw_reaction_add(payload):
                 await message.add_reaction("⚔️") # start draft
                 await message.add_reaction("🎯") # manual captain selection
             await message.remove_reaction(payload.emoji, user)
-            # Start live match polling if not already started
-            match = None
-            timeout = 15 * 60  # 15 minutes
-            interval = 30  # polling interval
-            elapsed = 0
-            low_lobby_time = 0  # tracks how long lobby is underfilled
-            await channel.send("Waiting for the in-game match to appear on Steam... (up to 15 minutes)")
-            while elapsed < timeout:
-                current_lobby = lobby_players.get(guild_id, [])
-                if len(current_lobby) < 10:
-                    low_lobby_time += interval
-                    print(f"[on_raw_reaction_add] Lobby underfilled ({len(current_lobby)}/10) for {low_lobby_time} seconds")
-                    if low_lobby_time >= 30:  # now 30 seconds
-                        await channel.send("Lobby has not been full for 30 seconds. Match polling cancelled.")
-                        return
-                else:
-                    if low_lobby_time > 0:
-                        print("[on_raw_reaction_add] Lobby refilled to 10/10 — resetting grace timer.")
-                    low_lobby_time = 0
-                match = await fetch_live_match_for_guild(guild.id)
-                if match:
-                    break
-                await asyncio.sleep(interval)
-                elapsed += interval
-            if match:
-                match_id = match.get("match_id")
-                if guild_id not in polling_tasks:
-                    active_match_ids[guild_id] = match_id
-                    polling_tasks[guild_id] = asyncio.create_task(poll_live_match(match_id, guild))
-                    await channel.send(f"Started match polling for match ID {match_id} in {guild.name}")
-            else:
-                await channel.send("No live match was found within 15 minutes. Please restart the lobby.")
+            # Start the Steam wait in the background so 🚀 isn't "stuck processing"
+            cancel_match_wait(guild_id)  # safety: cancel any stale task first
+            match_wait_tasks[guild_id] = asyncio.create_task(wait_for_match_then_start_polling(guild_id, guild, channel))
         finally:
             rocket_lock[guild_id] = False
     elif emoji == "⚔️":
@@ -1761,11 +1794,14 @@ deps = {
     "random_polling_flags": random_polling_flags,
     "match_tracking_start_times": match_tracking_start_times,
     "live_embed_messages": live_embed_messages,
+    "match_wait_tasks": match_wait_tasks,
+    "original_teams": original_teams,
     # lobby + helpers
     "lobby_players": lobby_players,
     "lobby_message": lobby_message,
     "inhouse_mode": inhouse_mode,
     "captain_draft_state": captain_draft_state,
+    "rocket_lock": rocket_lock,
     "update_lobby_embed": update_lobby_embed,
     "build_lobby_embed": build_lobby_embed,
     "build_immortal_embed": build_immortal_embed,
@@ -1780,6 +1816,8 @@ deps = {
     "set_captain_policy": set_captain_policy,
     "choose_captain_pair_index": choose_captain_pair_index,
     "get_all_captain_pairs": get_all_captain_pairs,
+    "cancel_match_wait": cancel_match_wait,
+    "reset_team_state_for_guild": reset_team_state_for_guild,
     # guild settings
     "save_guild_prefix": save_guild_prefix,
     "load_guild_prefix": load_guild_prefix,

@@ -44,10 +44,13 @@ def attach_commands(bot, deps):
     random_polling_flags        = deps["random_polling_flags"]
     match_tracking_start_times  = deps["match_tracking_start_times"]
     live_embed_messages         = deps["live_embed_messages"]
+    match_wait_tasks            = deps["match_wait_tasks"]
+    original_teams              = deps["original_teams"]
 
     # Lobby state + helpers
     lobby_players                = deps["lobby_players"]
     lobby_message                = deps["lobby_message"]
+    rocket_lock                = deps["rocket_lock"]
     update_lobby_embed           = deps["update_lobby_embed"]
     build_lobby_embed            = deps["build_lobby_embed"]
     save_lobby_players           = deps["save_lobby_players"]
@@ -61,6 +64,8 @@ def attach_commands(bot, deps):
     get_captain_policy           = deps["get_captain_policy"]
     set_captain_policy           = deps["set_captain_policy"]
     choose_captain_pair_index    = deps["choose_captain_pair_index"]
+    cancel_match_wait          = deps["cancel_match_wait"]
+    reset_team_state_for_guild = deps["reset_team_state_for_guild"]
 
     # Guild settings
     save_guild_prefix            = deps["save_guild_prefix"]
@@ -75,6 +80,23 @@ def attach_commands(bot, deps):
     # Misc helpers
     get_discord_id_from_steam_id = deps["get_discord_id_from_steam_id"]
     adjust_mmr                   = deps["adjust_mmr"]
+
+    def maybe_reset_after_lobby_change(guild_id: int):
+        """
+        Reset team state and cancel Steam wait ONLY if teams were generated
+        or if we're currently waiting for a Steam match.
+        """
+        should_reset = False
+        task = match_wait_tasks.get(guild_id)
+        if task and not task.done():
+            should_reset = True
+        if original_teams.get(guild_id) is not None:
+            should_reset = True
+        if not should_reset:
+            return
+        cancel_match_wait(guild_id)
+        reset_team_state_for_guild(guild_id)
+        rocket_lock[guild_id] = False
 
     # ============================== 👥 General Commands ==============================
 
@@ -507,6 +529,7 @@ def attach_commands(bot, deps):
             lobby_players[guild_id].append((member.id, display_name, mmr))
             save_lobby_players(guild_id, lobby_players[guild_id])
             added.append(display_name)
+            maybe_reset_after_lobby_change(guild_id)
         if added:
             await update_lobby_embed(ctx.guild)
             #await ctx.reply(f"Added to lobby: {', '.join(added)}")
@@ -529,6 +552,7 @@ def attach_commands(bot, deps):
                     del lobby_players[guild_id][i]
                     save_lobby_players(guild_id, lobby_players[guild_id])
                     removed.append(member.display_name)
+                    maybe_reset_after_lobby_change(guild_id)
                     break
         if removed:
             channel = ctx.channel
