@@ -530,6 +530,8 @@ def attach_commands(bot, deps):
             save_lobby_players(guild_id, lobby_players[guild_id])
             added.append(display_name)
             maybe_reset_after_lobby_change(guild_id)
+            if len(lobby_players[guild_id]) >= 10:
+                break
         if added:
             await update_lobby_embed(ctx.guild)
             #await ctx.reply(f"Added to lobby: {', '.join(added)}")
