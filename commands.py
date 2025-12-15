@@ -50,7 +50,7 @@ def attach_commands(bot, deps):
     # Lobby state + helpers
     lobby_players                = deps["lobby_players"]
     lobby_message                = deps["lobby_message"]
-    rocket_lock                = deps["rocket_lock"]
+    rocket_lock                  = deps["rocket_lock"]
     update_lobby_embed           = deps["update_lobby_embed"]
     build_lobby_embed            = deps["build_lobby_embed"]
     save_lobby_players           = deps["save_lobby_players"]
@@ -64,18 +64,18 @@ def attach_commands(bot, deps):
     get_captain_policy           = deps["get_captain_policy"]
     set_captain_policy           = deps["set_captain_policy"]
     choose_captain_pair_index    = deps["choose_captain_pair_index"]
-    cancel_match_wait          = deps["cancel_match_wait"]
-    reset_team_state_for_guild = deps["reset_team_state_for_guild"]
+    cancel_match_wait            = deps["cancel_match_wait"]
+    reset_team_state_for_guild   = deps["reset_team_state_for_guild"]
 
     # Guild settings
     save_guild_prefix            = deps["save_guild_prefix"]
     load_guild_prefix            = deps["load_guild_prefix"]
     save_league_guild_mapping    = deps["save_league_guild_mapping"]
     live_channel_ids             = deps["live_channel_ids"]
-    inhouse_mode = deps["inhouse_mode"]
-    captain_draft_state = deps["captain_draft_state"]
-    get_all_captain_pairs = deps["get_all_captain_pairs"]
-    build_immortal_embed = deps["build_immortal_embed"]
+    inhouse_mode                 = deps["inhouse_mode"]
+    captain_draft_state          = deps["captain_draft_state"]
+    get_all_captain_pairs        = deps["get_all_captain_pairs"]
+    build_immortal_embed         = deps["build_immortal_embed"]
 
     # Misc helpers
     get_discord_id_from_steam_id = deps["get_discord_id_from_steam_id"]
@@ -572,6 +572,7 @@ def attach_commands(bot, deps):
     async def lobby_cmd(ctx, mode: str = None):
         guild_id = ctx.guild.id
         existing_players = lobby_players.get(guild_id, [])
+        prev_mode = inhouse_mode.get(guild_id, load_inhouse_mode_for_guild(guild_id))
         if mode:
             if not await user_is_admin_or_has_role(ctx.author):
                 await ctx.reply("You don't have permission to change the inhouse mode.")
@@ -581,6 +582,10 @@ def attach_commands(bot, deps):
         else:
             selected_mode = load_inhouse_mode_for_guild(guild_id)
         inhouse_mode[guild_id] = selected_mode
+        # If mode changed after 🚀 started (teams generated / waiting for match),
+        # cancel the Steam match search + clear teams so we don't end up with 2 wait tasks.
+        if mode and selected_mode != prev_mode:
+            maybe_reset_after_lobby_change(guild_id)
         if guild_id not in lobby_players:
             lobby_players[guild_id] = existing_players
         """try:
