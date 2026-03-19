@@ -524,74 +524,91 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
             if response.status != 200:
                 print(f"[fetch_live_match_for_guild] Steam API returned {response.status}")
                 return None
-            result = await response.json()
-            matches = result.get("result", {}).get("games", [])
-            valid_matches = []
-            for m in matches:
-                has_scoreboard = bool(m.get("scoreboard"))
-                if random_mode:
-                    # In random mode: require a scoreboard and duration >= 1800s
-                    if not has_scoreboard:
-                        continue
-                    dur = m["scoreboard"].get("duration", 0)
-                    if dur < 1800:
-                        continue
-                    valid_matches.append(m)
-                else:
-                    # Normal mode: allow draft/lobby matches (no scoreboard yet)
-                    if not has_scoreboard:
-                        valid_matches.append(m)
-                        continue
-                    # Scoreboard present -> accept (no duration gate in normal mode)
-                    valid_matches.append(m)
-            if not valid_matches:
-                if guild_id in active_match_ids:
-                    print(f"[fetch_live_match_for_guild] Clearing expired match for guild {guild_id}")
-                    del active_match_ids[guild_id]
-                    _last_fetch_stats.pop(guild_id, None)
-                    _last_active_match_id.pop(guild_id, None)
-                    _last_selected_match_id.pop(guild_id, None)
-                return None
-            stats = (len(matches), len(valid_matches))
-            if _last_fetch_stats.get(guild_id) != stats:
-                print(f"[fetch_live_match_for_guild] Checked {stats[0]} total live matches from Steam API.")
-                print(f"[fetch_live_match_for_guild] {stats[1]} passed scoreboard and duration filters.")
-                _last_fetch_stats[guild_id] = stats
-            # Step 3: Filter by league ID
-            bound_matches = valid_matches if random_mode else [
-                m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
-            ]
-            if not bound_matches:
-                print(f"[fetch_live_match_for_guild] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
-                return None
-            # Step 4: Reuse previous match ID if still valid
-            last_match_id = active_match_ids.get(guild_id)
-            prev_active_id = _last_active_match_id.get(guild_id)
-            if prev_active_id != last_match_id:
-                if last_match_id:
-                    print(f"[fetch_live_match_for_guild] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
-                else:
-                    print(f"[fetch_live_match_for_guild] Step 4 skipped: No active match found for guild {guild_id}")
-                _last_active_match_id[guild_id] = last_match_id
-            selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
-            if selected_match is None:
-                if random_mode and last_match_id:
-                    print(f"[fetch_live_match_for_guild] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
+            raw = await response.read()
+            try:
+                result = json.loads(raw.decode("utf-8"))
+            except UnicodeDecodeError as e:
+                print(f"[fetch_live_match_for_guild] Steam API UTF-8 decode error: {e}")
+                try:
+                    result = json.loads(raw.decode("utf-8", errors="ignore"))
+                except Exception as fallback_error:
+                    print(f"[fetch_live_match_for_guild] Steam API fallback parse failed: {fallback_error}")
                     return None
-                selected_match = random.choice(bound_matches)
-                active_match_ids[guild_id] = selected_match["match_id"]
-            # ---- Part C: only log when the selected match id changes ----
-            sel_id = selected_match["match_id"]
-            prev_sel_id = _last_selected_match_id.get(guild_id)
-            if prev_sel_id != sel_id:
-                if last_match_id and sel_id == last_match_id:
-                    print(f"[fetch_live_match_for_guild] Reusing existing match_id {last_match_id} for guild {guild_id}")
-                else:
-                    print(f"[fetch_live_match_for_guild] Picked new match_id {sel_id} for guild {guild_id}")
-                _last_selected_match_id[guild_id] = sel_id
-            # -------------------------------------------------------------
-            selected_match["guild_id"] = guild_id
-            return selected_match
+            except json.JSONDecodeError as e:
+                print(f"[fetch_live_match_for_guild] Steam API JSON decode error: {e}")
+                try:
+                    result = json.loads(raw.decode("utf-8", errors="ignore"))
+                except Exception as fallback_error:
+                    print(f"[fetch_live_match_for_guild] Steam API fallback parse failed: {fallback_error}")
+                    return None
+            matches = result.get("result", {}).get("games", [])
+        matches = result.get("result", {}).get("games", [])
+        valid_matches = []
+        for m in matches:
+            has_scoreboard = bool(m.get("scoreboard"))
+            if random_mode:
+                # In random mode: require a scoreboard and duration >= 1800s
+                if not has_scoreboard:
+                    continue
+                dur = m["scoreboard"].get("duration", 0)
+                if dur < 1800:
+                    continue
+                valid_matches.append(m)
+            else:
+                # Normal mode: allow draft/lobby matches (no scoreboard yet)
+                if not has_scoreboard:
+                    valid_matches.append(m)
+                    continue
+                # Scoreboard present -> accept (no duration gate in normal mode)
+                valid_matches.append(m)
+        if not valid_matches:
+            if guild_id in active_match_ids:
+                print(f"[fetch_live_match_for_guild] Clearing expired match for guild {guild_id}")
+                del active_match_ids[guild_id]
+                _last_fetch_stats.pop(guild_id, None)
+                _last_active_match_id.pop(guild_id, None)
+                _last_selected_match_id.pop(guild_id, None)
+            return None
+        stats = (len(matches), len(valid_matches))
+        if _last_fetch_stats.get(guild_id) != stats:
+            print(f"[fetch_live_match_for_guild] Checked {stats[0]} total live matches from Steam API.")
+            print(f"[fetch_live_match_for_guild] {stats[1]} passed scoreboard and duration filters.")
+            _last_fetch_stats[guild_id] = stats
+        # Step 3: Filter by league ID
+        bound_matches = valid_matches if random_mode else [
+            m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
+        ]
+        if not bound_matches:
+            print(f"[fetch_live_match_for_guild] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
+            return None
+        # Step 4: Reuse previous match ID if still valid
+        last_match_id = active_match_ids.get(guild_id)
+        prev_active_id = _last_active_match_id.get(guild_id)
+        if prev_active_id != last_match_id:
+            if last_match_id:
+                print(f"[fetch_live_match_for_guild] Step 4 triggered: active_match_ids[{guild_id}] = {last_match_id}")
+            else:
+                print(f"[fetch_live_match_for_guild] Step 4 skipped: No active match found for guild {guild_id}")
+            _last_active_match_id[guild_id] = last_match_id
+        selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
+        if selected_match is None:
+            if random_mode and last_match_id:
+                print(f"[fetch_live_match_for_guild] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
+                return None
+            selected_match = random.choice(bound_matches)
+            active_match_ids[guild_id] = selected_match["match_id"]
+        # ---- Part C: only log when the selected match id changes ----
+        sel_id = selected_match["match_id"]
+        prev_sel_id = _last_selected_match_id.get(guild_id)
+        if prev_sel_id != sel_id:
+            if last_match_id and sel_id == last_match_id:
+                print(f"[fetch_live_match_for_guild] Reusing existing match_id {last_match_id} for guild {guild_id}")
+            else:
+                print(f"[fetch_live_match_for_guild] Picked new match_id {sel_id} for guild {guild_id}")
+            _last_selected_match_id[guild_id] = sel_id
+        # -------------------------------------------------------------
+        selected_match["guild_id"] = guild_id
+        return selected_match
     except Exception as e:
         print(f"[fetch_live_match_for_guild] Steam API error: {e}")
         return None
