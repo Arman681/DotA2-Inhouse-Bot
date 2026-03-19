@@ -528,7 +528,8 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
             try:
                 result = json.loads(raw.decode("utf-8"))
             except UnicodeDecodeError as e:
-                print(f"[fetch_live_match_for_guild] Steam API UTF-8 decode error: {e}")
+                if random.random() < 0.1:  # log only 10% of the time
+                    print(f"[fetch_live_match_for_guild] Steam API UTF-8 decode error (sampled): {e}")
                 try:
                     result = json.loads(raw.decode("utf-8", errors="ignore"))
                 except Exception as fallback_error:
