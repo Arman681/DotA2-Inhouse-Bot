@@ -1062,6 +1062,8 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
         channel=channel,
         cap1=cap1,
         cap2=cap2,
+        cap1_mmr=int(_c1_mmr),
+        cap2_mmr=int(_c2_mmr),
         candidates=candidates,
     )
     await session.start()

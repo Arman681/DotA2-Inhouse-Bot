@@ -21,6 +21,8 @@ class ImmortalDraftSession:
         channel: discord.TextChannel,
         cap1: discord.Member,
         cap2: discord.Member,
+        cap1_mmr: int,
+        cap2_mmr: int,
         candidates: List[Candidate],
         per_pick_seconds: int = 50,  # 20 + 30 reserve per pick
     ):
@@ -29,6 +31,8 @@ class ImmortalDraftSession:
         self.channel = channel
         self.cap1 = cap1
         self.cap2 = cap2
+        self.cap1_mmr = cap1_mmr
+        self.cap2_mmr = cap2_mmr
         # sort low -> high like in Immortal Draft UI
         self.candidates: List[Candidate] = sorted(candidates, key=lambda c: c.mmr)
         self.available_ids = [c.member.id for c in self.candidates]
@@ -98,11 +102,23 @@ class ImmortalDraftSession:
         return " · ".join(names)
 
     def team_lines(self) -> Tuple[str, str, int, int]:
-        def fmt(ids):
-            return ", ".join(f"<@{i}>" for i in ids) if ids else "—"
-        total1 = sum(next((c.mmr for c in self.candidates if c.member.id == pid), 0) for pid in self.teams["cap1"])
-        total2 = sum(next((c.mmr for c in self.candidates if c.member.id == pid), 0) for pid in self.teams["cap2"])
-        return fmt(self.teams["cap1"]), fmt(self.teams["cap2"]), total1, total2
+        def fmt(captain, ids):
+            drafted = ", ".join(f"<@{i}>" for i in ids) if ids else "—"
+            return f"{captain.mention}, {drafted}" if drafted != "—" else f"{captain.mention}"
+        total1 = self.cap1_mmr + sum(
+            next((c.mmr for c in self.candidates if c.member.id == pid), 0)
+            for pid in self.teams["cap1"]
+        )
+        total2 = self.cap2_mmr + sum(
+            next((c.mmr for c in self.candidates if c.member.id == pid), 0)
+            for pid in self.teams["cap2"]
+        )
+        return (
+            fmt(self.cap1, self.teams["cap1"]),
+            fmt(self.cap2, self.teams["cap2"]),
+            total1,
+            total2,
+        )
 
     def pickable_for(self, user_id: int) -> bool:
         return self.is_user_current_captain(user_id) and not self.locked
