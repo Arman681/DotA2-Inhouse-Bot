@@ -1028,6 +1028,8 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
         await channel.send("Could not read captain pair. Try pressing 🚀 again.")
         return
     # Resolve captains (tuples are (user_id, name, mmr))
+    captains = captains[:]
+    random.shuffle(captains)
     c1_id, _c1_name, _c1_mmr = captains[0]
     c2_id, _c2_name, _c2_mmr = captains[1]
     cap1 = guild.get_member(int(c1_id))
@@ -1035,6 +1037,7 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
     if not cap1 or not cap2:
         await channel.send("One or both captains are no longer in the server.")
         return
+    await channel.send(f"Randomized player draft first pick: **{cap1.mention}** gets first pick!")
     # Build Candidate objects from the 8-player pool (tuples are (user_id, name, mmr))
     candidates = []
     for uid, _name, mmr in pool:
