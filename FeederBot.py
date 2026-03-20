@@ -1028,7 +1028,7 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
         await channel.send("Could not read captain pair. Try pressing 🚀 again.")
         return
     # Resolve captains (tuples are (user_id, name, mmr))
-    captains = captains[:]
+    captains = list(captains)
     random.shuffle(captains)
     c1_id, _c1_name, _c1_mmr = captains[0]
     c2_id, _c2_name, _c2_mmr = captains[1]
