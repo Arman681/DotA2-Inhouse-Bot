@@ -207,12 +207,20 @@ class ImmortalDraftSession:
                 if self.message:
                     await self.message.edit(embed=self.make_embed(), view=self.view)
             t1, t2, total1, total2 = self.team_lines()
+            avg1 = round(total1 / 5)
+            avg2 = round(total2 / 5)
             await self.channel.send(
                 embed=discord.Embed(
                     title="Draft Results",
                     description=(
-                        f"**Team #1 (Captain {self.cap1.display_name})**\n{t1}\n**MMR Total:** {total1}\n\n"
-                        f"**Team #2 (Captain {self.cap2.display_name})**\n{t2}\n**MMR Total:** {total2}\n\n"
+                        f"**Team #1 (Captain {self.cap1.display_name})**\n"
+                        f"{t1}\n"
+                        f"**MMR Total:** {total1}\n"
+                        f"**Average MMR:** {avg1}\n\n"
+                        f"**Team #2 (Captain {self.cap2.display_name})**\n"
+                        f"{t2}\n"
+                        f"**MMR Total:** {total2}\n"
+                        f"**Average MMR:** {avg2}\n\n"
                         f"Move to your in-game lobby teams and begin Captains Mode."
                     ),
                     color=discord.Color.green()
