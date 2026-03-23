@@ -51,13 +51,14 @@ def set_inhouse_mmr(guild_id, user_id, nickname, mmr):
     doc = db.collection("inhouse_mmr").document(str(guild_id)).collection("users").document(str(user_id))
     doc.set(data, merge=True)    
 
-async def adjust_mmr(bot, winner_ids, loser_ids, guild_id, gain=50, loss=50):
+async def adjust_mmr(bot, winner_ids, loser_ids, guild_id, gain=50, loss=50, doubled_user_ids=None):
     guild = bot.get_guild(int(guild_id))
     batch = db.batch()
-    async def stage(uid, delta: int):
+    doubled_user_ids = {str(uid) for uid in (doubled_user_ids or [])}
+    async def stage(uid, base_delta: int):
         current = await get_inhouse_mmr(bot, guild_id, uid)
         nickname = "Unknown"
-        member = guild.get_member(int(uid))
+        member = guild.get_member(int(uid)) if guild else None
         if member:
             nickname = member.display_name
         else:
@@ -69,13 +70,14 @@ async def adjust_mmr(bot, winner_ids, loser_ids, guild_id, gain=50, loss=50):
                 print(f"[WARN] No Discord user found for Steam ID {uid} in guild {guild_id}")
             except Exception as e:
                 print(f"[ERROR] Unexpected error fetching member {uid}: {e}")
-        new_mmr = current + delta
+        actual_delta = base_delta * 2 if str(uid) in doubled_user_ids else base_delta
+        new_mmr = current + actual_delta
         ref = db.collection("inhouse_mmr").document(str(guild_id)).collection("users").document(str(uid))
         batch.set(ref, {"nickname": nickname, "mmr": new_mmr}, merge=True)
-        if delta > 0:
-            print(f"[MMR+] ✅ {nickname} ({uid}) gained {gain} MMR (now {new_mmr})")
-        elif delta < 0:
-            print(f"[MMR–] ❌ {nickname} ({uid}) lost {loss} MMR (now {new_mmr})")
+        if actual_delta > 0:
+            print(f"[MMR+] ✅ {nickname} ({uid}) gained {actual_delta} MMR (now {new_mmr})")
+        elif actual_delta < 0:
+            print(f"[MMR–] ❌ {nickname} ({uid}) lost {abs(actual_delta)} MMR (now {new_mmr})")
     for uid in winner_ids:
         await stage(uid, gain)
     for uid in loser_ids:
