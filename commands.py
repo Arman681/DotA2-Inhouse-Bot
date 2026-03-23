@@ -25,11 +25,18 @@ def attach_commands(bot, deps):
     get_top_players      = deps["get_top_players"]
 
     # Coins / betting
-    get_balance          = deps["get_balance"]
-    place_bet            = deps["place_bet"]
-    update_balance       = deps["update_balance"]
-    resolve_bets         = deps["resolve_bets"]
-    clear_guild_bets     = deps["clear_guild_bets"]
+    get_balance                     = deps["get_balance"]
+    place_bet                       = deps["place_bet"]
+    update_balance                  = deps["update_balance"]
+    resolve_bets                    = deps["resolve_bets"]
+    clear_guild_bets                = deps["clear_guild_bets"]
+    DD_TOKEN_COST                   = deps["DD_TOKEN_COST"]
+    get_dd_token_balance            = deps["get_dd_token_balance"]
+    update_dd_token_balance         = deps["update_dd_token_balance"]
+    has_active_double_down          = deps["has_active_double_down"]
+    activate_double_down            = deps["activate_double_down"]
+    get_active_double_down_users    = deps["get_active_double_down_users"]
+    clear_active_double_downs       = deps["clear_active_double_downs"]
 
     # Match / live tracking
     fetch_live_match_for_guild   = deps["fetch_live_match_for_guild"]
@@ -429,6 +436,98 @@ def attach_commands(bot, deps):
         guild_id = str(ctx.guild.id)
         coins = get_balance(guild_id, user_id, nickname=member.display_name)
         await ctx.reply(f"{member.display_name}'s balance: `{coins}` coins.")
+
+    @bot.command(name="store")
+    async def store(ctx):
+        await ctx.reply(
+            "**Store**\n"
+            f"**dd_tokens** — `{DD_TOKEN_COST}` coins each\n\n"
+            "Use: `!buy dd_tokens <amount>`"
+        )
+
+    @bot.command(name="buy")
+    async def buy(ctx, item: str = None, amount: int = 1):
+        if item is None:
+            await ctx.reply("Usage: !buy `dd_tokens` `<amount>`")
+            return
+        item = item.lower().strip()
+        if item != "dd_tokens":
+            await ctx.reply("That item is not sold in the store. Right now the only item is `dd_tokens`.")
+            return
+        if amount <= 0:
+            await ctx.reply("Amount must be greater than 0.")
+            return
+        guild_id = str(ctx.guild.id)
+        user_id = str(ctx.author.id)
+        nickname = ctx.author.display_name
+        total_cost = DD_TOKEN_COST * amount
+        current_balance = get_balance(guild_id, user_id, nickname=nickname)
+        if current_balance < total_cost:
+            await ctx.reply(
+                f"You do not have enough coins.\n"
+                f"Cost: `{total_cost}` coins\n"
+                f"Your balance: `{current_balance}` coins"
+            )
+            return
+        update_balance(guild_id, user_id, -total_cost, nickname=nickname)
+        update_dd_token_balance(guild_id, user_id, amount, nickname=nickname)
+        new_balance = get_balance(guild_id, user_id, nickname=nickname)
+        new_tokens = get_dd_token_balance(guild_id, user_id, nickname=nickname)
+        await ctx.reply(
+            f"You bought `{amount}` dd_tokens for `{total_cost}` coins.\n"
+            f"New balance: `{new_balance}` coins\n"
+            f"Your dd_tokens: `{new_tokens}`"
+        )
+
+    @buy.error
+    async def buy_error(ctx, error):
+        if isinstance(error, commands.BadArgument):
+            await ctx.reply("Usage: !buy `dd_tokens` `<amount>`")
+        else:
+            await ctx.reply("An unexpected error occurred while buying from the store.")
+
+    @bot.command(name="dd_tokens")
+    async def dd_tokens(ctx, member: discord.Member = None):
+        member = member or ctx.author
+        guild_id = str(ctx.guild.id)
+        user_id = str(member.id)
+        count = get_dd_token_balance(guild_id, user_id, nickname=member.display_name)
+        await ctx.reply(f"{member.display_name} has `{count}` dd_tokens.")
+
+    @bot.command(name="dd")
+    async def double_down(ctx):
+        guild_id = ctx.guild.id
+        user_id = str(ctx.author.id)
+        nickname = ctx.author.display_name
+        if guild_id not in active_match_ids:
+            await ctx.reply("There is no active inhouse match right now. You can only use `!dd` during an active match.")
+            return
+        if random_polling_flags.get(guild_id, False):
+            await ctx.reply("`!dd` cannot be used during random public match polling because inhouse MMR is not being adjusted.")
+            return
+        match = await fetch_live_match_for_guild(guild_id, random_mode=False)
+        if not match:
+            await ctx.reply("Could not verify a live inhouse match right now.")
+            return
+        duration = match.get("scoreboard", {}).get("duration", 0)
+        if duration >= 120:
+            await ctx.reply("Double Down is closed. The match has passed the 2:00 mark.")
+            return
+        if has_active_double_down(guild_id, user_id):
+            await ctx.reply("You already activated your double down for this match.")
+            return
+        token_count = get_dd_token_balance(guild_id, user_id, nickname=nickname)
+        if token_count <= 0:
+            await ctx.reply("You do not have any dd_tokens. Buy one first with `!buy dd_tokens 1`.")
+            return
+        update_dd_token_balance(guild_id, user_id, -1, nickname=nickname)
+        activate_double_down(guild_id, user_id, nickname=nickname)
+        remaining = get_dd_token_balance(guild_id, user_id, nickname=nickname)
+        await ctx.reply(
+            f"{ctx.author.display_name} activated **Double Down** for this match.\n"
+            f"Your inhouse MMR gain/loss will be doubled for this match.\n"
+            f"Remaining dd_tokens: `{remaining}`"
+        )
 
     @bot.command(name="send")
     async def send_coins(ctx, amount: int, member: discord.Member):
@@ -841,7 +940,9 @@ def attach_commands(bot, deps):
         winner_ids = map_steam_ids_to_discord_ids(result["radiantplayers"] if result["radiant_win"] else result["direplayers"])
         loser_ids = map_steam_ids_to_discord_ids(result["direplayers"] if result["radiant_win"] else result["radiantplayers"])
         winning_team = "radiant" if result["radiant_win"] else "dire"
-        await adjust_mmr(bot, winner_ids, loser_ids, ctx.guild.id)
+        doubled_user_ids = get_active_double_down_users(ctx.guild.id)
+        await adjust_mmr(bot, winner_ids, loser_ids, ctx.guild.id, doubled_user_ids=doubled_user_ids)
+        clear_active_double_downs(ctx.guild.id)
         resolve_bets(ctx.guild.id, winning_team)
         clear_guild_bets(ctx.guild.id)
         all_player_ids = winner_ids + loser_ids
@@ -1156,23 +1257,27 @@ def attach_commands(bot, deps):
             help_text = (
                 "\n**📜 Available Commands:**\n\n"
                 "__**General Commands**__\n"
-                "**!cfg `steam_id`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
-                "**!setpreferredroles `1 2 3 4 5` `@user`** - Set your role preferences from most to least preferred (admin can set for others).\n"
-                "**!viewpreferredroles `@user`** - View preferred roles for yourself or another user.\n"
-                "**!mmr `@user`** - Show your MMR or another user's MMR.\n"
-                "**!inhouse_mmr `@user`** - Show inhouse MMR for yourself or another user\n"
-                "**!balance `@user`** - Show your or another user's coin balance\n"
+                "**!cfg <`steam_id`>** - Link your Steam ID to fetch your MMR from STRATZ.\n"
+                "**!setpreferredroles <`1 2 3 4 5`>** - Set your role preferences from most to least preferred.\n"
+                "**!viewpreferredroles [`@user`]** - View preferred roles for yourself or another user.\n"
+                "**!mmr [`@user`]** - Show your MMR or another user's MMR.\n"
+                "**!inhouse_mmr [`@user`]** - Show inhouse MMR for yourself or another user\n"
+                "**!balance [`@user`]** - Show your or another user's coin balance\n"
                 "**!leaderboard** - View top 10 inhouse MMR players in this server\n"
-                "**!send `amount` `@user`** - Send coins to another user in the server\n"
+                "**!send <`amount`> <`@user`>** - Send coins to another user in the server\n"
                 "**!livematch** - Recall and refresh the live match embed in the channel (30s cooldown)\n\n"
                 "__**Lobby Management**__\n"
-                "**!add `@user1` `@user2` ...** - Manually add one or more users to the lobby.\n"
-                "**!remove `@user1` `@user2` ...** - Manually remove one or more users from the lobby.\n"
+                "**!add <`@user1`> <`@user2`> ...** - Manually add one or more users to the lobby.\n"
+                "**!remove <`@user1`> <`@user2`> ...** - Manually remove one or more users from the lobby.\n"
                 "**!lobby** - Create or refresh the inhouse lobby.\n"
                 "**!reset** - Clear the current lobby and start fresh.\n\n"
-                "__**Betting Commands**__\n"
-                "**!bet `amt` `radiant|dire`** - Bet coins on the current inhouse match\n"
-                "**!balance `@user`** - Show your or another user’s coin balance\n\n"
+               "__**Betting / Store Commands**__\n"
+                "**!bet <`amt`> <`radiant|dire`>** - Bet coins on the current inhouse match\n"
+                "**!store** - View the store\n"
+                "**!buy <`dd_tokens`> <`amount`>** - Buy double down tokens\n"
+                "**!dd_tokens [`@user`]** - View double down token balance for yourself or another user\n"
+                "**!dd** - Double your inhouse MMR gain/loss for the current match\n"
+                "**!balance [`@user`]** - Show your or another user’s coin balance\n\n"
                 "__**Admin Commands**__\n"
                 "Use `!help admin` to see the list of admin-only commands.\n"
             )
@@ -1180,7 +1285,7 @@ def attach_commands(bot, deps):
             help_text = (
                 "\n__**Admin Commands**__\n\n"
                 "__**Player & Lobby Management**__\n"
-                "**!cfg `<steam_id>` `[@member]` `[--force]`** - Link a player's Steam ID and fetch their MMR\n"
+                "**!cfg `<steam_id>` `[@user]` `[--force]`** - Link a player's Steam ID and fetch their MMR\n"
                 "  • Without `--force`: Will not overwrite existing Steam ID and MMR\n"
                 "  • With `--force`: Forcibly updates Steam ID and MMR, even if already set\n"
                 "**!setmmr `<mmr>` `<@user>`** - Manually set a user's MMR\n"
