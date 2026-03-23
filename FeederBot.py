@@ -25,7 +25,21 @@ from dotenv import load_dotenv
 from firebase_admin import firestore
 from commands import attach_commands
 from mmr_manager import adjust_mmr, get_inhouse_mmr, get_top_players
-from betting_manager import clear_guild_bets, get_balance, place_bet, resolve_bets, clear_all_bets, update_balance
+from betting_manager import (
+    clear_guild_bets,
+    get_balance,
+    place_bet,
+    resolve_bets,
+    clear_all_bets,
+    update_balance,
+    DD_TOKEN_COST,
+    get_dd_token_balance,
+    update_dd_token_balance,
+    has_active_double_down,
+    activate_double_down,
+    get_active_double_down_users,
+    clear_active_double_downs,
+)
 from match_tracker import fetch_match_result
 from immortal_draft import ImmortalDraftSession, Candidate
 
@@ -174,7 +188,9 @@ async def poll_live_match(match_id, guild, random_mode=False):
     resolve_bets(guild.id, winning_team)
     if not random_mode:
         try:
-            await adjust_mmr(bot, winner_ids, loser_ids, guild.id)
+            doubled_user_ids = get_active_double_down_users(guild.id)
+            await adjust_mmr(bot, winner_ids, loser_ids, guild.id, doubled_user_ids=doubled_user_ids)
+            clear_active_double_downs(guild.id)
         except Exception as e:
             print(f"[poll_live_match] Failed to adjust MMR: {e}")
     # Award 50 coins to all players who played in the match
@@ -1805,6 +1821,13 @@ deps = {
     "update_balance": update_balance,
     "resolve_bets": resolve_bets,
     "clear_guild_bets": clear_guild_bets,
+    "DD_TOKEN_COST": DD_TOKEN_COST,
+    "get_dd_token_balance": get_dd_token_balance,
+    "update_dd_token_balance": update_dd_token_balance,
+    "has_active_double_down": has_active_double_down,
+    "activate_double_down": activate_double_down,
+    "get_active_double_down_users": get_active_double_down_users,
+    "clear_active_double_downs": clear_active_double_downs,
     # match/live
     "fetch_live_match_for_guild": fetch_live_match_for_guild,
     "poll_live_match": poll_live_match,
