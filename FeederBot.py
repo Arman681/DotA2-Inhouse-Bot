@@ -897,18 +897,20 @@ def assign_roles_with_preferences(team, preference_map=None, mmr_map=None):
 
 # Generates all possible unique captain pairs from the player list, sorted by MMR difference
 def get_all_captain_pairs(players):
-    sorted_players = sorted(players, key=lambda p: p[2])  # sort by MMR
+    # Only real Discord users can be captains
+    captain_eligible = [p for p in players if not is_placeholder_player(p[0])]
+    # Keep the full lobby (including placeholders) for the 8-player pool
+    sorted_players = sorted(players, key=lambda p: p[2])
     pairs = []
-    for i in range(len(sorted_players)):
-        for j in range(i + 1, len(sorted_players)):
-            p1 = sorted_players[i]
-            p2 = sorted_players[j]
+    for i in range(len(captain_eligible)):
+        for j in range(i + 1, len(captain_eligible)):
+            p1 = captain_eligible[i]
+            p2 = captain_eligible[j]
             diff = abs(p1[2] - p2[2])
             pool = [p for p in sorted_players if p not in (p1, p2)]
             pairs.append(((p1, p2), pool, diff))
-    # Sort by smallest mmr difference
-    pairs.sort(key=lambda x: x[2])  # sort by diff
-    return pairs  # List of (captain_pair, pool, diff)
+    pairs.sort(key=lambda x: x[2])
+    return pairs
 
 # Choose which captain pair to start on among all_pairs ([(captains, pool, diff), ...])
 def choose_captain_pair_index(
@@ -1056,12 +1058,29 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
     await channel.send(f"Randomized player draft first pick: **{cap1.mention}** gets first pick!")
     # Build Candidate objects from the 8-player pool (tuples are (user_id, name, mmr))
     candidates = []
-    for uid, _name, mmr in pool:
-        m = guild.get_member(int(uid))
-        if m and not m.bot:
-            candidates.append(Candidate(member=m, mmr=int(mmr)))
+    for uid, name, mmr in pool:
+        if is_placeholder_player(uid):
+            candidates.append(
+                Candidate(
+                    player_id=str(uid),
+                    mmr=int(mmr),
+                    member=None,
+                    name=name
+                )
+            )
+        else:
+            m = guild.get_member(int(uid))
+            if m and not m.bot:
+                candidates.append(
+                    Candidate(
+                        player_id=str(m.id),
+                        mmr=int(mmr),
+                        member=m,
+                        name=m.display_name
+                    )
+                )
     if len(candidates) != 8:
-        await channel.send("Need **8 non-captain** players available for the draft.")
+        await channel.send("Need **8 valid non-captain** players available for the draft.")
         return
     # Announce and start
     header = discord.Embed(
@@ -1106,6 +1125,12 @@ def reset_team_state_for_guild(guild_id: int):
     roll_count.pop(guild_id, None)
     valid_team_combos.pop(guild_id, None)
     captain_draft_state.pop(guild_id, None)  # optional but helps immortal mode edge cases
+
+def is_placeholder_player(uid) -> bool:
+    return str(uid).startswith("placeholder:")
+
+def format_lobby_player_mention(uid, name: str) -> str:
+    return name if is_placeholder_player(uid) else f"<@{uid}>"
 
 # ================================ Team Balancing ================================
 
@@ -1486,7 +1511,7 @@ async def on_guild_join(guild):
             "**To get started**, try using:\n"
             "`!lobby` - to create an inhouse lobby\n"
             "`!cfg <steam_id>` - to link your Steam ID\n"
-            "`!add @user` - to add players\n"
+            "`!add @user` or `!add placeholder1 4500` - to add players\n"
             "`!help` - for full command list\n\n"
             "FeederBot keeps lobby info separate for each server. If you ever need help, run `!help`."
         ),
@@ -1728,7 +1753,8 @@ class ManualCaptainSelectView(ui.View):
         self.players = players
         self.selected: list[int] = []
         # 10 players -> 5 per row looks nice; adjust if desired
-        for i, (uid, name, mmr) in enumerate(players):
+        real_players = [p for p in players if not is_placeholder_player(p[0])]
+        for i, (uid, name, mmr) in enumerate(real_players):
             row = i // 5
             label = f"{name} · {mmr}"
             self.add_item(CaptainSelectButton(uid, label, row=row))
@@ -1766,6 +1792,11 @@ class CaptainSelectButton(ui.Button):
             gid = view.guild.id
             p1 = find_lobby_tuple(gid, view.selected[0])
             p2 = find_lobby_tuple(gid, view.selected[1])
+            if is_placeholder_player(p1[0]) or is_placeholder_player(p2[0]):
+                return await interaction.followup.send(
+                    "Placeholders cannot be selected as captains.",
+                    ephemeral=True
+                )
             if not p1 or not p2:
                 return await interaction.followup.send("Could not resolve selected captains from the lobby.", ephemeral=True)
             # pool = remaining 8 players
@@ -1864,6 +1895,8 @@ deps = {
     "get_all_captain_pairs": get_all_captain_pairs,
     "cancel_match_wait": cancel_match_wait,
     "reset_team_state_for_guild": reset_team_state_for_guild,
+    "is_placeholder_player": is_placeholder_player,
+    "format_lobby_player_mention": format_lobby_player_mention,
     # guild settings
     "save_guild_prefix": save_guild_prefix,
     "load_guild_prefix": load_guild_prefix,
