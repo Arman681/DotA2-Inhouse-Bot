@@ -7,11 +7,15 @@ from typing import List, Dict, Optional, Tuple
 PICK_ORDER = [("cap1", 1), ("cap2", 2), ("cap1", 2), ("cap2", 2), ("cap1", 1)]
 
 class Candidate:
-    def __init__(self, member: discord.Member, mmr: int):
+    def __init__(self, player_id: str, mmr: int, member: Optional[discord.Member] = None, name: Optional[str] = None):
+        self.player_id = str(player_id)
         self.member = member
+        self.name = name or (member.display_name if member else "Unknown")
         self.mmr = mmr
     def display(self) -> str:
-        return f"{self.member.display_name} · {self.mmr}"
+        return f"{self.name} · {self.mmr}"
+    def mention_or_name(self) -> str:
+        return self.member.mention if self.member else f"**{self.name}**"
 
 class ImmortalDraftSession:
     def __init__(
@@ -35,8 +39,8 @@ class ImmortalDraftSession:
         self.cap2_mmr = cap2_mmr
         # sort low -> high like in Immortal Draft UI
         self.candidates: List[Candidate] = sorted(candidates, key=lambda c: c.mmr)
-        self.available_ids = [c.member.id for c in self.candidates]
-        self.teams: Dict[str, List[int]] = {"cap1": [], "cap2": []}
+        self.available_ids = [c.player_id for c in self.candidates]
+        self.teams: Dict[str, List[str]] = {"cap1": [], "cap2": []}
         self.per_pick_seconds = per_pick_seconds
         self.current_turn_index = 0
         self.message: Optional[discord.Message] = None
@@ -94,23 +98,28 @@ class ImmortalDraftSession:
         # Left to right low->high MMR; strike-through when taken
         names = []
         for c in self.candidates:
-            tag = f"<@{c.member.id}>"
-            if c.member.id not in self.available_ids:
+            tag = c.mention_or_name()
+            if c.player_id not in self.available_ids:
                 names.append(f"~~{tag}~~")
             else:
                 names.append(tag)
         return " · ".join(names)
 
     def team_lines(self) -> Tuple[str, str, int, int]:
+        def display_name_for_player_id(pid: str) -> str:
+            cand = next((c for c in self.candidates if c.player_id == pid), None)
+            if not cand:
+                return str(pid)
+            return cand.mention_or_name()
         def fmt(captain, ids):
-            drafted = ", ".join(f"<@{i}>" for i in ids) if ids else "—"
+            drafted = ", ".join(display_name_for_player_id(pid) for pid in ids) if ids else "—"
             return f"{captain.mention}, {drafted}" if drafted != "—" else f"{captain.mention}"
         total1 = self.cap1_mmr + sum(
-            next((c.mmr for c in self.candidates if c.member.id == pid), 0)
+            next((c.mmr for c in self.candidates if c.player_id == pid), 0)
             for pid in self.teams["cap1"]
         )
         total2 = self.cap2_mmr + sum(
-            next((c.mmr for c in self.candidates if c.member.id == pid), 0)
+            next((c.mmr for c in self.candidates if c.player_id == pid), 0)
             for pid in self.teams["cap2"]
         )
         return (
@@ -151,14 +160,14 @@ class ImmortalDraftSession:
         e.set_footer(text="Order: 1–2–2–2–1 · Low→High MMR display")
         return e
 
-    def _autopick_member_id(self) -> Optional[int]:
+    def _autopick_member_id(self) -> Optional[str]:
         # Auto-pick lowest remaining MMR (leftmost)
         for c in self.candidates:            # candidates are sorted low→high at init
-            if c.member.id in self.available_ids:
-                return c.member.id
+            if c.player_id in self.available_ids:
+                return c.player_id
         return None
 
-    async def apply_pick(self, picker_id: int, target_id: int) -> Tuple[bool, str]:
+    async def apply_pick(self, picker_id: int, target_id: str) -> Tuple[bool, str]:
         if not self.pickable_for(picker_id):
             return False, "It's not your turn."
         if target_id not in self.available_ids:
@@ -252,27 +261,27 @@ class ImmortalDraftView(ui.View):
     def __init__(self, session: ImmortalDraftSession):
         super().__init__(timeout=None)
         self.session = session
-        self.button_by_id: dict[int, "PickButton"] = {}
+        self.button_by_id: dict[str, "PickButton"] = {}
         for idx, cand in enumerate(self.session.candidates):
             row = idx // 4
-            btn = PickButton(cand.member.id, cand.display(), row=row)
-            self.button_by_id[cand.member.id] = btn   # <— store
+            btn = PickButton(cand.player_id, cand.display(), row=row)
+            self.button_by_id[cand.player_id] = btn
             self.add_item(btn)
     def disable_all(self):
         for child in self.children:
             if isinstance(child, ui.Button):
                 child.disabled = True
     # mark a specific button as picked
-    def mark_picked(self, target_id: int):
+    def mark_picked(self, target_id: str):
         btn = self.button_by_id.get(target_id)
         if btn:
             btn.mark_picked()
 
 class PickButton(ui.Button):
-    def __init__(self, target_id: int, label_text: str, row: int | None = None):
+    def __init__(self, target_id: str, label_text: str, row: int | None = None):
         super().__init__(label=label_text, style=discord.ButtonStyle.secondary, row=row)
         self.target_id = target_id
-        self.base_label = label_text  # remember original text
+        self.base_label = label_text
     # when this player is picked (manually or auto), disable & relabel the button
     def mark_picked(self):
         self.disabled = True
