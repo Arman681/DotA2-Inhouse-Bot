@@ -1019,11 +1019,17 @@ def attach_commands(bot, deps):
     @bot.command(name="stoppolling")
     @is_admin_or_has_role()
     async def stop_polling(ctx):
-        if ctx.guild.id in polling_tasks and not polling_tasks[ctx.guild.id].done():
-            polling_tasks[ctx.guild.id].cancel()
-            await ctx.reply("Stopped polling for this server.")
-        else:
-            await ctx.reply("ℹNo polling is currently running for this server.")
+        guild_id = ctx.guild.id
+        # Cancel polling task
+        if guild_id in polling_tasks and not polling_tasks[guild_id].done():
+            polling_tasks[guild_id].cancel()
+        # CLEAR ALL MATCH STATE
+        active_match_ids.pop(guild_id, None)
+        random_polling_flags.pop(guild_id, None)
+        match_tracking_start_times.pop(guild_id, None)
+        live_embed_messages.pop(guild_id, None)
+
+        await ctx.reply("Stopped polling and cleared active match state for this server.")
     @stop_polling.error
     async def stop_polling_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
