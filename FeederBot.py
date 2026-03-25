@@ -41,7 +41,7 @@ from betting_manager import (
     clear_active_double_downs,
 )
 from match_tracker import fetch_match_result
-from immortal_draft import ImmortalDraftSession, Candidate
+from immortal_draft import ImmortalDraftSession, Candidate, set_cancel_callback
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -1093,7 +1093,7 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
         ),
         color=discord.Color.gold()
     )
-    await channel.send(embed=header)
+    header_message = await channel.send(embed=header)
     session = ImmortalDraftSession(
         bot=bot,
         guild=guild,
@@ -1103,6 +1103,7 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
         cap1_mmr=int(_c1_mmr),
         cap2_mmr=int(_c2_mmr),
         candidates=candidates,
+        header_message=header_message,
     )
     await session.start()
     # Reset the "running" flag when the draft session completes
@@ -1831,6 +1832,17 @@ class CaptainSelectButton(ui.Button):
             except Exception:
                 pass
 
+async def handle_immortal_draft_cancel(guild_id: int):
+    immortal_draft_running[guild_id] = False
+    captain_draft_state.pop(guild_id, None)
+    original_teams.pop(guild_id, None)
+    msg = lobby_message.get(guild_id)
+    if msg:
+        try:
+            await msg.add_reaction("⚔️")
+        except Exception:
+            pass
+
 deps = {
     # checks
     "user_is_admin_or_has_role": user_is_admin_or_has_role,
@@ -1878,6 +1890,7 @@ deps = {
     "lobby_message": lobby_message,
     "inhouse_mode": inhouse_mode,
     "captain_draft_state": captain_draft_state,
+    "immortal_draft_running": immortal_draft_running,
     "rocket_lock": rocket_lock,
     "update_lobby_embed": update_lobby_embed,
     "build_lobby_embed": build_lobby_embed,
@@ -1908,6 +1921,7 @@ deps = {
     "adjust_mmr": adjust_mmr,
     "save_preferred_roles_setting": save_preferred_roles_setting,
 }
+set_cancel_callback(handle_immortal_draft_cancel)
 attach_commands(bot, deps)
 
 if __name__ == "__main__":
