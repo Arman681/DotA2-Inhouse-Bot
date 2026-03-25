@@ -5,6 +5,10 @@ from discord import ui
 from typing import List, Dict, Optional, Tuple
 
 PICK_ORDER = [("cap1", 1), ("cap2", 2), ("cap1", 2), ("cap2", 2), ("cap1", 1)]
+_cancel_callback = None
+def set_cancel_callback(callback):
+    global _cancel_callback
+    _cancel_callback = callback
 
 class Candidate:
     def __init__(self, player_id: str, mmr: int, member: Optional[discord.Member] = None, name: Optional[str] = None):
@@ -29,6 +33,7 @@ class ImmortalDraftSession:
         cap2_mmr: int,
         candidates: List[Candidate],
         per_pick_seconds: int = 50,  # 20 + 30 reserve per pick
+        header_message: Optional[discord.Message] = None,
     ):
         self.bot = bot
         self.guild = guild
@@ -44,9 +49,11 @@ class ImmortalDraftSession:
         self.per_pick_seconds = per_pick_seconds
         self.current_turn_index = 0
         self.message: Optional[discord.Message] = None
+        self.header_message: Optional[discord.Message] = header_message
         self.view: Optional["ImmortalDraftView"] = None
         self.timer_task: Optional[asyncio.Task] = None
         self.locked = False
+        self.cancelled = False
         # 5s per pick + 60s reserve per captain (cumulative across the whole draft)
         self.turn_base_seconds = 5
         self.reserve = {"cap1": 60, "cap2": 60}  # each captain has their own pool
@@ -166,6 +173,29 @@ class ImmortalDraftSession:
             if c.player_id in self.available_ids:
                 return c.player_id
         return None
+    
+    async def cancel_draft(self):
+        self.cancelled = True
+        self.locked = True
+        if self.timer_task and not self.timer_task.done():
+            self.timer_task.cancel()
+        if self.view:
+            self.view.disable_all()
+        try:
+            if _cancel_callback is not None:
+                await _cancel_callback(self.guild.id)
+        except Exception:
+            pass
+        try:
+            if self.message:
+                await self.message.delete()
+        except Exception:
+            pass
+        try:
+            if self.header_message:
+                await self.header_message.delete()
+        except Exception:
+            pass
 
     async def apply_pick(self, picker_id: int, target_id: str) -> Tuple[bool, str]:
         if not self.pickable_for(picker_id):
@@ -236,7 +266,7 @@ class ImmortalDraftSession:
                 )
             )
         except asyncio.CancelledError:
-            pass
+            return
     
     async def _timeout_autopick(self):
         # autopick the lowest remaining MMR
@@ -261,12 +291,13 @@ class ImmortalDraftView(ui.View):
     def __init__(self, session: ImmortalDraftSession):
         super().__init__(timeout=None)
         self.session = session
-        self.button_by_id: dict[str, "PickButton"] = {}
+        self.button_by_id: dict[int, "PickButton"] = {}
         for idx, cand in enumerate(self.session.candidates):
             row = idx // 4
-            btn = PickButton(cand.player_id, cand.display(), row=row)
-            self.button_by_id[cand.player_id] = btn
+            btn = PickButton(cand.member.id, cand.display(), row=row)
+            self.button_by_id[cand.member.id] = btn
             self.add_item(btn)
+        self.add_item(CancelDraftButton())
     def disable_all(self):
         for child in self.children:
             if isinstance(child, ui.Button):
@@ -276,6 +307,32 @@ class ImmortalDraftView(ui.View):
         btn = self.button_by_id.get(target_id)
         if btn:
             btn.mark_picked()
+
+class CancelDraftButton(ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Cancel Immortal Draft",
+            style=discord.ButtonStyle.danger,
+            row=2
+        )
+    async def callback(self, interaction: discord.Interaction):
+        s = self.view.session  # type: ignore
+        member = interaction.guild.get_member(interaction.user.id) if interaction.guild else None
+        is_admin = False
+        if member:
+            is_admin = member.guild_permissions.administrator or any(
+                role.name == "Inhouse Admin" for role in member.roles
+            )
+        allowed_ids = {s.cap1.id, s.cap2.id}
+        if interaction.user.id not in allowed_ids and not is_admin:
+            await interaction.response.send_message(
+                "Only the captains or an admin can cancel this draft.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.defer()
+        await s.cancel_draft()
+        await s.channel.send("Immortal Draft has been cancelled.")
 
 class PickButton(ui.Button):
     def __init__(self, target_id: str, label_text: str, row: int | None = None):
