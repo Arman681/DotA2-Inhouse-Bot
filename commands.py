@@ -82,6 +82,8 @@ def attach_commands(bot, deps):
     load_guild_prefix            = deps["load_guild_prefix"]
     save_league_guild_mapping    = deps["save_league_guild_mapping"]
     live_channel_ids             = deps["live_channel_ids"]
+    lobby_channel_ids            = deps["lobby_channel_ids"]
+    get_lobby_channel_for_guild  = deps["get_lobby_channel_for_guild"]
     inhouse_mode                 = deps["inhouse_mode"]
     captain_draft_state          = deps["captain_draft_state"]
     get_all_captain_pairs        = deps["get_all_captain_pairs"]
@@ -737,7 +739,8 @@ def attach_commands(bot, deps):
             except discord.NotFound:
                 pass
         embed = build_lobby_embed(ctx.guild, selected_mode)
-        message = await ctx.reply(embed=embed)
+        target_channel = get_lobby_channel_for_guild(ctx.guild) or ctx.channel
+        message = await target_channel.send(embed=embed)
         lobby_message[guild_id] = message
         save_lobby_message_id(guild_id, message.id)
         save_lobby_players(guild_id, lobby_players[guild_id])
@@ -760,7 +763,8 @@ def attach_commands(bot, deps):
         except discord.NotFound:
             pass
         embed = build_lobby_embed(ctx.guild)
-        message = await ctx.reply(embed=embed)
+        target_channel = get_lobby_channel_for_guild(ctx.guild) or ctx.channel
+        message = await target_channel.send(embed=embed)
         lobby_message[guild_id] = message
         save_lobby_message_id(guild_id, message.id)
         save_lobby_players(guild_id, lobby_players[guild_id])
@@ -1295,6 +1299,27 @@ def attach_commands(bot, deps):
             await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
             await ctx.reply(f"An unexpected error occurred while setting the captain policy: `{error}`")
+
+    @bot.command(name="setlobbychannel")
+    @is_admin_or_has_role()
+    async def set_lobby_channel(ctx):
+        guild_id = ctx.guild.id
+        channel_id = ctx.channel.id
+        data = {
+            "lobby_channel_id": str(channel_id),
+            "lobby_channel_timestamp": firestore.SERVER_TIMESTAMP,
+            "bound_by": str(ctx.author),
+        }
+        doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+        doc_ref.set({"lobby_channel_id": data}, merge=True)
+        lobby_channel_ids[guild_id] = channel_id
+        await ctx.reply("This channel has been set as the lobby channel.")
+    @set_lobby_channel.error
+    async def set_lobby_channel_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while setting the lobby channel.")
 
     # ================================ ℹ️ Help Command ================================
 
