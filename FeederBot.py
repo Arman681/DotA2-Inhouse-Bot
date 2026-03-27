@@ -59,6 +59,7 @@ intents.members = True
 
 inhouse_mode = {}          # {guild_id: "regular" or "immortal"}
 lobby_players = {}         # {guild_id: list of (user_id, name, mmr)}
+lobby_channel_ids = {}     # {guild_id: channel_id}
 lobby_message = {}         # {guild_id: message}
 roll_count = {}            # {guild_id: int}
 team_rolls = {}            # {guild_id: list of team tuples}
@@ -1149,6 +1150,15 @@ def is_placeholder_player(uid) -> bool:
 def format_lobby_player_mention(uid, name: str) -> str:
     return name if is_placeholder_player(uid) else f"<@{uid}>"
 
+def get_lobby_channel_for_guild(guild):
+    guild_id = guild.id
+    channel_id = lobby_channel_ids.get(guild_id)
+    if channel_id:
+        channel = guild.get_channel(channel_id)
+        if channel:
+            return channel
+    return None
+
 # ================================ Team Balancing ================================
 
 # Finds all possible 5v5 team splits from a 10-player list and sorts them by MMR balance.
@@ -1246,6 +1256,13 @@ async def on_ready():
             """print(f"[on_ready] Guild {doc.id} (type: {type(doc.id).__name__}) → Channel {live_channel_id} (type: {type(live_channel_id).__name__})")"""
         except (ValueError, TypeError):
             print(f"[on_ready] Skipping guild {doc.id} due to invalid live_channel_id: {live_channel_id}")
+        # Load lobby channel ID
+        lobby_channel_id = data.get("lobby_channel_id", {}).get("lobby_channel_id", 0)
+        try:
+            if lobby_channel_id:
+                lobby_channel_ids[int(doc.id)] = int(lobby_channel_id)
+        except (ValueError, TypeError):
+            print(f"[on_ready] Skipping guild {doc.id} due to invalid lobby_channel_id: {lobby_channel_id}")
         # Restore lobby players
         restored_players = load_lobby_players(guild_id)
         if restored_players:
@@ -1929,6 +1946,8 @@ deps = {
     "load_guild_prefix": load_guild_prefix,
     "save_league_guild_mapping": save_league_guild_mapping,
     "live_channel_ids": live_channel_ids,
+    "lobby_channel_ids": lobby_channel_ids,
+    "get_lobby_channel_for_guild": get_lobby_channel_for_guild,
     "prefix_cache": prefix_cache,
     # misc
     "get_discord_id_from_steam_id": get_discord_id_from_steam_id,
