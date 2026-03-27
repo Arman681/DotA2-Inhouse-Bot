@@ -718,7 +718,7 @@ def attach_commands(bot, deps):
             if len(lobby_players[guild_id]) < 10:
                 await update_lobby_embed(ctx.guild)
                 for reaction in message.reactions:
-                    if str(reaction.emoji) in ["🚀", "♻️"]:
+                    if str(reaction.emoji) in ["🚀", "♻️", "⚔️", "🎯"]:
                         await message.clear_reaction(reaction.emoji)
         else:
             await ctx.reply("None of the specified players were in the lobby.")
