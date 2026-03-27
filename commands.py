@@ -597,6 +597,7 @@ def attach_commands(bot, deps):
     # ========================== 🏠 Lobby Management Commands =========================
 
     @bot.command(name="add")
+    @is_admin_or_has_role()
     async def add_to_lobby(ctx, *args):
         if not args:
             await ctx.reply("Usage: !add `@player1` `[@player2 ...]` OR `!add <placeholder_name> <mmr>`")
@@ -662,8 +663,15 @@ def attach_commands(bot, deps):
             await update_lobby_embed(ctx.guild)
         else:
             await ctx.reply("No new members were added.")
+    @add_to_lobby.error
+    async def add_to_lobby_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while adding players to the lobby.")
 
     @bot.command(name="remove")
+    @is_admin_or_has_role()
     async def remove_from_lobby(ctx, *args):
         if not args:
             await ctx.reply("Usage: !remove `@player1` `[@player2 ...]` OR `!remove <placeholder_name>`")
@@ -711,16 +719,19 @@ def attach_commands(bot, deps):
             await update_lobby_embed(ctx.guild)
         else:
             await ctx.reply("None of the specified players were in the lobby.")
+        @remove_from_lobby.error
+        async def remove_from_lobby_error(ctx, error):
+            if isinstance(error, commands.CheckFailure):
+                await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+            else:
+                await ctx.reply("An unexpected error occurred while removing players from the lobby.")
 
     @bot.command(name="lobby")
+    @is_admin_or_has_role()
     async def lobby_cmd(ctx, mode: str = None):
         guild_id = ctx.guild.id
         existing_players = lobby_players.get(guild_id, [])
-        prev_mode = inhouse_mode.get(guild_id, load_inhouse_mode_for_guild(guild_id))
         if mode:
-            if not await user_is_admin_or_has_role(ctx.author):
-                await ctx.reply("You don't have permission to change the inhouse mode.")
-                return
             selected_mode = mode.lower() if mode.lower() in ["regular", "immortal"] else "regular"
             save_inhouse_mode_for_guild(guild_id, selected_mode, server_name=ctx.guild.name, set_by=str(ctx.author))
         else:
@@ -748,8 +759,15 @@ def attach_commands(bot, deps):
         await message.add_reaction("👎")
         if len(lobby_players[guild_id]) == 10:
             await message.add_reaction("🚀")
+    @lobby_cmd.error
+    async def lobby_cmd_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while creating or refreshing the lobby.")
 
     @bot.command(name="reset")
+    @is_admin_or_has_role()
     async def reset(ctx, *args):
         if args:
             await ctx.reply("Usage: !reset (no extra arguments allowed)")
@@ -770,6 +788,12 @@ def attach_commands(bot, deps):
         save_lobby_players(guild_id, lobby_players[guild_id])
         await message.add_reaction("👍")
         await message.add_reaction("👎")
+    @reset.error
+    async def reset_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while resetting the lobby.")
     
     @commands.cooldown(1, 30, commands.BucketType.guild)
     @bot.command(name="livematch")
@@ -1347,12 +1371,7 @@ def attach_commands(bot, deps):
                 "**!leaderboard** - View top 10 inhouse MMR players in this server\n"
                 "**!send `<amount>` `<@user>`** - Send coins to another user in the server\n"
                 "**!livematch** - Recall and refresh the live match embed in the channel (30s cooldown)\n\n"
-                "__**Lobby Management**__\n"
-                "**!add `<@user1>` `<@user2>` ...** - Manually add one or more users to the lobby.\n"
-                "**!remove `[@user1]` `[@user2]` ...** - Manually remove one or more users from the lobby.\n"
-                "**!lobby** - Create or refresh the inhouse lobby.\n"
-                "**!reset** - Clear the current lobby and start fresh.\n\n"
-               "__**Betting / Store Commands**__\n"
+                "__**Betting / Store Commands**__\n"
                 "**!bet `<amt>` `<radiant|dire>`** - Bet coins on the current inhouse match\n"
                 "**!store** - View the store\n"
                 "**!buy `<dd_tokens>` `<amount>`** - Buy double down tokens\n"
@@ -1366,6 +1385,10 @@ def attach_commands(bot, deps):
             help_text = (
                 "\n__**Admin Commands**__\n\n"
                 "__**Player & Lobby Management**__\n"
+                "**!add `<@user1>` `<@user2>` ...** - Manually add one or more users to the lobby.\n"
+                "**!remove `[@user1]` `[@user2]` ...** - Manually remove one or more users from the lobby.\n"
+                "**!lobby** - Create or refresh the inhouse lobby.\n"
+                "**!reset** - Clear the current lobby and start fresh.\n"
                 "**!cfg `<steam_id>` `[@user]` `[--force]`** - Link a player's Steam ID and fetch their MMR\n"
                 "  • Without `--force`: Will not overwrite existing Steam ID and MMR\n"
                 "  • With `--force`: Forcibly updates Steam ID and MMR, even if already set\n"
