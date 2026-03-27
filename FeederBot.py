@@ -1127,6 +1127,22 @@ def reset_team_state_for_guild(guild_id: int):
     valid_team_combos.pop(guild_id, None)
     captain_draft_state.pop(guild_id, None)  # optional but helps immortal mode edge cases
 
+async def full_post_rocket_reset(guild_id, message=None):
+    # Cancel any active match wait
+    cancel_match_wait(guild_id)
+    # Reset generated teams / draft state
+    reset_team_state_for_guild(guild_id)
+    # Unlock rocket
+    rocket_lock[guild_id] = False
+    # Clear post-rocket reactions if message is provided
+    if message:
+        for reaction in message.reactions:
+            if str(reaction.emoji) in ["🚀", "♻️", "⚔️", "🎯"]:
+                try:
+                    await message.clear_reaction(reaction.emoji)
+                except:
+                    pass
+
 def is_placeholder_player(uid) -> bool:
     return str(uid).startswith("placeholder:")
 
@@ -1300,9 +1316,7 @@ async def on_raw_reaction_add(payload):
             updated = True
             save_lobby_players(guild_id, lobby_players[guild_id])
             # Lobby changed after teams/rocket may have been started — allow re-🚀
-            cancel_match_wait(guild_id)
-            reset_team_state_for_guild(guild_id)
-            rocket_lock[guild_id] = False
+            await full_post_rocket_reset(guild_id, message)
             if clear_manual_if_lobby_changed(guild_id):
                 await channel.send("⚠️ Lobby changed—manual captain selection cleared.")
     elif emoji == "👎":
@@ -1313,9 +1327,7 @@ async def on_raw_reaction_add(payload):
                 updated = True
                 save_lobby_players(guild_id, lobby_players[guild_id])
                 # Lobby changed after teams/rocket may have been started — allow re-🚀
-                cancel_match_wait(guild_id)
-                reset_team_state_for_guild(guild_id)
-                rocket_lock[guild_id] = False
+                await full_post_rocket_reset(guild_id, message)
                 if clear_manual_if_lobby_changed(guild_id):
                     await channel.send("⚠️ Lobby changed—manual captain selection cleared.")
                 if len(lobby_players[guild_id]) == 9 and was_full:
@@ -1594,7 +1606,8 @@ async def update_lobby_embed(guild):
     message = lobby_message[guild_id]
     await message.edit(embed=embed)
     if len(lobby_players[guild_id]) == 10:
-        await message.add_reaction("🚀")
+        if not any(str(r.emoji) == "🚀" for r in message.reactions):
+            await message.add_reaction("🚀")
 
 # Loops through all servers the bot is in and updates any existing lobby embed messages.
 async def update_all_lobbies():
@@ -1908,6 +1921,7 @@ deps = {
     "get_all_captain_pairs": get_all_captain_pairs,
     "cancel_match_wait": cancel_match_wait,
     "reset_team_state_for_guild": reset_team_state_for_guild,
+    "full_post_rocket_reset": full_post_rocket_reset,
     "is_placeholder_player": is_placeholder_player,
     "format_lobby_player_mention": format_lobby_player_mention,
     # guild settings
