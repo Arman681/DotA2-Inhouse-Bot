@@ -91,23 +91,6 @@ def attach_commands(bot, deps):
     get_discord_id_from_steam_id = deps["get_discord_id_from_steam_id"]
     adjust_mmr                   = deps["adjust_mmr"]
 
-    def maybe_reset_after_lobby_change(guild_id: int):
-        """
-        Reset team state and cancel Steam wait ONLY if teams were generated
-        or if we're currently waiting for a Steam match.
-        """
-        should_reset = False
-        task = match_wait_tasks.get(guild_id)
-        if task and not task.done():
-            should_reset = True
-        if original_teams.get(guild_id) is not None:
-            should_reset = True
-        if not should_reset:
-            return
-        cancel_match_wait(guild_id)
-        reset_team_state_for_guild(guild_id)
-        rocket_lock[guild_id] = False
-
     # ============================== 👥 General Commands ==============================
 
     @bot.command(name="cfg")
@@ -741,10 +724,6 @@ def attach_commands(bot, deps):
         else:
             selected_mode = load_inhouse_mode_for_guild(guild_id)
         inhouse_mode[guild_id] = selected_mode
-        # If mode changed after 🚀 started (teams generated / waiting for match),
-        # cancel the Steam match search + clear teams so we don't end up with 2 wait tasks.
-        if mode and selected_mode != prev_mode:
-            maybe_reset_after_lobby_change(guild_id)
         if guild_id not in lobby_players:
             lobby_players[guild_id] = existing_players
         """try:
