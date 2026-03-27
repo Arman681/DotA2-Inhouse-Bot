@@ -291,11 +291,11 @@ class ImmortalDraftView(ui.View):
     def __init__(self, session: ImmortalDraftSession):
         super().__init__(timeout=None)
         self.session = session
-        self.button_by_id: dict[int, "PickButton"] = {}
+        self.button_by_id: dict[str, "PickButton"] = {}
         for idx, cand in enumerate(self.session.candidates):
             row = idx // 4
-            btn = PickButton(cand.member.id, cand.display(), row=row)
-            self.button_by_id[cand.member.id] = btn
+            btn = PickButton(cand.player_id, cand.display(), row=row)
+            self.button_by_id[cand.player_id] = btn
             self.add_item(btn)
         self.add_item(CancelDraftButton())
     def disable_all(self):
