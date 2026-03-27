@@ -930,6 +930,14 @@ def attach_commands(bot, deps):
                 lines.append(f"\n📺 **Live Channel ID**:\n  • Value: `{live_channel_id}`\n  • Set by: {live_channel_set_by}\n  • Timestamp: `{live_channel_time}`\n  • Full Doc: `{live_channel_data}`")
             else:
                 lines.append(f"\n📺 **Live Channel ID**: `{live_channel_id}`\nSet by: {live_channel_set_by}\nTime: {live_channel_time}")
+            lobby_channel_data = data.get("lobby_channel_id", {})
+            lobby_channel_id = lobby_channel_data.get("lobby_channel_id", "Unknown")
+            lobby_channel_time = lobby_channel_data.get("lobby_channel_timestamp", "Unknown")
+            lobby_channel_set_by = lobby_channel_data.get("bound_by", "Unknown")
+            if verbose:
+                lines.append(f"\n🧾 **Lobby Channel ID**:\n  • Value: `{lobby_channel_id}`\n  • Set by: {lobby_channel_set_by}\n  • Timestamp: `{lobby_channel_time}`\n  • Full Doc: `{lobby_channel_data}`")
+            else:
+                lines.append(f"\n🧾 **Lobby Channel ID**: `{lobby_channel_id}`\nSet by: {lobby_channel_set_by}\nTime: {lobby_channel_time}")
             preferred_roles_setting_data = data.get("preferred_roles_setting", {})
             preferred_roles_enabled = preferred_roles_setting_data.get("preferred_roles_enabled", True)
             preferred_roles_set_by = preferred_roles_setting_data.get("preferred_roles_set_by", "Unknown")
@@ -1369,6 +1377,7 @@ def attach_commands(bot, deps):
                 "  • `regular` — Regular Captain's Mode (MMR-balanced teams)\n"
                 "  • `immortal` — Captain's Mode with Immortal Draft (captains pick teams)\n"
                 "**!setpassword `<new_password>`** - Change the inhouse lobby password\n"
+                "**!setlobbychannel** - Set current channel for lobby embeds and reset posts\n"
                 "**!toggle_roles `<on|off>`** - Enable/disable preferred role usage in team balancing\n"
                 "**!lobbyroles** - Show preferred roles for all 10 lobby players (requires full lobby)\n\n"
                 "__**Bot Settings**__\n"
