@@ -73,6 +73,7 @@ def attach_commands(bot, deps):
     choose_captain_pair_index    = deps["choose_captain_pair_index"]
     cancel_match_wait            = deps["cancel_match_wait"]
     reset_team_state_for_guild   = deps["reset_team_state_for_guild"]
+    full_post_rocket_reset       = deps["full_post_rocket_reset"]
     is_placeholder_player        = deps["is_placeholder_player"]
     format_lobby_player_mention  = deps["format_lobby_player_mention"]
 
@@ -622,6 +623,13 @@ def attach_commands(bot, deps):
             await ctx.reply("Lobby is already full. Cannot add more players.")
             return
         added = []
+        channel = ctx.channel
+        message = None
+        if guild_id in lobby_message:
+            try:
+                message = await channel.fetch_message(lobby_message[guild_id].id)
+            except:
+                message = None
         # -------------------------------
         # Placeholder mode: !add name mmr
         # -------------------------------
@@ -644,8 +652,6 @@ def attach_commands(bot, deps):
                 await ctx.reply("That name is already in the lobby.")
                 return
             lobby_players[guild_id].append((placeholder_id, placeholder_name, placeholder_mmr))
-            save_lobby_players(guild_id, lobby_players[guild_id])
-            maybe_reset_after_lobby_change(guild_id)
             added.append(f"{placeholder_name} ({placeholder_mmr})")
         # -------------------------------
         # Normal mention mode: !add @user
@@ -661,12 +667,13 @@ def attach_commands(bot, deps):
                 mmr = get_mmr(member)
                 display_name = member.display_name
                 lobby_players[guild_id].append((member.id, display_name, mmr))
-                save_lobby_players(guild_id, lobby_players[guild_id])
                 added.append(f"{display_name} ({mmr})")
-                maybe_reset_after_lobby_change(guild_id)
+
                 if len(lobby_players[guild_id]) >= 10:
                     break
         if added:
+            await full_post_rocket_reset(guild_id, message)
+            save_lobby_players(guild_id, lobby_players[guild_id])
             await update_lobby_embed(ctx.guild)
         else:
             await ctx.reply("No new members were added.")
@@ -681,6 +688,13 @@ def attach_commands(bot, deps):
         if guild_id not in lobby_players:
             await ctx.reply("There is no lobby for this server yet.")
             return
+        channel = ctx.channel
+        message = None
+        if guild_id in lobby_message:
+            try:
+                message = await channel.fetch_message(lobby_message[guild_id].id)
+            except:
+                message = None
         # -------------------------------
         # Placeholder mode: !remove name
         # -------------------------------
@@ -690,9 +704,7 @@ def attach_commands(bot, deps):
             for i, (uid, name, _) in enumerate(lobby_players[guild_id]):
                 if is_placeholder_player(uid) and name.lower() == target_name:
                     del lobby_players[guild_id][i]
-                    save_lobby_players(guild_id, lobby_players[guild_id])
                     removed.append(name)
-                    maybe_reset_after_lobby_change(guild_id)
                     break
         # -------------------------------
         # Normal mention mode: !remove @user
@@ -706,20 +718,12 @@ def attach_commands(bot, deps):
                 for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
                     if str(uid) == str(member.id):
                         del lobby_players[guild_id][i]
-                        save_lobby_players(guild_id, lobby_players[guild_id])
                         removed.append(member.display_name)
-                        maybe_reset_after_lobby_change(guild_id)
                         break
-
         if removed:
-            channel = ctx.channel
-            message = await channel.fetch_message(lobby_message[guild_id].id)
-
-            if len(lobby_players[guild_id]) < 10:
-                await update_lobby_embed(ctx.guild)
-                for reaction in message.reactions:
-                    if str(reaction.emoji) in ["🚀", "♻️", "⚔️", "🎯"]:
-                        await message.clear_reaction(reaction.emoji)
+            await full_post_rocket_reset(guild_id, message)
+            save_lobby_players(guild_id, lobby_players[guild_id])
+            await update_lobby_embed(ctx.guild)
         else:
             await ctx.reply("None of the specified players were in the lobby.")
 
@@ -747,6 +751,7 @@ def attach_commands(bot, deps):
             await ctx.message.delete()
         except discord.Forbidden:
             pass"""
+        await full_post_rocket_reset(guild_id)
         if guild_id in lobby_message:
             try:
                 await lobby_message[guild_id].delete()
@@ -769,6 +774,7 @@ def attach_commands(bot, deps):
             return
         guild_id = ctx.guild.id
         lobby_players[guild_id] = []
+        await full_post_rocket_reset(guild_id)
         try:
             if guild_id in lobby_message:
                 await lobby_message[guild_id].delete()
@@ -1079,6 +1085,7 @@ def attach_commands(bot, deps):
         # Cancel polling task
         if guild_id in polling_tasks and not polling_tasks[guild_id].done():
             polling_tasks[guild_id].cancel()
+            polling_tasks.pop(ctx.guild.id, None)
         # CLEAR ALL MATCH STATE
         active_match_ids.pop(guild_id, None)
         random_polling_flags.pop(guild_id, None)
