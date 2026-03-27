@@ -726,6 +726,143 @@ def attach_commands(bot, deps):
             else:
                 await ctx.reply("An unexpected error occurred while removing players from the lobby.")
 
+    @bot.command(name="replace")
+    @is_admin_or_has_role()
+    async def replace_in_lobby(ctx, *args):
+        if not args:
+            await ctx.reply(
+                "Usage:\n"
+                "`!replace @olduser @newuser`\n"
+                "`!replace @olduser <placeholder_name> <mmr>`\n"
+                "`!replace <placeholder_name> @newuser`\n"
+                "`!replace <old_placeholder> <new_placeholder> <mmr>`"
+            )
+            return
+        guild_id = ctx.guild.id
+        if guild_id not in lobby_players:
+            await ctx.reply("There is no lobby for this server yet.")
+            return
+        channel = ctx.channel
+        message = None
+        if guild_id in lobby_message:
+            try:
+                message = await channel.fetch_message(lobby_message[guild_id].id)
+            except:
+                message = None
+        current_players = lobby_players[guild_id]
+        # -------------------------------
+        # Parse OLD target
+        # -------------------------------
+        old_is_mention = len(ctx.message.mentions) >= 1
+        old_target_uid = None
+        old_target_name = None
+        old_index = None
+        if old_is_mention:
+            old_member = ctx.message.mentions[0]
+            for i, (uid, name, mmr) in enumerate(current_players):
+                if str(uid) == str(old_member.id):
+                    old_target_uid = uid
+                    old_target_name = name
+                    old_index = i
+                    break
+        else:
+            old_placeholder_name = args[0].strip().lower()
+            for i, (uid, name, mmr) in enumerate(current_players):
+                if is_placeholder_player(uid) and name.lower() == old_placeholder_name:
+                    old_target_uid = uid
+                    old_target_name = name
+                    old_index = i
+                    break
+        if old_index is None:
+            await ctx.reply("The player or placeholder you want to replace is not in the lobby.")
+            return
+        # -------------------------------
+        # Parse NEW target
+        # -------------------------------
+        mentions = ctx.message.mentions
+        # Case 1: replacing with a mentioned user
+        if len(mentions) >= 2:
+            new_member = mentions[1]
+            if any(str(uid) == str(new_member.id) for uid, _, _ in current_players):
+                await ctx.reply("That replacement user is already in the lobby.")
+                return
+            new_tuple = (new_member.id, new_member.display_name, get_mmr(new_member))
+        # Case 2: old target is mention, new target is placeholder
+        elif len(mentions) == 1:
+            if len(args) != 3:
+                await ctx.reply(
+                    "Usage for replacing with a placeholder:\n"
+                    "`!replace @olduser <placeholder_name> <mmr>`"
+                )
+                return
+            placeholder_name = args[1].strip()
+            mmr_raw = args[2].strip()
+            if not placeholder_name:
+                await ctx.reply("Placeholder name cannot be empty.")
+                return
+            try:
+                placeholder_mmr = int(mmr_raw)
+            except ValueError:
+                await ctx.reply("Placeholder MMR must be a number.")
+                return
+            placeholder_id = f"placeholder:{placeholder_name.lower()}"
+            if any(str(uid) == placeholder_id for uid, _, _ in current_players):
+                await ctx.reply("That placeholder is already in the lobby.")
+                return
+            if any(name.lower() == placeholder_name.lower() for uid, name, _ in current_players if uid != old_target_uid):
+                await ctx.reply("That name is already in the lobby.")
+                return
+            new_tuple = (placeholder_id, placeholder_name, placeholder_mmr)
+        # Case 3: no mentions at all -> placeholder replaced with placeholder
+        else:
+            if len(args) != 3:
+                await ctx.reply(
+                    "Usage for placeholder replacement:\n"
+                    "`!replace <old_placeholder> <new_placeholder> <mmr>`"
+                )
+                return
+            placeholder_name = args[1].strip()
+            mmr_raw = args[2].strip()
+            if not placeholder_name:
+                await ctx.reply("Placeholder name cannot be empty.")
+                return
+            try:
+                placeholder_mmr = int(mmr_raw)
+            except ValueError:
+                await ctx.reply("Placeholder MMR must be a number.")
+                return
+            placeholder_id = f"placeholder:{placeholder_name.lower()}"
+            if any(str(uid) == placeholder_id for uid, _, _ in current_players):
+                await ctx.reply("That replacement placeholder is already in the lobby.")
+                return
+            if any(name.lower() == placeholder_name.lower() for uid, name, _ in current_players if uid != old_target_uid):
+                await ctx.reply("That name is already in the lobby.")
+                return
+            new_tuple = (placeholder_id, placeholder_name, placeholder_mmr)
+        # -------------------------------
+        # Special case: old target placeholder -> new target mention
+        # -------------------------------
+        if not old_is_mention and len(mentions) == 1:
+            new_member = mentions[0]
+            if any(str(uid) == str(new_member.id) for uid, _, _ in current_players):
+                await ctx.reply("That replacement user is already in the lobby.")
+                return
+            new_tuple = (new_member.id, new_member.display_name, get_mmr(new_member))
+        # -------------------------------
+        # Perform replacement
+        # -------------------------------
+        current_players[old_index] = new_tuple
+        await full_post_rocket_reset(guild_id, message)
+        save_lobby_players(guild_id, current_players)
+        await update_lobby_embed(ctx.guild)
+        await ctx.reply(f"Replaced **{old_target_name}** with **{new_tuple[1]}** in the lobby.")
+    @replace_in_lobby.error
+    async def replace_in_lobby_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while replacing a player in the lobby.")
+
     @bot.command(name="lobby")
     @is_admin_or_has_role()
     async def lobby_cmd(ctx, mode: str = None):
@@ -1386,7 +1523,8 @@ def attach_commands(bot, deps):
                 "\n__**Admin Commands**__\n\n"
                 "__**Player & Lobby Management**__\n"
                 "**!add `<@user1>` `<@user2>` ...** - Manually add one or more users to the lobby.\n"
-                "**!remove `[@user1]` `[@user2]` ...** - Manually remove one or more users from the lobby.\n"
+                "**!remove `<@user1>` `<@user2>` ...** - Manually remove one or more users from the lobby.\n"
+                "**!replace `<@user1|placeholder1>` `<@user2|placeholder2>`** - Replace one lobby user or placeholder with another user or placeholder\n"
                 "**!lobby** - Create or refresh the inhouse lobby.\n"
                 "**!reset** - Clear the current lobby and start fresh.\n"
                 "**!cfg `<steam_id>` `[@user]` `[--force]`** - Link a player's Steam ID and fetch their MMR\n"
