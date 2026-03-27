@@ -1320,9 +1320,9 @@ async def on_raw_reaction_add(payload):
                     await channel.send("⚠️ Lobby changed—manual captain selection cleared.")
                 if len(lobby_players[guild_id]) == 9 and was_full:
                     await channel.send(f"{user.mention} left the full lobby. Lobby is now 9/10.")
-                    # Remove 🚀 and ♻️
+                    # Remove all post-rocket reactions so the lobby must be re-rocket'd
                     for reaction in message.reactions:
-                        if str(reaction.emoji) in ["🚀", "♻️", "⚔️"]:
+                        if str(reaction.emoji) in ["🚀", "♻️", "⚔️", "🎯"]:
                             await message.clear_reaction(reaction.emoji)
                 break
     elif emoji == "🚀" and len(lobby_players[guild_id]) == 10:
