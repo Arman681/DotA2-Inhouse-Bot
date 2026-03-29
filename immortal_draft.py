@@ -54,6 +54,7 @@ class ImmortalDraftSession:
         self.timer_task: Optional[asyncio.Task] = None
         self.locked = False
         self.cancelled = False
+        self._finalized = False
         # 5s per pick + 60s reserve per captain (cumulative across the whole draft)
         self.turn_base_seconds = 5
         self.reserve = {"cap1": 60, "cap2": 60}  # each captain has their own pool
@@ -214,12 +215,35 @@ class ImmortalDraftSession:
             self.turn_remaining = self.turn_base_seconds
         else:
             self._next_turn()
+        # If that was the final pick, finalize immediately instead of waiting on timer loop
+        if self.locked:
+            await self.finalize_draft()
         return True, "Picked!"
 
     async def start(self):
         self.view = ImmortalDraftView(self)
         self.message = await self.channel.send(embed=self.make_embed(), view=self.view)
         self.timer_task = asyncio.create_task(self._run_timer())
+        try:
+            await self.channel.send(
+                embed=discord.Embed(
+                    title="Draft Results",
+                    description=(
+                        f"**Team #1 (Captain {self.cap1.display_name})**\n"
+                        f"{t1}\n"
+                        f"**MMR Total:** {total1}\n"
+                        f"**Average MMR:** {avg1}\n\n"
+                        f"**Team #2 (Captain {self.cap2.display_name})**\n"
+                        f"{t2}\n"
+                        f"**MMR Total:** {total2}\n"
+                        f"**Average MMR:** {avg2}\n\n"
+                        f"Move to your in-game lobby teams and begin Captains Mode."
+                    ),
+                    color=discord.Color.green()
+                )
+            )
+        except Exception as e:
+            print(f"[ImmortalDraftSession.finalize_draft] Failed to send draft results: {e}")
 
     async def _run_timer(self):
         try:
@@ -238,41 +262,20 @@ class ImmortalDraftSession:
                         # out of time completely -> autopick one player
                         await self._timeout_autopick()
                 # push UI update
-                if self.message:
+                if self.message and not self._finalized:
                     await self.message.edit(embed=self.make_embed(), view=self.view)
-            # finished: lock view and post results (your existing code)
-            if self.view:
-                self.view.disable_all()
-                if self.message:
-                    await self.message.edit(embed=self.make_embed(), view=self.view)
-            t1, t2, total1, total2 = self.team_lines()
-            avg1 = round(total1 / 5)
-            avg2 = round(total2 / 5)
-            await self.channel.send(
-                embed=discord.Embed(
-                    title="Draft Results",
-                    description=(
-                        f"**Team #1 (Captain {self.cap1.display_name})**\n"
-                        f"{t1}\n"
-                        f"**MMR Total:** {total1}\n"
-                        f"**Average MMR:** {avg1}\n\n"
-                        f"**Team #2 (Captain {self.cap2.display_name})**\n"
-                        f"{t2}\n"
-                        f"**MMR Total:** {total2}\n"
-                        f"**Average MMR:** {avg2}\n\n"
-                        f"Move to your in-game lobby teams and begin Captains Mode."
-                    ),
-                    color=discord.Color.green()
-                )
-            )
+            await self.finalize_draft()
         except asyncio.CancelledError:
             return
+        except Exception as e:
+            print(f"[ImmortalDraftSession._run_timer] Timer task crashed: {e}")
     
     async def _timeout_autopick(self):
         # autopick the lowest remaining MMR
         target_id = self._autopick_member_id()
         if target_id is None:
             self.locked = True
+            await self.finalize_draft()
             return
         who, _ = self._turn_info()
         self.teams[who].append(target_id)
@@ -286,6 +289,8 @@ class ImmortalDraftSession:
             self.turn_remaining = self.turn_base_seconds
         else:
             self._next_turn()
+        if self.locked:
+            await self.finalize_draft()
 
 class ImmortalDraftView(ui.View):
     def __init__(self, session: ImmortalDraftSession):
