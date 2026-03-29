@@ -224,6 +224,22 @@ class ImmortalDraftSession:
         self.view = ImmortalDraftView(self)
         self.message = await self.channel.send(embed=self.make_embed(), view=self.view)
         self.timer_task = asyncio.create_task(self._run_timer())
+
+    async def finalize_draft(self):
+        if self._finalized:
+            return
+        self._finalized = True
+        self.locked = True
+        if self.view:
+            self.view.disable_all()
+        if self.message:
+            try:
+                await self.message.edit(embed=self.make_embed(), view=self.view)
+            except Exception as e:
+                print(f"[ImmortalDraftSession.finalize_draft] Failed to edit final draft message: {e}")
+        t1, t2, total1, total2 = self.team_lines()
+        avg1 = round(total1 / 5)
+        avg2 = round(total2 / 5)
         try:
             await self.channel.send(
                 embed=discord.Embed(
