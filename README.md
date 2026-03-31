@@ -21,6 +21,15 @@ FeederBot is built around a per-server inhouse workflow:
 
 ---
 
+## Inviting FeederBot
+
+Want to run automated Dota 2 inhouse lobbies in your server?
+
+**[Invite FeederBot](https://discord.com/oauth2/authorize?client_id=1386529622958805013&permissions=92224&integration_type=0&scope=bot+applications.commands)**
+
+
+---
+
 ## Core features
 
 ### Lobby system
