@@ -678,7 +678,7 @@ async def fetch_hero_id_to_name_map():
             with open(HERO_CACHE_FILE, "r") as f:
                 data = json.load(f)
                 if isinstance(data, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
-                    print("[fetch_hero_id_to_name_map] ✅ Loaded hero ID cache from local file.")
+                    print("[fetch_hero_id_to_name_map] Loaded hero ID cache from local file.")
                     return data
                 else:
                     print("[fetch_hero_id_to_name_map] Invalid hero cache format. Refetching from API...")
@@ -698,7 +698,7 @@ async def fetch_hero_id_to_name_map():
             hero_map = {str(hero["id"]): hero["localized_name"] for hero in heroes}
             with open(HERO_CACHE_FILE, "w") as f:
                 json.dump(hero_map, f)
-            print("[fetch_hero_id_to_name_map] 💾 Saved hero ID map to cache.")
+            print("[fetch_hero_id_to_name_map] Saved hero ID map to cache.")
             return hero_map
     except Exception as e:
         print(f"[fetch_hero_id_to_name_map] Failed to fetch hero data from Steam API: {e}")
@@ -1236,6 +1236,20 @@ def calculate_role_fit_score(team, preference_map=None, mmr_map=None):
 async def on_ready():
     global hero_id_to_name
     print(f"{bot.user} is online!")
+    # --- One-time slash command cleanup ---
+    try:
+        # Clear global slash commands
+        bot.tree.clear_commands(guild=None)
+        await bot.tree.sync()
+        print("[on_ready] Cleared global slash commands.")
+
+        # Clear guild-specific slash commands too
+        for guild in bot.guilds:
+            bot.tree.clear_commands(guild=discord.Object(id=guild.id))
+            await bot.tree.sync(guild=discord.Object(id=guild.id))
+            print(f"[on_ready] Cleared guild slash commands for guild {guild.id}.")
+    except Exception as e:
+        print(f"[on_ready] Failed to clear slash commands: {e}")
     active_match_ids.clear()
     clear_all_bets(bot)
     # Cache hero IDs
@@ -1666,8 +1680,8 @@ def build_team_embed(team1, team2, score1, score2, roles1=None, roles2=None, gui
                 f"{p[1]} ({p[2]}) [Pos {role}]"
                 for role, p in sorted(assignments.items())
             )
-        team1_desc = format_player_list(roles1) + f"\n🍀 Role Fit Score: {score1}"
-        team2_desc = format_player_list(roles2) + f"\n🍀 Role Fit Score: {score2}"
+        team1_desc = format_player_list(roles1) + f"\nRole Fit Score: {score1}"
+        team2_desc = format_player_list(roles2) + f"\nRole Fit Score: {score2}"
     else:
         def format_player_list(team):
             return ", ".join(
