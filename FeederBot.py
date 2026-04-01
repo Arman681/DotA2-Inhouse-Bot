@@ -1236,20 +1236,6 @@ def calculate_role_fit_score(team, preference_map=None, mmr_map=None):
 async def on_ready():
     global hero_id_to_name
     print(f"{bot.user} is online!")
-    # --- One-time slash command cleanup ---
-    try:
-        # Clear global slash commands
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync()
-        print("[on_ready] Cleared global slash commands.")
-
-        # Clear guild-specific slash commands too
-        for guild in bot.guilds:
-            bot.tree.clear_commands(guild=discord.Object(id=guild.id))
-            await bot.tree.sync(guild=discord.Object(id=guild.id))
-            print(f"[on_ready] Cleared guild slash commands for guild {guild.id}.")
-    except Exception as e:
-        print(f"[on_ready] Failed to clear slash commands: {e}")
     active_match_ids.clear()
     clear_all_bets(bot)
     # Cache hero IDs
