@@ -177,7 +177,7 @@ def attach_commands(bot, deps):
             if mmr is None and season_rank is not None and season_rank >= 80:
                 mmr = MMR_CAP_FOR_TOP_RANKS
                 await ctx.reply(
-                    "⚠️ STRATZ does not provide season rank values beyond 80.\n"
+                    "STRATZ does not provide season rank values beyond 80.\n"
                     f"Your estimated MMR has been capped at **{MMR_CAP_FOR_TOP_RANKS}** "
                     f"based on your season rank ({season_rank})."
                 )
@@ -251,7 +251,13 @@ def attach_commands(bot, deps):
         if not top_players:
             await ctx.reply("No leaderboard data found for this server.")
             return
+        embed = discord.Embed(
+            title="Top 10 Inhouse Players",
+            description=f"Leaderboard for **{ctx.guild.name}**",
+            color=discord.Color.gold()
+        )
         lines = []
+        medals = ["🥇", "🥈", "🥉"]
         for rank, (user_id, stored_nickname, mmr) in enumerate(top_players, start=1):
             # If they’re still in the server, use their current display name
             member = ctx.guild.get_member(int(user_id))
@@ -260,7 +266,6 @@ def attach_commands(bot, deps):
             else:
                 # Fall back to the nickname stored in inhouse_mmr
                 name = stored_nickname or "Unknown"
-
                 # If that nickname is useless, try the main players collection
                 if name.lower() == "unknown":
                     player_doc = db.collection("players").document(str(user_id)).get()
@@ -271,8 +276,15 @@ def attach_commands(bot, deps):
                             or pdata.get("steam_name")
                             or name
                         )
-            lines.append(f"**#{rank}** - {name}: {mmr}")
-        await ctx.reply("**Top 10 Inhouse Players**\n" + "\n".join(lines))
+            prefix = medals[rank - 1] if rank <= 3 else f"**#{rank}**"
+            lines.append(f"{prefix} — **{name}**: `{mmr}` MMR")
+        embed.add_field(
+            name="Rankings",
+            value="\n".join(lines),
+            inline=False
+        )
+        embed.set_footer(text=f"Requested by {ctx.author.display_name}")
+        await ctx.reply(embed=embed)
 
     @commands.cooldown(1, 5, commands.BucketType.user)  # 1 use / 5s per user
     @bot.command(name="bet")
@@ -1322,7 +1334,7 @@ def attach_commands(bot, deps):
             return
         # Build nice embed
         embed = discord.Embed(
-            title="🧭 Preferred Roles — Current Lobby (10/10)",
+            title="Preferred Roles — Current Lobby (10/10)",
             description="Most → Least preferred",
             color=discord.Color.blurple()
         )
@@ -1415,7 +1427,7 @@ def attach_commands(bot, deps):
             pol, thr = get_captain_policy(gid)
             extra = f" (threshold {thr})" if pol == "top2_if_close" and thr is not None else ""
             return await ctx.reply(
-                f"📋 Captain policy: **{pol}**{extra}\n"
+                f"Captain policy: **{pol}**{extra}\n"
                 "Options: `min_diff`, `top2_if_close [threshold]`, `simulate`.",
                 mention_author=False
             )
@@ -1497,7 +1509,7 @@ def attach_commands(bot, deps):
         category = category.lower().strip()
         if category == "":
             embed = discord.Embed(
-                title="📜 Available Commands",
+                title="Available Commands",
                 description=(
                     "__**General Commands**__\n"
                     "**!cfg `<steam_id>`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
@@ -1525,7 +1537,7 @@ def attach_commands(bot, deps):
             return
         elif category == "admin":
             embed = discord.Embed(
-                title="🔐 Admin Commands",
+                title="Admin Commands",
                 description=(
                     "__**Player & Lobby Management**__\n"
                     "**!add `<@user1>` `<@user2>` ...** - Add one or more users to the lobby.\n"
