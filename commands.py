@@ -93,7 +93,7 @@ def attach_commands(bot, deps):
     get_discord_id_from_steam_id = deps["get_discord_id_from_steam_id"]
     adjust_mmr                   = deps["adjust_mmr"]
 
-    # ============================== 👥 General Commands ==============================
+    # ============================== General Commands ==============================
 
     @bot.command(name="cfg")
     async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None, *, force: str = None):
@@ -594,7 +594,7 @@ def attach_commands(bot, deps):
             await ctx.reply("An unexpected error occurred while fetching preferred roles.")
             raise error
 
-    # ========================== 🏠 Lobby Management Commands =========================
+    # ========================== Lobby Management Commands =========================
 
     @bot.command(name="add")
     @is_admin_or_has_role()
@@ -963,7 +963,7 @@ def attach_commands(bot, deps):
             return
         await ctx.reply("An error occurred while recalling the live match embed.")
 
-    # ============================= 🔐 Admin-Only Commands ============================
+    # ============================= Admin-Only Commands ============================
 
     @bot.command(name="setmmr")
     @is_admin_or_has_role()
@@ -1046,9 +1046,9 @@ def attach_commands(bot, deps):
         doc = db.collection("guild_specific_info").document(str(guild_id)).get()
         lines = []
         if verbose:
-            lines.append(f"📜 **Admin Logs (Verbose)** for `{guild_name}` (Guild ID: `{guild_id}`)")
+            lines.append(f"**Admin Logs (Verbose)** for `{guild_name}` (Guild ID: `{guild_id}`)")
         else:
-            lines.append(f"📜 **Admin Logs for `{guild_name}`**")
+            lines.append(f"**Admin Logs for `{guild_name}`**")
         if doc.exists:
             data = doc.to_dict()
             prefix_data = data.get("prefix", {})
@@ -1056,57 +1056,57 @@ def attach_commands(bot, deps):
             prefix_set_by = prefix_data.get("prefix_set_by", "Unknown")
             prefix_time = prefix_data.get("prefix_timestamp", "Unknown")
             if verbose:
-                lines.append(f"🔧 **Prefix**:\n  • Value: `{prefix}`\n  • Set by: {prefix_set_by}\n  • Timestamp: `{prefix_time}`\n  • Full Doc: `{prefix_data}`")
+                lines.append(f"**Prefix**:\n  • Value: `{prefix}`\n  • Set by: {prefix_set_by}\n  • Timestamp: `{prefix_time}`\n  • Full Doc: `{prefix_data}`")
             else:
-                lines.append(f"🔧 **Prefix**: `{prefix}`\nSet by: {prefix_set_by}\nTime: {prefix_time}")
+                lines.append(f"**Prefix**: `{prefix}`\nSet by: {prefix_set_by}\nTime: {prefix_time}")
             password_data = data.get("password", {})
             password = password_data.get("password", "Unknown")
             password_set_by = password_data.get("password_set_by", "Unknown")
             password_time = password_data.get("password_timestamp", "Unknown")
             if verbose:
-                lines.append(f"\n🔐 **Lobby Password**:\n  • Value: `{password}`\n  • Set by: {password_set_by}\n  • Timestamp: `{password_time}`\n  • Full Doc: `{password_data}`")
+                lines.append(f"\n**Lobby Password**:\n  • Value: `{password}`\n  • Set by: {password_set_by}\n  • Timestamp: `{password_time}`\n  • Full Doc: `{password_data}`")
             else:
-                lines.append(f"\n🔐 **Lobby Password**: `{password}`\nSet by: {password_set_by}\nTime: {password_time}")
+                lines.append(f"\n**Lobby Password**: `{password}`\nSet by: {password_set_by}\nTime: {password_time}")
             inhouse_mode_data = data.get("inhouse_mode", {})
             mode = inhouse_mode_data.get("mode", "Unknown")
             mode_set_by = inhouse_mode_data.get("mode_set_by", "Unknown")
             mode_time = inhouse_mode_data.get("mode_timestamp", "Unknown")
             if verbose:
-                lines.append(f"\n🛠️ **Inhouse Mode**:\n  • Value: `{mode}`\n  • Set by: {mode_set_by}\n  • Timestamp: `{mode_time}`\n  • Full Doc: `{inhouse_mode_data}`")
+                lines.append(f"\n**Inhouse Mode**:\n  • Value: `{mode}`\n  • Set by: {mode_set_by}\n  • Timestamp: `{mode_time}`\n  • Full Doc: `{inhouse_mode_data}`")
             else:
-                lines.append(f"\n🛠️ **Inhouse Mode**: `{mode}`\nSet by: {mode_set_by}\nTime: {mode_time}")
+                lines.append(f"\n**Inhouse Mode**: `{mode}`\nSet by: {mode_set_by}\nTime: {mode_time}")
             league_id_data = data.get("league_id", {})
             bound_league_id = league_id_data.get("bound_league_id", "Unknown")
             league_bind_by = league_id_data.get("league_id_bound_by", "Unknown")
             league_bind_time = league_id_data.get("league_bind_timestamp", "Unknown")
             if verbose:
-                lines.append(f"\n🏆 **League ID**:\n  • Value: `{bound_league_id}`\n  • Bound by: {league_bind_by}\n  • Timestamp: `{league_bind_time}`\n  • Full Doc: `{league_id_data}`")
+                lines.append(f"\n**League ID**:\n  • Value: `{bound_league_id}`\n  • Bound by: {league_bind_by}\n  • Timestamp: `{league_bind_time}`\n  • Full Doc: `{league_id_data}`")
             else:
-                lines.append(f"\n🏆 **League ID**: `{bound_league_id}`\nBound by: {league_bind_by}\nTime: {league_bind_time}")
+                lines.append(f"\n**League ID**: `{bound_league_id}`\nBound by: {league_bind_by}\nTime: {league_bind_time}")
             live_channel_data = data.get("live_channel_id", {})
             live_channel_id = live_channel_data.get("live_channel_id", "Unknown")
             live_channel_time = live_channel_data.get("live_channel_timestamp", "Unknown")
             live_channel_set_by = live_channel_data.get("bound_by", "Unknown")
             if verbose:
-                lines.append(f"\n📺 **Live Channel ID**:\n  • Value: `{live_channel_id}`\n  • Set by: {live_channel_set_by}\n  • Timestamp: `{live_channel_time}`\n  • Full Doc: `{live_channel_data}`")
+                lines.append(f"\ **Live Channel ID**:\n  • Value: `{live_channel_id}`\n  • Set by: {live_channel_set_by}\n  • Timestamp: `{live_channel_time}`\n  • Full Doc: `{live_channel_data}`")
             else:
-                lines.append(f"\n📺 **Live Channel ID**: `{live_channel_id}`\nSet by: {live_channel_set_by}\nTime: {live_channel_time}")
+                lines.append(f"\n**Live Channel ID**: `{live_channel_id}`\nSet by: {live_channel_set_by}\nTime: {live_channel_time}")
             lobby_channel_data = data.get("lobby_channel_id", {})
             lobby_channel_id = lobby_channel_data.get("lobby_channel_id", "Unknown")
             lobby_channel_time = lobby_channel_data.get("lobby_channel_timestamp", "Unknown")
             lobby_channel_set_by = lobby_channel_data.get("bound_by", "Unknown")
             if verbose:
-                lines.append(f"\n🧾 **Lobby Channel ID**:\n  • Value: `{lobby_channel_id}`\n  • Set by: {lobby_channel_set_by}\n  • Timestamp: `{lobby_channel_time}`\n  • Full Doc: `{lobby_channel_data}`")
+                lines.append(f"\n**Lobby Channel ID**:\n  • Value: `{lobby_channel_id}`\n  • Set by: {lobby_channel_set_by}\n  • Timestamp: `{lobby_channel_time}`\n  • Full Doc: `{lobby_channel_data}`")
             else:
-                lines.append(f"\n🧾 **Lobby Channel ID**: `{lobby_channel_id}`\nSet by: {lobby_channel_set_by}\nTime: {lobby_channel_time}")
+                lines.append(f"\n**Lobby Channel ID**: `{lobby_channel_id}`\nSet by: {lobby_channel_set_by}\nTime: {lobby_channel_time}")
             preferred_roles_setting_data = data.get("preferred_roles_setting", {})
             preferred_roles_enabled = preferred_roles_setting_data.get("preferred_roles_enabled", True)
             preferred_roles_set_by = preferred_roles_setting_data.get("preferred_roles_set_by", "Unknown")
             preferred_roles_time = preferred_roles_setting_data.get("preferred_roles_timestamp", "Unknown")
             if verbose:
-                lines.append(f"\n🎯 **Preferred Roles Integration**:\n  • Status: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n  • Set by: {preferred_roles_set_by}\n  • Timestamp: {preferred_roles_time}\n  • Field: preferred_roles_enabled = {preferred_roles_enabled}")
+                lines.append(f"\n**Preferred Roles Integration**:\n  • Status: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n  • Set by: {preferred_roles_set_by}\n  • Timestamp: {preferred_roles_time}\n  • Field: preferred_roles_enabled = {preferred_roles_enabled}")
             else:
-                lines.append(f"\n🎯 **Preferred Roles Integration**: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n Set by: {preferred_roles_set_by}\n Time: {preferred_roles_time}")
+                lines.append(f"\n**Preferred Roles Integration**: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n Set by: {preferred_roles_set_by}\n Time: {preferred_roles_time}")
             # --- Captain Policy (policy + optional threshold) ---
             captain_data = data.get("captain_policy", {}) or {}
             # Values as stored by set_captain_policy()
@@ -1124,9 +1124,9 @@ def attach_commands(bot, deps):
             threshold_note = f" (threshold {thr})" if pol == "top2_if_close" and thr is not None else ""
             if verbose:
                 lines.append(
-                    f"\n🧭 **Captain Policy**:\n  • Value: `{pol}`{threshold_note}\n  • Set by: {pol_set_by}\n  • Timestamp: `{pol_time}`\n  • Full Doc: `{captain_data}`")
+                    f"\n**Captain Policy**:\n  • Value: `{pol}`{threshold_note}\n  • Set by: {pol_set_by}\n  • Timestamp: `{pol_time}`\n  • Full Doc: `{captain_data}`")
             else:
-                lines.append(f"\n🧭 **Captain Policy**: `{pol}`{threshold_note}\n Set by: {pol_set_by}\n Time: {pol_time}")
+                lines.append(f"\n**Captain Policy**: `{pol}`{threshold_note}\n Set by: {pol_set_by}\n Time: {pol_time}")
         else:
             lines.append("No Firestore data found for this guild.")
         await ctx.reply("\n".join(lines))
@@ -1134,7 +1134,7 @@ def attach_commands(bot, deps):
     async def viewlogs_error(ctx, error):
         if isinstance(error, commands.CommandOnCooldown):
             wait = math.ceil(error.retry_after)
-            await ctx.reply(f"⏳ Please wait {wait}s before using `!viewlogs` again.")
+            await ctx.reply(f"Please wait {wait}s before using `!viewlogs` again.")
         elif isinstance(error, commands.CheckFailure):
             await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
@@ -1490,75 +1490,80 @@ def attach_commands(bot, deps):
         else:
             await ctx.reply("An unexpected error occurred while setting the lobby channel.")
 
-    # ================================ ℹ️ Help Command ================================
+    # ================================ Help Command ================================
 
     @bot.command(name="help")
     async def help_command(ctx, *, category: str = ""):
         category = category.lower().strip()
         if category == "":
-            help_text = (
-                "\n**📜 Available Commands:**\n\n"
-                "__**General Commands**__\n"
-                "**!cfg `<steam_id>`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
-                "**!setpreferredroles `<1 2 3 4 5>`** - Set your role preferences from most to least preferred.\n"
-                "**!viewpreferredroles `[@user]`** - View preferred roles for yourself or another user.\n"
-                "**!mmr `[@user]`** - Show your MMR or another user's MMR.\n"
-                "**!inhouse_mmr `[@user]`** - Show inhouse MMR for yourself or another user\n"
-                "**!balance `[@user]`** - Show your or another user's coin balance\n"
-                "**!leaderboard** - View top 10 inhouse MMR players in this server\n"
-                "**!send `<amount>` `<@user>`** - Send coins to another user in the server\n"
-                "**!livematch** - Recall and refresh the live match embed in the channel (30s cooldown)\n\n"
-                "__**Betting / Store Commands**__\n"
-                "**!bet `<amt>` `<radiant|dire>`** - Bet coins on the current inhouse match\n"
-                "**!store** - View the store\n"
-                "**!buy `<dd_tokens>` `<amount>`** - Buy double down tokens\n"
-                "**!dd_tokens `[@user]`** - View double down token balance for yourself or another user\n"
-                "**!dd** - Double your inhouse MMR gain/loss for the current match\n"
-                "**!balance `[@user]`** - Show your or another user’s coin balance\n\n"
-                "__**Admin Commands**__\n"
-                "Use `!help admin` to see the list of admin-only commands.\n"
+            embed = discord.Embed(
+                title="📜 Available Commands",
+                description=(
+                    "__**General Commands**__\n"
+                    "**!cfg `<steam_id>`** - Link your Steam ID to fetch your MMR from STRATZ.\n"
+                    "**!setpreferredroles `<1 2 3 4 5>`** - Set your role preferences from most to least preferred.\n"
+                    "**!viewpreferredroles `[@user]`** - View preferred roles for yourself or another user.\n"
+                    "**!mmr `[@user]`** - Show your MMR or another user's MMR.\n"
+                    "**!inhouse_mmr `[@user]`** - Show inhouse MMR for yourself or another user.\n"
+                    "**!balance `[@user]`** - Show your or another user's coin balance.\n"
+                    "**!leaderboard** - View top 10 inhouse MMR players in this server.\n"
+                    "**!send `<amount>` `<@user>`** - Send coins to another user in the server.\n"
+                    "**!livematch** - Recall and refresh the live match embed in the channel (30s cooldown).\n\n"
+                   
+                    "__**Betting / Store Commands**__\n"
+                    "**!bet `<amt>` `<radiant|dire>`** - Bet coins on the current inhouse match.\n"
+                    "**!store** - View the store.\n"
+                    "**!buy `<dd_tokens>` `<amount>`** - Buy double down tokens.\n"
+                    "**!dd_tokens `[@user]`** - View double down token balance.\n"
+                    "**!dd** - Double your inhouse MMR gain/loss for the current match.\n\n"
+                    "__**Admin Commands**__\n"
+                    "Use `!help admin` to see the list of admin-only commands."
+                ),
+                color=discord.Color.blurple()
             )
+            await ctx.reply(embed=embed)
+            return
         elif category == "admin":
-            help_text = (
-                "\n__**Admin Commands**__\n\n"
-                "__**Player & Lobby Management**__\n"
-                "**!add `<@user1>` `<@user2>` ...** - Manually add one or more users to the lobby.\n"
-                "**!remove `<@user1>` `<@user2>` ...** - Manually remove one or more users from the lobby.\n"
-                "**!replace `<@user1|placeholder1>` `<@user2|placeholder2>`** - Replace one lobby user or placeholder with another user or placeholder\n"
-                "**!lobby** - Create or refresh the inhouse lobby.\n"
-                "**!reset** - Clear the current lobby and start fresh.\n"
-                "**!cfg `<steam_id>` `[@user]` `[--force]`** - Link a player's Steam ID and fetch their MMR\n"
-                "  • Without `--force`: Will not overwrite existing Steam ID and MMR\n"
-                "  • With `--force`: Forcibly updates Steam ID and MMR, even if already set\n"
-                "**!setmmr `<mmr>` `<@user>`** - Manually set a user's MMR\n"
-                "**!setpreferredroles `<1 2 3 4 5>` `<@user>`** - Set preferred roles for another user\n"
-                "**!alert** - Mention all 10 players when the lobby is full\n\n"
-                "__**Lobby Configuration**__\n"
-                "**!lobby `<mode>`** - Set the inhouse mode for this server\n"
-                "  • `regular` — Regular Captain's Mode (MMR-balanced teams)\n"
-                "  • `immortal` — Captain's Mode with Immortal Draft (captains pick teams)\n"
-                "**!setpassword `<new_password>`** - Change the inhouse lobby password\n"
-                "**!setlobbychannel** - Set current channel for lobby embeds and reset posts\n"
-                "**!toggle_roles `<on|off>`** - Enable/disable preferred role usage in team balancing\n"
-                "**!lobbyroles** - Show preferred roles for all 10 lobby players (requires full lobby)\n\n"
-                "__**Bot Settings**__\n"
-                "**!changeprefix `<new_prefix>`** - Change the bot command prefix for this server\n"
-                "**!viewlogs** - View recent configuration logs for this server\n"
-                "**!viewlogs --verbose** - View detailed logs with full Firestore data\n\n"
-                "__**Captain & Draft Settings**__\n"
-                "**!captainpolicy `<policy>` `[threshold]`** - Set captain selection policy\n"
-                "  • `min_diff` — Choose pair with lowest MMR difference (default)\n"
-                "  • `top2_if_close` `<threshold>` — Prioritize top 2 if within threshold\n"
-                "  • `simulate` — Simulate draft to find most balanced captain pair\n\n"
-                "__**Match Tracking**__\n"
-                "**!bindleague `<league_id>`** - Bind a Steam league ID for live match tracking\n"
-                "**!setlivechannel** - Set current channel for live match updates\n"
-                "**!startpolling** - Start live match polling for the bound league\n"
-                "**!stoppolling** - Stop live match polling\n"
-                "**!randompoll** - Start polling for random public live matches\n"
-                "**!submitmatch `<match_id>`** - Submit match result and resolve MMR + bets\n"
+            embed = discord.Embed(
+                title="🔐 Admin Commands",
+                description=(
+                    "__**Player & Lobby Management**__\n"
+                    "**!add `<@user1>` `<@user2>` ...** - Add one or more users to the lobby.\n"
+                    "**!remove `<@user1>` `<@user2>` ...** - Remove one or more users from the lobby.\n"
+                    "**!replace `<@user1|placeholder1>` `<@user2|placeholder2>`** - Replace one lobby user or placeholder with another.\n"
+                    "**!lobby** - Create or refresh the inhouse lobby.\n"
+                    "**!reset** - Clear the current lobby and start fresh.\n"
+                    "**!cfg `<steam_id>` `[@user]` `[--force]`** - Link a player's Steam ID and fetch their MMR.\n"
+                    "**!setmmr `<mmr>` `<@user>`** - Manually set a user's MMR.\n"
+                    "**!setpreferredroles `<1 2 3 4 5>` `<@user>`** - Set preferred roles for another user.\n"
+                    "**!alert** - Mention all 10 players when the lobby is full.\n\n"
+
+                    "__**Lobby Configuration**__\n"
+                    "**!lobby `<mode>`** - Set the inhouse mode for this server.\n"
+                    "**!setpassword `<new_password>`** - Change the inhouse lobby password.\n"
+                    "**!setlobbychannel** - Set current channel for lobby embeds and reset posts.\n"
+                    "**!toggle_roles `<on|off>`** - Enable/disable preferred role usage in team balancing.\n"
+                    "**!lobbyroles** - Show preferred roles for all 10 lobby players.\n\n"
+
+                    "__**Bot Settings**__\n"
+                    "**!changeprefix `<new_prefix>`** - Change the bot command prefix for this server.\n"
+                    "**!viewlogs** - View recent configuration logs for this server.\n"
+                    "**!viewlogs --verbose** - View detailed logs with full Firestore data.\n\n"
+
+                    "__**Captain & Draft Settings**__\n"
+                    "**!captainpolicy `<policy>` `[threshold]`** - Set captain selection policy.\n\n"
+
+                    "__**Match Tracking**__\n"
+                    "**!bindleague `<league_id>`** - Bind a Steam league ID for live match tracking.\n"
+                    "**!setlivechannel** - Set current channel for live match updates.\n"
+                    "**!startpolling** - Start live match polling for the bound league.\n"
+                    "**!stoppolling** - Stop live match polling.\n"
+                    "**!randompoll** - Start polling for random public live matches.\n"
+                    "**!submitmatch `<match_id>`** - Submit match result and resolve MMR + bets."
+                ),
+                color=discord.Color.gold()
             )
+            await ctx.reply(embed=embed)
+            return
         else:
-            help_text = "Unknown help category. Try `!help` or `!help admin`."
-        for chunk in [help_text[i:i+2000] for i in range(0, len(help_text), 2000)]:
-            await ctx.reply(chunk)
+            await ctx.reply("Unknown help category. Try `!help` or `!help admin`.")
