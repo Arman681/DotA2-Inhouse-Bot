@@ -148,7 +148,7 @@ def attach_commands(bot, deps):
             }
             save_player_config(str(target.id), config_data)
             await ctx.reply(
-                f"🔄 {target.mention}, your Steam ID `{steam_id}` has been force-updated "
+                f"{target.mention}, your Steam ID `{steam_id}` has been force-updated "
                 f"with an estimated MMR of **{mmr if mmr is not None else 'N/A'}**."
             )
             await refresh_lobby_member_mmr(ctx.guild, target, mmr)
@@ -546,7 +546,7 @@ def attach_commands(bot, deps):
             return
         update_balance(guild_id, sender_id, -amount)
         update_balance(guild_id, receiver_id, amount)
-        await ctx.reply(f"💸 {ctx.author.display_name} sent `{amount}` coins to {member.display_name}.\nYour new balance: `{get_balance(guild_id, sender_id)}`.")
+        await ctx.reply(f"{ctx.author.display_name} sent `{amount}` coins to {member.display_name}.\nYour new balance: `{get_balance(guild_id, sender_id)}`.")
     @send_coins.error
     async def send_coins_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
