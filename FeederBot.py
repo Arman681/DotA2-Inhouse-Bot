@@ -1408,17 +1408,24 @@ async def on_raw_reaction_add(payload):
                 original_teams[guild_id] = (captains, pool)
                 embed = build_immortal_embed(captains, pool, guild, 1)
             await message.edit(embed=embed)
-            await message.clear_reactions()
-            await message.add_reaction("👍")
-            await message.add_reaction("👎")
-            await message.add_reaction("♻️")
-            if mode == "immortal":
-                await message.add_reaction("⚔️") # start draft
-                await message.add_reaction("🎯") # manual captain selection
-            await message.remove_reaction(payload.emoji, user)
             # Start the Steam wait in the background so 🚀 isn't "stuck processing"
             cancel_match_wait(guild_id)  # safety: cancel any stale task first
             match_wait_tasks[guild_id] = asyncio.create_task(wait_for_match_then_start_polling(guild_id, guild, channel))
+            try:
+                await message.clear_reactions()
+            except Exception as e:
+                print(f"[on_raw_reaction_add] Failed to clear reactions in guild {guild_id}: {e}")
+            for reaction_emoji in ["👍", "👎", "♻️"]:
+                try:
+                    await message.add_reaction(reaction_emoji)
+                except Exception as e:
+                    print(f"[on_raw_reaction_add] Failed to add reaction {reaction_emoji} in guild {guild_id}: {e}")
+            if mode == "immortal":
+                for reaction_emoji in ["⚔️", "🎯"]:
+                    try:
+                        await message.add_reaction(reaction_emoji)
+                    except Exception as e:
+                        print(f"[on_raw_reaction_add] Failed to add reaction {reaction_emoji} in guild {guild_id}: {e}")
         finally:
             rocket_lock[guild_id] = False
     elif emoji == "⚔️":
@@ -1466,12 +1473,10 @@ async def on_raw_reaction_add(payload):
         # Only in Immortal mode
         if inhouse_mode.get(guild_id, "regular") != "immortal":
             await channel.send("Manual captain selection is only for **Immortal** mode.")
-            await message.remove_reaction(payload.emoji, user)
             return
         # Permission gate
         if not await user_is_admin_or_has_role(user):
             await channel.send(f"{user.mention} you need **Inhouse Admin** or server admin to select captains.")
-            await message.remove_reaction(payload.emoji, user)
             return
         # Post the selection view (admin chooses both captains)
         view = ManualCaptainSelectView(guild, user, lobby_players[guild_id])
@@ -1479,7 +1484,6 @@ async def on_raw_reaction_add(payload):
             "Select **two captains** for Immortal Draft (you have 2 minutes).",
             view=view
         )
-        await message.remove_reaction(payload.emoji, user)
     elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
         """# Get the member object from the guild
@@ -1525,11 +1529,13 @@ async def on_raw_reaction_add(payload):
                 original_teams[guild_id] = (captains, pool)
             embed = build_immortal_embed(captains, pool, guild, draft_state["index"] + 1)
         await message.edit(embed=embed)
-        await message.remove_reaction(payload.emoji, user)
     if updated:
         await update_lobby_embed(guild)
     # Always remove the user's reaction
-    await message.remove_reaction(payload.emoji, user)
+    try:
+        await message.remove_reaction(payload.emoji, user)
+    except Exception as e:
+        print(f"[on_raw_reaction_add] Final remove_reaction failed in guild {guild_id}: {e}")
 
 # Sends a welcome message with instructions when the bot joins a new server.
 @bot.event
