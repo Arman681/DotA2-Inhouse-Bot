@@ -1627,10 +1627,24 @@ async def update_lobby_embed(guild):
         return
     embed = build_lobby_embed(guild)
     message = lobby_message[guild_id]
-    await message.edit(embed=embed)
+    try:
+        await message.edit(embed=embed)
+    except discord.NotFound:
+        # The old lobby message was deleted/replaced by another command (ex: !lobby).
+        # Do not crash the caller; just stop here.
+        print(f"[update_lobby_embed] Lobby message was deleted before it could be edited for guild {guild_id}")
+        return
+    except Exception as e:
+        print(f"[update_lobby_embed] Failed to edit lobby message for guild {guild_id}: {e}")
+        return
     if len(lobby_players[guild_id]) == 10:
         if not any(str(r.emoji) == "🚀" for r in message.reactions):
-            await message.add_reaction("🚀")
+            try:
+                await message.add_reaction("🚀")
+            except discord.NotFound:
+                print(f"[update_lobby_embed] Lobby message was deleted before 🚀 could be added for guild {guild_id}")
+            except Exception as e:
+                print(f"[update_lobby_embed] Failed to add 🚀 reaction for guild {guild_id}: {e}")
 
 # Loops through all servers the bot is in and updates any existing lobby embed messages.
 async def update_all_lobbies():
