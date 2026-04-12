@@ -3,6 +3,7 @@ import asyncio
 import math
 import time
 import discord
+import re
 from discord.ext import commands
 
 def attach_commands(bot, deps):
@@ -759,18 +760,24 @@ def attach_commands(bot, deps):
         if guild_id in lobby_message:
             try:
                 message = await channel.fetch_message(lobby_message[guild_id].id)
-            except:
+            except Exception:
                 message = None
         current_players = lobby_players[guild_id]
+        def parse_member_token(token: str):
+            match = re.fullmatch(r"<@!?(\d+)>", token.strip())
+            if not match:
+                return None
+            member_id = int(match.group(1))
+            return ctx.guild.get_member(member_id)
         # -------------------------------
-        # Parse OLD target
+        # Parse OLD target from args[0]
         # -------------------------------
-        old_is_mention = len(ctx.message.mentions) >= 1
+        old_token = args[0].strip()
+        old_member = parse_member_token(old_token)
         old_target_uid = None
         old_target_name = None
         old_index = None
-        if old_is_mention:
-            old_member = ctx.message.mentions[0]
+        if old_member:
             for i, (uid, name, mmr) in enumerate(current_players):
                 if str(uid) == str(old_member.id):
                     old_target_uid = uid
@@ -778,7 +785,7 @@ def attach_commands(bot, deps):
                     old_index = i
                     break
         else:
-            old_placeholder_name = args[0].strip().lower()
+            old_placeholder_name = old_token.lower()
             for i, (uid, name, mmr) in enumerate(current_players):
                 if is_placeholder_player(uid) and name.lower() == old_placeholder_name:
                     old_target_uid = uid
@@ -789,51 +796,38 @@ def attach_commands(bot, deps):
             await ctx.reply("The player or placeholder you want to replace is not in the lobby.")
             return
         # -------------------------------
-        # Parse NEW target
+        # Parse NEW target from remaining args
         # -------------------------------
-        mentions = ctx.message.mentions
+        if len(args) < 2:
+            await ctx.reply(
+                "Usage:\n"
+                "`!replace @olduser @newuser`\n"
+                "`!replace @olduser <placeholder_name> <mmr>`\n"
+                "`!replace <placeholder_name> @newuser`\n"
+                "`!replace <old_placeholder> <new_placeholder> <mmr>`"
+            )
+            return
+        new_token = args[1].strip()
+        new_member = parse_member_token(new_token)
         # Case 1: replacing with a mentioned user
-        if len(mentions) >= 2:
-            new_member = mentions[1]
-            if any(str(uid) == str(new_member.id) for uid, _, _ in current_players):
+        if new_member:
+            if len(args) != 2:
+                await ctx.reply("Usage: `!replace @olduser @newuser` or `!replace <placeholder_name> @newuser`")
+                return
+            if any(str(uid) == str(new_member.id) for uid, _, _ in current_players if str(uid) != str(old_target_uid)):
                 await ctx.reply("That replacement user is already in the lobby.")
                 return
             new_tuple = (new_member.id, new_member.display_name, get_mmr(new_member))
-        # Case 2: old target is mention, new target is placeholder
-        elif len(mentions) == 1:
-            if len(args) != 3:
-                await ctx.reply(
-                    "Usage for replacing with a placeholder:\n"
-                    "`!replace @olduser <placeholder_name> <mmr>`"
-                )
-                return
-            placeholder_name = args[1].strip()
-            mmr_raw = args[2].strip()
-            if not placeholder_name:
-                await ctx.reply("Placeholder name cannot be empty.")
-                return
-            try:
-                placeholder_mmr = int(mmr_raw)
-            except ValueError:
-                await ctx.reply("Placeholder MMR must be a number.")
-                return
-            placeholder_id = f"placeholder:{placeholder_name.lower()}"
-            if any(str(uid) == placeholder_id for uid, _, _ in current_players):
-                await ctx.reply("That placeholder is already in the lobby.")
-                return
-            if any(name.lower() == placeholder_name.lower() for uid, name, _ in current_players if uid != old_target_uid):
-                await ctx.reply("That name is already in the lobby.")
-                return
-            new_tuple = (placeholder_id, placeholder_name, placeholder_mmr)
-        # Case 3: no mentions at all -> placeholder replaced with placeholder
+        # Case 2: replacing with a placeholder
         else:
             if len(args) != 3:
                 await ctx.reply(
                     "Usage for placeholder replacement:\n"
+                    "`!replace @olduser <placeholder_name> <mmr>`\n"
                     "`!replace <old_placeholder> <new_placeholder> <mmr>`"
                 )
                 return
-            placeholder_name = args[1].strip()
+            placeholder_name = new_token
             mmr_raw = args[2].strip()
             if not placeholder_name:
                 await ctx.reply("Placeholder name cannot be empty.")
@@ -844,22 +838,13 @@ def attach_commands(bot, deps):
                 await ctx.reply("Placeholder MMR must be a number.")
                 return
             placeholder_id = f"placeholder:{placeholder_name.lower()}"
-            if any(str(uid) == placeholder_id for uid, _, _ in current_players):
+            if any(str(uid) == placeholder_id for uid, _, _ in current_players if str(uid) != str(old_target_uid)):
                 await ctx.reply("That replacement placeholder is already in the lobby.")
                 return
-            if any(name.lower() == placeholder_name.lower() for uid, name, _ in current_players if uid != old_target_uid):
+            if any(name.lower() == placeholder_name.lower() for uid, name, _ in current_players if str(uid) != str(old_target_uid)):
                 await ctx.reply("That name is already in the lobby.")
                 return
             new_tuple = (placeholder_id, placeholder_name, placeholder_mmr)
-        # -------------------------------
-        # Special case: old target placeholder -> new target mention
-        # -------------------------------
-        if not old_is_mention and len(mentions) == 1:
-            new_member = mentions[0]
-            if any(str(uid) == str(new_member.id) for uid, _, _ in current_players):
-                await ctx.reply("That replacement user is already in the lobby.")
-                return
-            new_tuple = (new_member.id, new_member.display_name, get_mmr(new_member))
         # -------------------------------
         # Perform replacement
         # -------------------------------
