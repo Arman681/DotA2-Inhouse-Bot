@@ -55,16 +55,15 @@ class ImmortalDraftSession:
         self.locked = False
         self.cancelled = False
         self._finalized = False
-        self.ui_lock = asyncio.Lock()
+        self.state_lock = asyncio.Lock()
         # 5s per pick + 60s reserve per captain (cumulative across the whole draft)
         self.turn_base_seconds = 5
         self.reserve = {"cap1": 60, "cap2": 60}  # each captain has their own pool
         self.turn_remaining = self.turn_base_seconds
 
     async def _refresh_ui(self):
-        async with self.ui_lock:
-            if self.message and not self._finalized:
-                await self.message.edit(embed=self.make_embed(), view=self.view)
+        if self.message and not self._finalized:
+            await self.message.edit(embed=self.make_embed(), view=self.view)
 
     def _turn_info(self) -> Tuple[str, int]:
         who, count = PICK_ORDER[self.current_turn_index]
@@ -230,7 +229,7 @@ class ImmortalDraftSession:
         self.locked = True
         if self.view:
             self.view.disable_all()
-        async with self.ui_lock:
+        async with self.state_lock:
             if self.message:
                 try:
                     await self.message.edit(embed=self.make_embed(), view=self.view)
@@ -366,16 +365,15 @@ class PickButton(ui.Button):
         self.style = discord.ButtonStyle.danger
     async def callback(self, interaction: discord.Interaction):
         s = self.view.session  # type: ignore
-        should_finalize = False
-        async with s.ui_lock:
-            if not s.pickable_for(interaction.user.id):
-                return await interaction.response.send_message("Not your turn.", ephemeral=True)
-            if self.target_id not in s.available_ids:
-                return await interaction.response.send_message("Already taken.", ephemeral=True)
+        if not s.pickable_for(interaction.user.id):
+            return await interaction.response.send_message("Not your turn.", ephemeral=True)
+        if self.target_id not in s.available_ids:
+            return await interaction.response.send_message("Already taken.", ephemeral=True)
+        async with s.state_lock:
             ok, msg = await s.apply_pick(interaction.user.id, self.target_id)
-            if not ok:
-                return await interaction.response.send_message(msg, ephemeral=True)
             should_finalize = s.locked
-            await interaction.response.edit_message(embed=s.make_embed(), view=self.view)
+        if not ok:
+            return await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.response.edit_message(embed=s.make_embed(), view=self.view)
         if should_finalize:
             await s.finalize_draft()
