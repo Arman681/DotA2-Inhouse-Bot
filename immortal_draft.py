@@ -62,8 +62,9 @@ class ImmortalDraftSession:
         self.turn_remaining = self.turn_base_seconds
 
     async def _refresh_ui(self):
-        if self.message and not self._finalized:
-            await self.message.edit(embed=self.make_embed(), view=self.view)
+        async with self.state_lock:
+            if self.message and not self._finalized:
+                await self.message.edit(embed=self.make_embed(), view=self.view)
 
     def _turn_info(self) -> Tuple[str, int]:
         who, count = PICK_ORDER[self.current_turn_index]
@@ -369,11 +370,13 @@ class PickButton(ui.Button):
             return await interaction.response.send_message("Not your turn.", ephemeral=True)
         if self.target_id not in s.available_ids:
             return await interaction.response.send_message("Already taken.", ephemeral=True)
+        await interaction.response.defer()
         async with s.state_lock:
             ok, msg = await s.apply_pick(interaction.user.id, self.target_id)
             should_finalize = s.locked
         if not ok:
-            return await interaction.response.send_message(msg, ephemeral=True)
-        await interaction.response.edit_message(embed=s.make_embed(), view=self.view)
+            return await interaction.followup.send(msg, ephemeral=True)
+        if s.message and not s._finalized:
+            await s.message.edit(embed=s.make_embed(), view=self.view)
         if should_finalize:
             await s.finalize_draft()
