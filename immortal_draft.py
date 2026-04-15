@@ -55,14 +55,16 @@ class ImmortalDraftSession:
         self.locked = False
         self.cancelled = False
         self._finalized = False
+        self.ui_lock = asyncio.Lock()
         # 5s per pick + 60s reserve per captain (cumulative across the whole draft)
         self.turn_base_seconds = 5
         self.reserve = {"cap1": 60, "cap2": 60}  # each captain has their own pool
         self.turn_remaining = self.turn_base_seconds
 
     async def _refresh_ui(self):
-        if self.message:
-            await self.message.edit(embed=self.make_embed(), view=self.view)
+        async with self.ui_lock:
+            if self.message and not self._finalized:
+                await self.message.edit(embed=self.make_embed(), view=self.view)
 
     def _turn_info(self) -> Tuple[str, int]:
         who, count = PICK_ORDER[self.current_turn_index]
@@ -209,15 +211,11 @@ class ImmortalDraftSession:
         # disable & relabel the picked player’s button
         if self.view:
             self.view.mark_picked(target_id)
-        await self._refresh_ui()
         # if this captain still has another pick in this chunk, refresh the 5s window
         if not self._is_turn_over():
             self.turn_remaining = self.turn_base_seconds
         else:
             self._next_turn()
-        # If that was the final pick, finalize immediately instead of waiting on timer loop
-        if self.locked:
-            await self.finalize_draft()
         return True, "Picked!"
 
     async def start(self):
@@ -232,11 +230,12 @@ class ImmortalDraftSession:
         self.locked = True
         if self.view:
             self.view.disable_all()
-        if self.message:
-            try:
-                await self.message.edit(embed=self.make_embed(), view=self.view)
-            except Exception as e:
-                print(f"[ImmortalDraftSession.finalize_draft] Failed to edit final draft message: {e}")
+        async with self.ui_lock:
+            if self.message:
+                try:
+                    await self.message.edit(embed=self.make_embed(), view=self.view)
+                except Exception as e:
+                    print(f"[ImmortalDraftSession.finalize_draft] Failed to edit final draft message: {e}")
         t1, t2, total1, total2 = self.team_lines()
         avg1 = round(total1 / 5)
         avg2 = round(total2 / 5)
@@ -278,8 +277,7 @@ class ImmortalDraftSession:
                         # out of time completely -> autopick one player
                         await self._timeout_autopick()
                 # push UI update
-                if self.message and not self._finalized:
-                    await self.message.edit(embed=self.make_embed(), view=self.view)
+                await self._refresh_ui()
             await self.finalize_draft()
         except asyncio.CancelledError:
             return
@@ -368,12 +366,16 @@ class PickButton(ui.Button):
         self.style = discord.ButtonStyle.danger
     async def callback(self, interaction: discord.Interaction):
         s = self.view.session  # type: ignore
-        if not s.pickable_for(interaction.user.id):
-            return await interaction.response.send_message("Not your turn.", ephemeral=True)
-        if self.target_id not in s.available_ids:
-            return await interaction.response.send_message("Already taken.", ephemeral=True)
-        ok, msg = await s.apply_pick(interaction.user.id, self.target_id)
-        if not ok:
-            return await interaction.response.send_message(msg, ephemeral=True)
-        # refresh the message
-        await interaction.response.edit_message(embed=s.make_embed(), view=self.view)
+        should_finalize = False
+        async with s.ui_lock:
+            if not s.pickable_for(interaction.user.id):
+                return await interaction.response.send_message("Not your turn.", ephemeral=True)
+            if self.target_id not in s.available_ids:
+                return await interaction.response.send_message("Already taken.", ephemeral=True)
+            ok, msg = await s.apply_pick(interaction.user.id, self.target_id)
+            if not ok:
+                return await interaction.response.send_message(msg, ephemeral=True)
+            should_finalize = s.locked
+            await interaction.response.edit_message(embed=s.make_embed(), view=self.view)
+        if should_finalize:
+            await s.finalize_draft()
