@@ -95,7 +95,7 @@ STORE_ITEM_DD_TOKENS = "dd_tokens"
 STORE_ITEM_FEEDERBUCKS_TYPHOON = "role_feederbucks_typhoon"
 STORE_ITEM_CUSTOM_ROLE = "role_custom_role"
 STORE_ROLE_DURATION_DAYS = 7
-FEEDERBUCKS_TYPHOON_ROLE_NAME = "Feederbucks Typhoon"
+FEEDERBUCKS_TYPHOON_ROLE_NAME = "VIP Feeder"
 FEEDERBUCKS_TYPHOON_ROLE_COLOR = discord.Color.from_rgb(57, 255, 20)
 CUSTOM_STORE_ROLE_COLOR = discord.Color.from_rgb(0, 191, 255)
 STORE_ITEM_ALIASES = {
@@ -103,7 +103,8 @@ STORE_ITEM_ALIASES = {
         "dd_tokens", "ddtoken", "ddtokens", "double down token", "double down tokens"
     },
     STORE_ITEM_FEEDERBUCKS_TYPHOON: {
-        "role: feederbucks typhoon", "feederbucks typhoon", "typhoon", "role_feederbucks_typhoon"
+        "role: feederbucks typhoon", "feederbucks typhoon", "typhoon", "role_feederbucks_typhoon",
+        "role: vip feeder", "vip feeder"
     },
     STORE_ITEM_CUSTOM_ROLE: {
         "role: custom role", "custom role", "role_custom_role"
@@ -311,7 +312,7 @@ def get_store_catalog():
         },
         STORE_ITEM_FEEDERBUCKS_TYPHOON: {
             "key": STORE_ITEM_FEEDERBUCKS_TYPHOON,
-            "display_name": "Role: Feederbucks Typhoon",
+            "display_name": "Role: VIP Feeder",
             "default_cost": 50000,
             "duration_days": STORE_ROLE_DURATION_DAYS,
             "role_name": FEEDERBUCKS_TYPHOON_ROLE_NAME,
@@ -405,7 +406,7 @@ async def ensure_typhoon_role(guild):
                 await existing.edit(
                     color=FEEDERBUCKS_TYPHOON_ROLE_COLOR,
                     hoist=True,
-                    reason="Sync Feederbucks Typhoon store role color."
+                    reason="Sync VIP Feeder store role color."
                 )
             except discord.Forbidden:
                 print(f"[store] Missing permissions to update Typhoon role in guild {guild.id}")
@@ -418,7 +419,7 @@ async def ensure_typhoon_role(guild):
             name=FEEDERBUCKS_TYPHOON_ROLE_NAME,
             color=FEEDERBUCKS_TYPHOON_ROLE_COLOR,
             hoist=True,
-            reason="Create default Feederbucks Typhoon store role."
+            reason="Create default VIP Feeder store role."
         )
         await promote_store_role_display(guild, role)
         return role
@@ -591,7 +592,7 @@ async def purchase_store_role(member, item_key, custom_role_name=None, quantity=
     if item_key == STORE_ITEM_FEEDERBUCKS_TYPHOON:
         role = await ensure_typhoon_role(guild)
         if role is None:
-            return False, "I couldn’t create or locate the `Feederbucks Typhoon` role. Please make sure I have `Manage Roles`."
+            return False, "I couldn’t create or locate the `VIP Feeder` role. Please make sure I have `Manage Roles`."
         role_name = role.name
         is_custom_role = False
     elif item_key == STORE_ITEM_CUSTOM_ROLE:

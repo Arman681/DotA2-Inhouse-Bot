@@ -799,7 +799,7 @@ def attach_commands(bot, deps):
             item_key = normalize_store_item_name(item_name)
         if item_key is None:
             await ctx.reply(
-                "Unknown store item. Try a store index from `!store`, `dd_tokens`, `Role: Feederbucks Typhoon`, or `Role: Custom Role`."
+                "Unknown store item. Try a store index from `!store`, `dd_tokens`, `Role: VIP Feeder`, or `Role: Custom Role`."
             )
             return
         save_store_cost_override(
