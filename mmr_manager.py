@@ -84,9 +84,12 @@ async def adjust_mmr(bot, winner_ids, loser_ids, guild_id, gain=50, loss=50, dou
         await stage(uid, -loss)
     batch.commit()
 
-def get_top_players(guild_id, limit=10):
-    docs = db.collection("inhouse_mmr").document(str(guild_id)) \
-             .collection("users").order_by("mmr", direction=firestore.Query.DESCENDING).limit(limit).stream()
+def get_top_players(guild_id, limit=None):
+    query = db.collection("inhouse_mmr").document(str(guild_id)) \
+             .collection("users").order_by("mmr", direction=firestore.Query.DESCENDING)
+    if isinstance(limit, int) and limit > 0:
+        query = query.limit(limit)
+    docs = query.stream()
     results = []
     for doc in docs:
         data = doc.to_dict() or {}
