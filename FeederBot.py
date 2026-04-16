@@ -404,6 +404,110 @@ async def reset_vip_feeder_role(guild):
         print(f"[store] Reset VIP Feeder role in guild {guild.id}: {deleted_role_id} -> {role.id}")
     return True, None, role, reassigned_count
 
+async def reset_custom_store_roles(guild):
+    await cleanup_expired_store_roles_for_guild(guild)
+    docs = db.collection("store_role_entitlements").document(str(guild.id)).collection("entries").stream()
+    grouped_roles = {}
+    for doc in docs:
+        data = doc.to_dict() or {}
+        if not data.get("active", False):
+            continue
+        if not bool(data.get("is_custom_role", False)):
+            continue
+        role_name = (data.get("custom_role_name") or data.get("role_name") or "").strip()
+        if not role_name:
+            continue
+        role_group = grouped_roles.setdefault(role_name, {
+            "entries": [],
+            "role_ids": set(),
+            "member_ids": set(),
+        })
+        role_group["entries"].append((doc.id, data))
+        role_id = data.get("role_id")
+        if role_id:
+            role_group["role_ids"].add(int(role_id))
+        user_id = str(data.get("user_id"))
+        if user_id.isdigit():
+            role_group["member_ids"].add(int(user_id))
+
+    if not grouped_roles:
+        return True, None, {"roles_refreshed": 0, "members_restored": 0, "entitlements_updated": 0}
+
+    roles_refreshed = 0
+    members_restored = 0
+    entitlements_updated = 0
+
+    for role_name, role_group in grouped_roles.items():
+        existing_roles = {}
+        for role_id in role_group["role_ids"]:
+            role = guild.get_role(role_id)
+            if role is not None:
+                existing_roles[role.id] = role
+
+        if not existing_roles:
+            fallback_role = discord.utils.get(guild.roles, name=role_name)
+            if fallback_role is not None and fallback_role.color == CUSTOM_STORE_ROLE_COLOR:
+                existing_roles[fallback_role.id] = fallback_role
+
+        target_member_ids = set(role_group["member_ids"])
+        for existing_role in existing_roles.values():
+            for member in existing_role.members:
+                target_member_ids.add(member.id)
+
+        for existing_role in existing_roles.values():
+            try:
+                await existing_role.delete(reason="Global admin requested custom role refresh.")
+            except discord.Forbidden:
+                return False, f"I couldn't delete the existing custom role `{role_name}`. Please make sure I have `Manage Roles`.", None
+            except Exception as e:
+                return False, f"I couldn't delete the existing custom role `{role_name}`: `{e}`", None
+
+        try:
+            new_role = await guild.create_role(
+                name=role_name,
+                color=CUSTOM_STORE_ROLE_COLOR,
+                hoist=True,
+                reason="Global admin requested custom role refresh."
+            )
+        except discord.Forbidden:
+            return False, f"I couldn't recreate the custom role `{role_name}`. Please make sure I have `Manage Roles`.", None
+        except Exception as e:
+            return False, f"I couldn't recreate the custom role `{role_name}`: `{e}`", None
+
+        await promote_store_role_display(guild, new_role)
+
+        for member_id in target_member_ids:
+            member = guild.get_member(member_id)
+            if member is None or new_role in member.roles:
+                continue
+            try:
+                await member.add_roles(new_role, reason="Restored custom role after global admin refresh.")
+                members_restored += 1
+            except discord.Forbidden:
+                print(f"[store] Missing permissions to restore custom role {new_role.id} to {member_id} in guild {guild.id}")
+            except Exception as e:
+                print(f"[store] Failed to restore custom role {new_role.id} to {member_id} in guild {guild.id}: {e}")
+
+        for doc_id, data in role_group["entries"]:
+            db.collection("store_role_entitlements").document(str(guild.id)) \
+              .collection("entries").document(doc_id) \
+              .set({
+                  "role_id": new_role.id,
+                  "role_name": role_name,
+                  "custom_role_name": role_name,
+                  "status": "active",
+              }, merge=True)
+            entitlements_updated += 1
+
+        roles_refreshed += 1
+        print(f"[store] Reset custom role `{role_name}` in guild {guild.id} -> {new_role.id}")
+
+    return True, None, {
+        "roles_refreshed": roles_refreshed,
+        "members_restored": members_restored,
+        "entitlements_updated": entitlements_updated,
+    }
+
 def get_store_item_info(item_key):
     return get_store_catalog().get(item_key)
 
@@ -2411,6 +2515,7 @@ deps = {
     "purchase_store_role": purchase_store_role,
     "log_store_purchase": log_store_purchase,
     "reset_vip_feeder_role": reset_vip_feeder_role,
+    "reset_custom_store_roles": reset_custom_store_roles,
     "save_league_guild_mapping": save_league_guild_mapping,
     "live_channel_ids": live_channel_ids,
     "lobby_channel_ids": lobby_channel_ids,
