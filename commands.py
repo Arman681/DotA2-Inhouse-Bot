@@ -596,15 +596,23 @@ def attach_commands(bot, deps):
             elif item_key == "role_custom_role":
                 description += " for a bright blue custom role that expires in 7 days"
             lines.append(f"`{index}`. **{item_info['display_name']}** - {description}")
-        await ctx.reply(
-            "**Store**\n"
-            + "\n".join(lines)
-            + "\n\n"
-            + "Use: `!buy <item_index> <amount> [any additional optional parameters]`\n"
-            + "Example: `!buy 1 1`\n"
-            + "Example: `!buy 2 2`\n"
-            + "Example: `!buy 3 1 My Custom Role`"
+        embed = discord.Embed(
+            title="Store",
+            description=f"Shop for **{ctx.guild.name}**",
+            color=discord.Color.green()
         )
+        embed.add_field(name="Items", value="\n".join(lines), inline=False)
+        embed.add_field(
+            name="How To Buy",
+            value=(
+                "`!buy <item_index> <amount> [any additional optional parameters]`\n"
+                "Example: `!buy 1 1`\n"
+                "Example: `!buy 2 2`\n"
+                "Example: `!buy 3 1 My Custom Role`"
+            ),
+            inline=False
+        )
+        await ctx.reply(embed=embed)
 
     @bot.command(name="_legacy_store", hidden=True)
     async def store_legacy(ctx):
