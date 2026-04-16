@@ -435,12 +435,15 @@ def attach_commands(bot, deps):
     @bot.command(name="bet")
     async def bet(ctx, *args):
         DEFAULT_BET = 100
+        amount_is_all = False
         # Allow:
         # !bet
         # !bet 200
+        # !bet all
         # !bet radiant
         # !bet 200 radiant
         # !bet radiant 200
+        # !bet all radiant
         amount = None
         team = None
         for arg in args:
@@ -458,18 +461,22 @@ def attach_commands(bot, deps):
                         "Too many numbers. Usage: `!bet [amount] [radiant|dire]`."
                     )
                     return
-                try:
-                    amount = int(arg)
-                except ValueError:
-                    await ctx.reply(
-                        "Invalid argument. Usage: `!bet [amount] [radiant|dire]` "
-                        "(`amount` must be a number)."
-                    )
-                    return
+                if lower == "all":
+                    amount = "all"
+                    amount_is_all = True
+                else:
+                    try:
+                        amount = int(arg)
+                    except ValueError:
+                        await ctx.reply(
+                            "Invalid argument. Usage: `!bet [amount|all] [radiant|dire]` "
+                            "(`amount` must be a number or `all`)."
+                        )
+                        return
         # Default to 100 Feederbucks if no amount was explicitly given
         if amount is None:
             amount = DEFAULT_BET
-        if amount <= 0:
+        if not amount_is_all and amount <= 0:
             await ctx.reply("Bet amount must be greater than 0.")
             return
         user_id = str(ctx.author.id)
@@ -539,14 +546,21 @@ def attach_commands(bot, deps):
                     f"You cannot change teams once your bet is placed."
                 )
                 return
-            if amount <= previous_bet:
+            if not amount_is_all and amount <= previous_bet:
                 await ctx.reply(
                     f"You already bet `{previous_bet}`. You can only **increase** your bet amount."
                 )
                 return
-            delta = amount - previous_bet
+            if not amount_is_all:
+                delta = amount - previous_bet
             is_update = True
         current_balance = get_balance(ctx.guild.id, ctx.author.id, nickname=nickname)
+        if amount_is_all:
+            amount = current_balance + previous_bet
+            if amount <= previous_bet:
+                await ctx.reply("You do not have any available Feederbucks left to add to this bet.")
+                return
+            delta = amount - previous_bet
         if (current_balance + previous_bet) < amount:
             await ctx.reply("You don’t have enough balance.")
         else:
