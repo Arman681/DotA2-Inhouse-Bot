@@ -46,6 +46,7 @@ def attach_commands(bot, deps):
     purchase_store_role             = deps["purchase_store_role"]
     log_store_purchase              = deps["log_store_purchase"]
     reset_vip_feeder_role           = deps["reset_vip_feeder_role"]
+    reset_custom_store_roles        = deps["reset_custom_store_roles"]
 
     # Match / live tracking
     fetch_live_match_for_guild   = deps["fetch_live_match_for_guild"]
@@ -1706,6 +1707,27 @@ def attach_commands(bot, deps):
             await ctx.reply("You do not have permission to use this command. Only Sangui can use it.")
         else:
             await ctx.reply(f"`!refresh_vip` failed: `{error}`")
+
+    @bot.command(name="refresh_custom_roles")
+    @is_global_admin()
+    async def refresh_custom_roles(ctx):
+        success, error_message, stats = await reset_custom_store_roles(ctx.guild)
+        if not success:
+            await ctx.reply(error_message)
+            return
+        await ctx.reply(
+            "Refreshed custom store roles without changing their expiration dates.\n"
+            f"Custom roles refreshed: `{stats['roles_refreshed']}`\n"
+            f"Members restored: `{stats['members_restored']}`\n"
+            f"Entitlements updated: `{stats['entitlements_updated']}`"
+        )
+
+    @refresh_custom_roles.error
+    async def refresh_custom_roles_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. Only Sangui can use it.")
+        else:
+            await ctx.reply(f"`!refresh_custom_roles` failed: `{error}`")
 
     """@bot.command(name="immortaldraft", help="Launch the Immortal Draft using the current lobby captains and pool.")
     @is_admin_or_has_role()
