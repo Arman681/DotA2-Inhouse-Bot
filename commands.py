@@ -26,7 +26,7 @@ def attach_commands(bot, deps):
     get_inhouse_mmr      = deps["get_inhouse_mmr"]
     get_top_players      = deps["get_top_players"]
 
-    # Coins / betting
+    # Feederbucks / betting
     get_balance                     = deps["get_balance"]
     place_bet                       = deps["place_bet"]
     update_balance                  = deps["update_balance"]
@@ -136,6 +136,91 @@ def attach_commands(bot, deps):
         if 1 <= item_index <= len(STORE_ITEM_ORDER):
             return STORE_ITEM_ORDER[item_index - 1]
         return None
+
+    LEADERBOARD_PAGE_SIZE = 10
+
+    def build_leaderboard_embed(guild, players, page_index: int, requester_name: str):
+        total_pages = max(1, math.ceil(len(players) / LEADERBOARD_PAGE_SIZE))
+        start = page_index * LEADERBOARD_PAGE_SIZE
+        end = start + LEADERBOARD_PAGE_SIZE
+        page_players = players[start:end]
+        embed = discord.Embed(
+            title="Inhouse Leaderboard",
+            description=f"Leaderboard for **{guild.name}**",
+            color=discord.Color.gold()
+        )
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for rank, (user_id, stored_nickname, mmr) in enumerate(page_players, start=start + 1):
+            member = guild.get_member(int(user_id))
+            if member:
+                name = member.display_name
+            else:
+                name = stored_nickname or "Unknown"
+                if name.lower() == "unknown":
+                    player_doc = db.collection("players").document(str(user_id)).get()
+                    if player_doc.exists:
+                        pdata = player_doc.to_dict() or {}
+                        name = pdata.get("discord_nickname") or pdata.get("steam_name") or name
+            prefix = medals[rank - 1] if rank <= 3 else f"**#{rank}**"
+            lines.append(f"{prefix} - **{name}**: `{mmr}` MMR")
+        embed.add_field(name="Rankings", value="\n".join(lines), inline=False)
+        embed.set_footer(text=f"Page {page_index + 1}/{total_pages} • Requested by {requester_name}")
+        return embed
+
+    class LeaderboardView(discord.ui.View):
+        def __init__(self, author_id: int, guild, players, requester_name: str):
+            super().__init__(timeout=600)
+            self.author_id = author_id
+            self.guild = guild
+            self.players = players
+            self.requester_name = requester_name
+            self.page_index = 0
+            self.message = None
+            self.sync_buttons()
+
+        def sync_buttons(self):
+            total_pages = max(1, math.ceil(len(self.players) / LEADERBOARD_PAGE_SIZE))
+            self.prev_page.disabled = self.page_index <= 0
+            self.next_page.disabled = self.page_index >= total_pages - 1
+
+        async def interaction_check(self, interaction: discord.Interaction) -> bool:
+            if interaction.user.id != self.author_id:
+                await interaction.response.send_message(
+                    "Only the user who opened this leaderboard can change pages.",
+                    ephemeral=True
+                )
+                return False
+            return True
+
+        async def refresh(self, interaction: discord.Interaction):
+            self.sync_buttons()
+            await interaction.response.edit_message(
+                embed=build_leaderboard_embed(self.guild, self.players, self.page_index, self.requester_name),
+                view=self
+            )
+
+        async def on_timeout(self):
+            for child in self.children:
+                child.disabled = True
+            if self.message:
+                try:
+                    await self.message.edit(view=self)
+                except Exception:
+                    pass
+
+        @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+        async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if self.page_index > 0:
+                self.page_index -= 1
+            await self.refresh(interaction)
+
+        @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+        async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+            total_pages = max(1, math.ceil(len(self.players) / LEADERBOARD_PAGE_SIZE))
+            if self.page_index < total_pages - 1:
+                self.page_index += 1
+            await self.refresh(interaction)
 
     @bot.command(name="cfg")
     async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None, *, force: str = None):
@@ -289,6 +374,24 @@ def attach_commands(bot, deps):
 
     @bot.command(name="leaderboard")
     async def leaderboard(ctx):
+        top_players = get_top_players(ctx.guild.id, limit=None)
+        if not top_players:
+            await ctx.reply("No leaderboard data found for this server.")
+            return
+        view = LeaderboardView(
+            author_id=ctx.author.id,
+            guild=ctx.guild,
+            players=top_players,
+            requester_name=ctx.author.display_name,
+        )
+        message = await ctx.reply(
+            embed=build_leaderboard_embed(ctx.guild, top_players, 0, ctx.author.display_name),
+            view=view
+        )
+        view.message = message
+
+    @bot.command(name="leaderboard_pages", hidden=True)
+    async def leaderboard_legacy(ctx):
         top_players = get_top_players(ctx.guild.id)
         if not top_players:
             await ctx.reply("No leaderboard data found for this server.")
@@ -363,7 +466,7 @@ def attach_commands(bot, deps):
                         "(`amount` must be a number)."
                     )
                     return
-        # Default to 100 coins if no amount was explicitly given
+        # Default to 100 Feederbucks if no amount was explicitly given
         if amount is None:
             amount = DEFAULT_BET
         if amount <= 0:
@@ -406,7 +509,7 @@ def attach_commands(bot, deps):
             else:
                 await ctx.reply(
                     "You’re not in the current match. Please specify a team:\n"
-                    "Example: `!bet radiant` (bets 100 coins) or `!bet 200 radiant`."
+                    "Example: `!bet radiant` (bets 100 Feederbucks) or `!bet 200 radiant`."
                 )
                 return
         # Normalize & validate team now that it’s known
@@ -476,8 +579,8 @@ def attach_commands(bot, deps):
         member = member or ctx.author
         user_id = str(member.id)
         guild_id = str(ctx.guild.id)
-        coins = get_balance(guild_id, user_id, nickname=member.display_name)
-        await ctx.reply(f"{member.display_name}'s balance: `{coins}` coins.")
+        feederbucks = get_balance(guild_id, user_id, nickname=member.display_name)
+        await ctx.reply(f"{member.display_name}'s balance: `{feederbucks}` Feederbucks.")
 
     @bot.command(name="store")
     async def store(ctx):
@@ -485,7 +588,7 @@ def attach_commands(bot, deps):
         for index, item_key in enumerate(STORE_ITEM_ORDER, start=1):
             item_info = get_store_item_info(item_key)
             item_cost = get_store_cost(ctx.guild.id, item_key)
-            description = f"`{item_cost}` coins"
+            description = f"`{item_cost}` Feederbucks"
             if item_key == "dd_tokens":
                 description += " each"
             elif item_key == "role_feederbucks_typhoon":
@@ -507,7 +610,7 @@ def attach_commands(bot, deps):
     async def store_legacy(ctx):
         await ctx.reply(
             "**Store**\n"
-            f"**dd_tokens** — `{DD_TOKEN_COST}` coins each\n\n"
+            f"**dd_tokens** — `{DD_TOKEN_COST}` Feederbucks each\n\n"
             "Use: `!buy dd_tokens <amount>`"
         )
 
@@ -555,9 +658,9 @@ def attach_commands(bot, deps):
             total_cost = item_cost * amount
             if current_balance < total_cost:
                 await ctx.reply(
-                    f"You do not have enough coins.\n"
-                    f"Cost: `{total_cost}` coins\n"
-                    f"Your balance: `{current_balance}` coins"
+                    f"You do not have enough Feederbucks.\n"
+                    f"Cost: `{total_cost}` Feederbucks\n"
+                    f"Your balance: `{current_balance}` Feederbucks"
                 )
                 return
             update_balance(guild_id, user_id, -total_cost, nickname=nickname)
@@ -572,8 +675,8 @@ def attach_commands(bot, deps):
             new_balance = get_balance(guild_id, user_id, nickname=nickname)
             new_tokens = get_dd_token_balance(guild_id, user_id, nickname=nickname)
             await ctx.reply(
-                f"You bought `{amount}` dd_tokens for `{total_cost}` coins.\n"
-                f"New balance: `{new_balance}` coins\n"
+                f"You bought `{amount}` dd_tokens for `{total_cost}` Feederbucks.\n"
+                f"New balance: `{new_balance}` Feederbucks\n"
                 f"Your dd_tokens: `{new_tokens}`"
             )
             return
@@ -591,9 +694,9 @@ def attach_commands(bot, deps):
         total_cost = item_cost * amount
         if current_balance < total_cost:
             await ctx.reply(
-                f"You do not have enough coins.\n"
-                f"Cost: `{total_cost}` coins\n"
-                f"Your balance: `{current_balance}` coins"
+                f"You do not have enough Feederbucks.\n"
+                f"Cost: `{total_cost}` Feederbucks\n"
+                f"Your balance: `{current_balance}` Feederbucks"
             )
             return
         custom_role_name = " ".join(tokens[2:]).strip() if item_key == "role_custom_role" else None
@@ -624,11 +727,11 @@ def attach_commands(bot, deps):
         )
         new_balance = get_balance(guild_id, user_id, nickname=nickname)
         await ctx.reply(
-            f"You bought `{item_info['display_name']}` x`{amount}` for `{total_cost}` coins.\n"
+            f"You bought `{item_info['display_name']}` x`{amount}` for `{total_cost}` Feederbucks.\n"
             f"Assigned role: `{result['role_name']}`\n"
             f"Expires: `{result['expires_at'].strftime('%Y-%m-%d %H:%M UTC')}`\n"
             f"Duration added: `{result['duration_days']}` day(s)\n"
-            f"New balance: `{new_balance}` coins"
+            f"New balance: `{new_balance}` Feederbucks"
         )
 
     @buy.error
@@ -653,7 +756,7 @@ def attach_commands(bot, deps):
         try:
             new_cost = int(tokens[-1])
         except ValueError:
-            await ctx.reply("The last argument must be a whole-number coin cost.")
+            await ctx.reply("The last argument must be a whole-number Feederbucks cost.")
             return
         if new_cost < 0:
             await ctx.reply("Cost cannot be negative.")
@@ -685,7 +788,7 @@ def attach_commands(bot, deps):
             set_by=ctx.author.id,
         )
         item_info = get_store_item_info(item_key)
-        await ctx.reply(f"Updated `{item_info['display_name']}` to `{new_cost}` coins for this server.")
+        await ctx.reply(f"Updated `{item_info['display_name']}` to `{new_cost}` Feederbucks for this server.")
 
     @bot.command(name="_legacy_buy", hidden=True)
     async def buy_legacy(ctx, item: str = None, amount: int = 1):
@@ -706,9 +809,9 @@ def attach_commands(bot, deps):
         current_balance = get_balance(guild_id, user_id, nickname=nickname)
         if current_balance < total_cost:
             await ctx.reply(
-                f"You do not have enough coins.\n"
-                f"Cost: `{total_cost}` coins\n"
-                f"Your balance: `{current_balance}` coins"
+                f"You do not have enough Feederbucks.\n"
+                f"Cost: `{total_cost}` Feederbucks\n"
+                f"Your balance: `{current_balance}` Feederbucks"
             )
             return
         update_balance(guild_id, user_id, -total_cost, nickname=nickname)
@@ -716,8 +819,8 @@ def attach_commands(bot, deps):
         new_balance = get_balance(guild_id, user_id, nickname=nickname)
         new_tokens = get_dd_token_balance(guild_id, user_id, nickname=nickname)
         await ctx.reply(
-            f"You bought `{amount}` dd_tokens for `{total_cost}` coins.\n"
-            f"New balance: `{new_balance}` coins\n"
+            f"You bought `{amount}` dd_tokens for `{total_cost}` Feederbucks.\n"
+            f"New balance: `{new_balance}` Feederbucks\n"
             f"Your dd_tokens: `{new_tokens}`"
         )
 
@@ -772,7 +875,7 @@ def attach_commands(bot, deps):
         )
 
     @bot.command(name="send")
-    async def send_coins(ctx, amount: int, member: discord.Member):
+    async def send_feederbucks(ctx, amount: int, member: discord.Member):
         if amount <= 0:
             await ctx.reply("Amount must be greater than 0.")
             return
@@ -781,22 +884,22 @@ def attach_commands(bot, deps):
         guild_id = str(ctx.guild.id)
         sender_balance = get_balance(guild_id, sender_id, nickname=ctx.author.display_name)
         if sender_id == receiver_id:
-            await ctx.reply("You cannot send coins to yourself.")
+            await ctx.reply("You cannot send Feederbucks to yourself.")
             return
         if sender_balance < amount:
-            await ctx.reply(f"You do not have enough coins. Your balance is `{sender_balance}`.")
+            await ctx.reply(f"You do not have enough Feederbucks. Your balance is `{sender_balance}`.")
             return
         update_balance(guild_id, sender_id, -amount)
         update_balance(guild_id, receiver_id, amount)
-        await ctx.reply(f"{ctx.author.display_name} sent `{amount}` coins to {member.display_name}.\nYour new balance: `{get_balance(guild_id, sender_id)}`.")
-    @send_coins.error
-    async def send_coins_error(ctx, error):
+        await ctx.reply(f"{ctx.author.display_name} sent `{amount}` Feederbucks to {member.display_name}.\nYour new balance: `{get_balance(guild_id, sender_id)}`.")
+    @send_feederbucks.error
+    async def send_feederbucks_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
             await ctx.reply("Usage: !send `<amount>` `<@user>`")
         elif isinstance(error, commands.BadArgument):
             await ctx.reply("Invalid argument. Usage: !send `<amount>` `<@user>` — make sure `<amount>` is a number and `<@user>` is a valid user.")
         else:
-            await ctx.reply("An unexpected error occurred while sending coins.")
+            await ctx.reply("An unexpected error occurred while sending Feederbucks.")
 
     @bot.command(name="setpreferredroles")
     async def set_preferred_roles(ctx, r1: int, r2: int, r3: int, r4: int, r5: int, member: discord.Member = None):
@@ -1402,8 +1505,8 @@ def attach_commands(bot, deps):
             try:
                 update_balance(ctx.guild.id, discord_id, 50)
             except Exception as e:
-                print(f"[ERROR] Failed to award coins to user {discord_id}: {e}")
-        await ctx.reply(f"Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\nAll participants received **50 coins** for playing.")
+                print(f"[ERROR] Failed to award Feederbucks to user {discord_id}: {e}")
+        await ctx.reply(f"Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\nAll participants received **50 Feederbucks** for playing.")
     @submitmatch.error
     async def submitmatch_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
@@ -1743,13 +1846,13 @@ def attach_commands(bot, deps):
                     "**!viewpreferredroles `[@user]`** - View preferred roles for yourself or another user.\n"
                     "**!mmr `[@user]`** - Show your MMR or another user's MMR.\n"
                     "**!inhouse_mmr `[@user]`** - Show inhouse MMR for yourself or another user.\n"
-                    "**!balance `[@user]`** - Show your or another user's coin balance.\n"
+                    "**!balance `[@user]`** - Show your or another user's Feederbucks balance.\n"
                     "**!leaderboard** - View top 10 inhouse MMR players in this server.\n"
-                    "**!send `<amount>` `<@user>`** - Send coins to another user in the server.\n"
+                    "**!send `<amount>` `<@user>`** - Send Feederbucks to another user in the server.\n"
                     "**!livematch** - Recall and refresh the live match embed in the channel (30s cooldown).\n\n"
                    
                     "__**Betting / Store Commands**__\n"
-                    "**!bet `<amt>` `<radiant|dire>`** - Bet coins on the current inhouse match.\n"
+                    "**!bet `<amt>` `<radiant|dire>`** - Bet Feederbucks on the current inhouse match.\n"
                     "**!store** - View the store.\n"
                     "**!buy `<item_index>` `<amount>` `[any additional optional parameters]`** - Buy a store item by its index from `!store`.\n"
                     "**!dd_tokens `[@user]`** - View double down token balance.\n"
@@ -1806,3 +1909,4 @@ def attach_commands(bot, deps):
             return
         else:
             await ctx.reply("Unknown help category. Try `!help` or `!help admin`.")
+
