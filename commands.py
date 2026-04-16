@@ -128,7 +128,7 @@ def attach_commands(bot, deps):
 
     STORE_ITEM_ORDER = [
         "dd_tokens",
-        "role_feederbucks_typhoon",
+        "role_vip_feeder",
         "role_custom_role",
     ]
 
@@ -605,8 +605,8 @@ def attach_commands(bot, deps):
             description = f"`{item_cost}` Feederbucks"
             if item_key == "dd_tokens":
                 description += " each"
-            elif item_key == "role_feederbucks_typhoon":
-                description += " for a bright green role that expires in 7 days"
+            elif item_key == "role_vip_feeder":
+                description += " for the VIP Feeder role that expires in 7 days"
             elif item_key == "role_custom_role":
                 description += " for a bright blue custom role that expires in 7 days"
             lines.append(f"`{index}`. **{item_info['display_name']}** - {description}")
