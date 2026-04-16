@@ -304,21 +304,21 @@ def get_store_catalog():
     return {
         STORE_ITEM_DD_TOKENS: {
             "key": STORE_ITEM_DD_TOKENS,
-            "display_name": "dd_tokens",
+            "display_name": "Double-Down Tokens",
             "default_cost": DD_TOKEN_COST,
             "duration_days": None,
             "role_name": None,
         },
         STORE_ITEM_VIP_FEEDER: {
             "key": STORE_ITEM_VIP_FEEDER,
-            "display_name": "Role: VIP Feeder",
+            "display_name": "VIP Feeder",
             "default_cost": 50000,
             "duration_days": STORE_ROLE_DURATION_DAYS,
             "role_name": VIP_FEEDER_ROLE_NAME,
         },
         STORE_ITEM_CUSTOM_ROLE: {
             "key": STORE_ITEM_CUSTOM_ROLE,
-            "display_name": "Role: Custom Role",
+            "display_name": "Custom Role",
             "default_cost": 150000,
             "duration_days": STORE_ROLE_DURATION_DAYS,
             "role_name": None,
