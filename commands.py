@@ -45,6 +45,7 @@ def attach_commands(bot, deps):
     save_store_cost_override        = deps["save_store_cost_override"]
     purchase_store_role             = deps["purchase_store_role"]
     log_store_purchase              = deps["log_store_purchase"]
+    reset_vip_feeder_role           = deps["reset_vip_feeder_role"]
 
     # Match / live tracking
     fetch_live_match_for_guild   = deps["fetch_live_match_for_guild"]
@@ -1775,6 +1776,26 @@ def attach_commands(bot, deps):
             await ctx.reply("Invalid member specified. Make sure to mention a valid user.")
         else:
             await ctx.reply(f"An unexpected error occurred in `!pose`: `{error}`")
+
+    @bot.command(name="refresh_vip")
+    @is_global_admin()
+    async def refresh_vip(ctx):
+        success, error_message, role, reassigned_count = await reset_vip_feeder_role(ctx.guild)
+        if not success:
+            await ctx.reply(error_message)
+            return
+        await ctx.reply(
+            f"Recreated `{role.name}` and refreshed its role hierarchy position.\n"
+            f"Role ID: `{role.id}`\n"
+            f"Restored to `{reassigned_count}` active holder(s)."
+        )
+
+    @refresh_vip.error
+    async def refresh_vip_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. Only Sangui can use it.")
+        else:
+            await ctx.reply(f"`!refresh_vip` failed: `{error}`")
 
     """@bot.command(name="immortaldraft", help="Launch the Immortal Draft using the current lobby captains and pool.")
     @is_admin_or_has_role()
