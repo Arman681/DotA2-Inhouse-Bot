@@ -1378,7 +1378,7 @@ def attach_commands(bot, deps):
             live_channel_time = live_channel_data.get("live_channel_timestamp", "Unknown")
             live_channel_set_by = live_channel_data.get("bound_by", "Unknown")
             if verbose:
-                lines.append(f"\ **Live Channel ID**:\n  • Value: `{live_channel_id}`\n  • Set by: {live_channel_set_by}\n  • Timestamp: `{live_channel_time}`\n  • Full Doc: `{live_channel_data}`")
+                lines.append(f"\n**Live Channel ID**:\n  • Value: `{live_channel_id}`\n  • Set by: {live_channel_set_by}\n  • Timestamp: `{live_channel_time}`\n  • Full Doc: `{live_channel_data}`")
             else:
                 lines.append(f"\n**Live Channel ID**: `{live_channel_id}`\nSet by: {live_channel_set_by}\nTime: {live_channel_time}")
             lobby_channel_data = data.get("lobby_channel_id", {})
