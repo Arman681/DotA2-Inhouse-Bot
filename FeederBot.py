@@ -357,6 +357,53 @@ async def ensure_vip_feeder_role(guild):
         print(f"[store] Failed to create VIP Feeder role in guild {guild.id}: {e}")
         return None
 
+async def reset_vip_feeder_role(guild):
+    existing = discord.utils.get(guild.roles, name=VIP_FEEDER_ROLE_NAME)
+    deleted_role_id = existing.id if existing else None
+    if existing is not None:
+        try:
+            await existing.delete(reason="Global admin requested VIP Feeder role reset.")
+        except discord.Forbidden:
+            return False, "I couldn't delete the existing `VIP Feeder` role. Please make sure I have `Manage Roles`.", None, 0
+        except Exception as e:
+            return False, f"I couldn't delete the existing `VIP Feeder` role: `{e}`", None, 0
+
+    role = await ensure_vip_feeder_role(guild)
+    if role is None:
+        return False, "I couldn't recreate the `VIP Feeder` role. Please make sure I have `Manage Roles`.", None, 0
+
+    reassigned_count = 0
+    docs = db.collection("store_role_entitlements").document(str(guild.id)).collection("entries").stream()
+    for doc in docs:
+        data = doc.to_dict() or {}
+        if not data.get("active", False):
+            continue
+        if data.get("item_key") != STORE_ITEM_VIP_FEEDER:
+            continue
+        user_id = str(data.get("user_id"))
+        member = guild.get_member(int(user_id)) if user_id.isdigit() else None
+        if member is None:
+            continue
+        if role not in member.roles:
+            try:
+                await member.add_roles(role, reason="Restored VIP Feeder role after global admin reset.")
+                reassigned_count += 1
+            except discord.Forbidden:
+                print(f"[store] Missing permissions to restore VIP Feeder role to {user_id} in guild {guild.id}")
+            except Exception as e:
+                print(f"[store] Failed to restore VIP Feeder role to {user_id} in guild {guild.id}: {e}")
+        db.collection("store_role_entitlements").document(str(guild.id)) \
+          .collection("entries").document(doc.id) \
+          .set({
+              "role_id": role.id,
+              "role_name": role.name,
+              "status": "active",
+          }, merge=True)
+
+    if deleted_role_id is not None:
+        print(f"[store] Reset VIP Feeder role in guild {guild.id}: {deleted_role_id} -> {role.id}")
+    return True, None, role, reassigned_count
+
 def get_store_item_info(item_key):
     return get_store_catalog().get(item_key)
 
@@ -2363,6 +2410,7 @@ deps = {
     "save_store_cost_override": save_store_cost_override,
     "purchase_store_role": purchase_store_role,
     "log_store_purchase": log_store_purchase,
+    "reset_vip_feeder_role": reset_vip_feeder_role,
     "save_league_guild_mapping": save_league_guild_mapping,
     "live_channel_ids": live_channel_ids,
     "lobby_channel_ids": lobby_channel_ids,
