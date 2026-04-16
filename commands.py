@@ -605,11 +605,11 @@ def attach_commands(bot, deps):
             item_cost = get_store_cost(ctx.guild.id, item_key)
             description = f"`{item_cost}` Feederbucks"
             if item_key == "dd_tokens":
-                description += " each"
+                description += " for one Double-Down Token"
             elif item_key == "role_vip_feeder":
                 description += " for the VIP Feeder role that expires in 7 days"
             elif item_key == "role_custom_role":
-                description += " for a bright blue custom role that expires in 7 days"
+                description += " for a custom role that expires in 7 days"
             lines.append(f"`{index}`. **{item_info['display_name']}** - {description}")
         embed = discord.Embed(
             title="Store",
@@ -620,9 +620,9 @@ def attach_commands(bot, deps):
         embed.add_field(
             name="How To Buy",
             value=(
-                "`!buy <item_index> <amount> [any additional optional parameters]`\n"
+                "`!buy <item_number> <amount> [any additional optional parameters]`\n"
                 "Example: `!buy 1 1`\n"
-                "Example: `!buy 2 2`\n"
+                "Example: `!buy 2 1`\n"
                 "Example: `!buy 3 1 My Custom Role`"
             ),
             inline=False
@@ -633,23 +633,23 @@ def attach_commands(bot, deps):
     async def store_legacy(ctx):
         await ctx.reply(
             "**Store**\n"
-            f"**dd_tokens** — `{DD_TOKEN_COST}` Feederbucks each\n\n"
-            "Use: `!buy dd_tokens <amount>`"
+            f"**Double-Down Tokens** — `{DD_TOKEN_COST}` Feederbucks for one token\n\n"
+            "Use: `!buy 1 <amount>`"
         )
 
     @bot.command(name="buy")
     async def buy(ctx, *, raw_args: str = None):
         if raw_args is None:
             await ctx.reply(
-                "Usage: `!buy <item_index> <amount> [any additional optional parameters]`\n"
+                "Usage: `!buy <item_number> <amount> [any additional optional parameters]`\n"
                 "Example: `!buy 1 1`\n"
-                "Example: `!buy 2 3`\n"
+                "Example: `!buy 2 1`\n"
                 "Example: `!buy 3 1 My Custom Role`"
             )
             return
         tokens, _ = parse_store_tokens(raw_args)
         if not tokens:
-            await ctx.reply("Usage: `!buy <item_index> <amount> [any additional optional parameters]`")
+            await ctx.reply("Usage: `!buy <item_number> <amount> [any additional optional parameters]`")
             return
         try:
             item_index = int(tokens[0])
@@ -709,7 +709,7 @@ def attach_commands(bot, deps):
             try:
                 amount = int(tokens[1])
             except ValueError:
-                await ctx.reply("Usage: `!buy <item_index> <amount> [any additional optional parameters]`")
+                await ctx.reply("Usage: `!buy <item_number> <amount> [any additional optional parameters]`")
                 return
         if amount <= 0:
             await ctx.reply("Amount must be greater than 0.")
@@ -761,7 +761,7 @@ def attach_commands(bot, deps):
     async def buy_error(ctx, error):
         if isinstance(error, commands.BadArgument):
             await ctx.reply(
-                "Usage: `!buy <item_index> <amount> [any additional optional parameters]`"
+                "Usage: `!buy <item_number> <amount> [any additional optional parameters]`"
             )
         else:
             await ctx.reply("An unexpected error occurred while buying from the store.")
@@ -800,7 +800,7 @@ def attach_commands(bot, deps):
             item_key = normalize_store_item_name(item_name)
         if item_key is None:
             await ctx.reply(
-                "Unknown store item. Try a store index from `!store`, `dd_tokens`, `Role: VIP Feeder`, or `Role: Custom Role`."
+                "Unknown store item. Try a store number from `!store`, `Double-Down Tokens`, `VIP Feeder`, or `Custom Role`."
             )
             return
         save_store_cost_override(
@@ -812,47 +812,6 @@ def attach_commands(bot, deps):
         )
         item_info = get_store_item_info(item_key)
         await ctx.reply(f"Updated `{item_info['display_name']}` to `{new_cost}` Feederbucks for this server.")
-
-    @bot.command(name="_legacy_buy", hidden=True)
-    async def buy_legacy(ctx, item: str = None, amount: int = 1):
-        if item is None:
-            await ctx.reply("Usage: !buy `dd_tokens` `<amount>`")
-            return
-        item = item.lower().strip()
-        if item != "dd_tokens":
-            await ctx.reply("That item is not sold in the store. Right now the only item is `dd_tokens`.")
-            return
-        if amount <= 0:
-            await ctx.reply("Amount must be greater than 0.")
-            return
-        guild_id = str(ctx.guild.id)
-        user_id = str(ctx.author.id)
-        nickname = ctx.author.display_name
-        total_cost = DD_TOKEN_COST * amount
-        current_balance = get_balance(guild_id, user_id, nickname=nickname)
-        if current_balance < total_cost:
-            await ctx.reply(
-                f"You do not have enough Feederbucks.\n"
-                f"Cost: `{total_cost}` Feederbucks\n"
-                f"Your balance: `{current_balance}` Feederbucks"
-            )
-            return
-        update_balance(guild_id, user_id, -total_cost, nickname=nickname)
-        update_dd_token_balance(guild_id, user_id, amount, nickname=nickname)
-        new_balance = get_balance(guild_id, user_id, nickname=nickname)
-        new_tokens = get_dd_token_balance(guild_id, user_id, nickname=nickname)
-        await ctx.reply(
-            f"You bought `{amount}` dd_tokens for `{total_cost}` Feederbucks.\n"
-            f"New balance: `{new_balance}` Feederbucks\n"
-            f"Your dd_tokens: `{new_tokens}`"
-        )
-
-    @buy_legacy.error
-    async def buy_legacy_error(ctx, error):
-        if isinstance(error, commands.BadArgument):
-            await ctx.reply("Usage: !buy `dd_tokens` `<amount>`")
-        else:
-            await ctx.reply("An unexpected error occurred while buying from the store.")
 
     @bot.command(name="dd_tokens")
     async def dd_tokens(ctx, member: discord.Member = None):
@@ -886,7 +845,7 @@ def attach_commands(bot, deps):
             return
         token_count = get_dd_token_balance(guild_id, user_id, nickname=nickname)
         if token_count <= 0:
-            await ctx.reply("You do not have any dd_tokens. Buy one first with `!buy dd_tokens 1`.")
+            await ctx.reply("You do not have any dd_tokens. Buy one first with `!buy 1 1`.")
             return
         update_dd_token_balance(guild_id, user_id, -1, nickname=nickname)
         activate_double_down(guild_id, user_id, nickname=nickname)
@@ -1913,7 +1872,7 @@ def attach_commands(bot, deps):
                     "__**Betting / Store Commands**__\n"
                     "**!bet `<amt>` `<radiant|dire>`** - Bet Feederbucks on the current inhouse match.\n"
                     "**!store** - View the store.\n"
-                    "**!buy `<item_index>` `<amount>` `[any additional optional parameters]`** - Buy a store item by its index from `!store`.\n"
+                    "**!buy `<item_number>` `<amount>` `[any additional optional parameters]`** - Buy a store item by its number from `!store`.\n"
                     "**!dd_tokens `[@user]`** - View double down token balance.\n"
                     "**!dd** - Double your inhouse MMR gain/loss for the current match.\n\n"
                     "__**Admin Commands**__\n"
