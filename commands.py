@@ -596,7 +596,7 @@ def attach_commands(bot, deps):
         feederbucks = get_balance(guild_id, user_id, nickname=member.display_name)
         await ctx.reply(f"{member.display_name}'s balance: `{feederbucks}` Feederbucks.")
 
-    @bot.command(name="store")
+    @bot.command(name="store", aliases=["shop"])
     async def store(ctx):
         lines = []
         for index, item_key in enumerate(STORE_ITEM_ORDER, start=1):
