@@ -92,19 +92,18 @@ IMMORTAL_MAX_ROLLS = 3  # for immortal
 MMR_ROLE_OVERRULE_THRESHOLD = 1500
 ROLE_FIT_WEIGHT = 10  # You can adjust this based on how much role fit matters
 STORE_ITEM_DD_TOKENS = "dd_tokens"
-STORE_ITEM_FEEDERBUCKS_TYPHOON = "role_feederbucks_typhoon"
+STORE_ITEM_VIP_FEEDER = "role_vip_feeder"
 STORE_ITEM_CUSTOM_ROLE = "role_custom_role"
 STORE_ROLE_DURATION_DAYS = 7
-FEEDERBUCKS_TYPHOON_ROLE_NAME = "VIP Feeder"
-FEEDERBUCKS_TYPHOON_ROLE_COLOR = discord.Color.from_rgb(57, 255, 20)
+VIP_FEEDER_ROLE_NAME = "VIP Feeder"
+VIP_FEEDER_ROLE_COLOR = discord.Color.from_rgb(57, 255, 20)
 CUSTOM_STORE_ROLE_COLOR = discord.Color.from_rgb(0, 191, 255)
 STORE_ITEM_ALIASES = {
     STORE_ITEM_DD_TOKENS: {
         "dd_tokens", "ddtoken", "ddtokens", "double down token", "double down tokens"
     },
-    STORE_ITEM_FEEDERBUCKS_TYPHOON: {
-        "role: feederbucks typhoon", "feederbucks typhoon", "typhoon", "role_feederbucks_typhoon",
-        "role: vip feeder", "vip feeder"
+    STORE_ITEM_VIP_FEEDER: {
+        "role: vip feeder", "vip feeder", "role_vip_feeder"
     },
     STORE_ITEM_CUSTOM_ROLE: {
         "role: custom role", "custom role", "role_custom_role"
@@ -310,12 +309,12 @@ def get_store_catalog():
             "duration_days": None,
             "role_name": None,
         },
-        STORE_ITEM_FEEDERBUCKS_TYPHOON: {
-            "key": STORE_ITEM_FEEDERBUCKS_TYPHOON,
+        STORE_ITEM_VIP_FEEDER: {
+            "key": STORE_ITEM_VIP_FEEDER,
             "display_name": "Role: VIP Feeder",
             "default_cost": 50000,
             "duration_days": STORE_ROLE_DURATION_DAYS,
-            "role_name": FEEDERBUCKS_TYPHOON_ROLE_NAME,
+            "role_name": VIP_FEEDER_ROLE_NAME,
         },
         STORE_ITEM_CUSTOM_ROLE: {
             "key": STORE_ITEM_CUSTOM_ROLE,
@@ -325,6 +324,38 @@ def get_store_catalog():
             "role_name": None,
         },
     }
+
+async def ensure_vip_feeder_role(guild):
+    existing = discord.utils.get(guild.roles, name=VIP_FEEDER_ROLE_NAME)
+    if existing:
+        if existing.color != VIP_FEEDER_ROLE_COLOR or not existing.hoist:
+            try:
+                await existing.edit(
+                    color=VIP_FEEDER_ROLE_COLOR,
+                    hoist=True,
+                    reason="Sync VIP Feeder store role color."
+                )
+            except discord.Forbidden:
+                print(f"[store] Missing permissions to update VIP Feeder role in guild {guild.id}")
+            except Exception as e:
+                print(f"[store] Failed to update VIP Feeder role in guild {guild.id}: {e}")
+        await promote_store_role_display(guild, existing)
+        return existing
+    try:
+        role = await guild.create_role(
+            name=VIP_FEEDER_ROLE_NAME,
+            color=VIP_FEEDER_ROLE_COLOR,
+            hoist=True,
+            reason="Create default VIP Feeder store role."
+        )
+        await promote_store_role_display(guild, role)
+        return role
+    except discord.Forbidden:
+        print(f"[store] Missing permissions to create VIP Feeder role in guild {guild.id}")
+        return None
+    except Exception as e:
+        print(f"[store] Failed to create VIP Feeder role in guild {guild.id}: {e}")
+        return None
 
 def get_store_item_info(item_key):
     return get_store_catalog().get(item_key)
@@ -397,38 +428,6 @@ def log_store_purchase(guild_id, user_id, item_key, cost, details=None):
     if details:
         payload.update(details)
     db.collection("store_purchases").document(str(guild_id)).collection("entries").add(payload)
-
-async def ensure_typhoon_role(guild):
-    existing = discord.utils.get(guild.roles, name=FEEDERBUCKS_TYPHOON_ROLE_NAME)
-    if existing:
-        if existing.color != FEEDERBUCKS_TYPHOON_ROLE_COLOR or not existing.hoist:
-            try:
-                await existing.edit(
-                    color=FEEDERBUCKS_TYPHOON_ROLE_COLOR,
-                    hoist=True,
-                    reason="Sync VIP Feeder store role color."
-                )
-            except discord.Forbidden:
-                print(f"[store] Missing permissions to update Typhoon role in guild {guild.id}")
-            except Exception as e:
-                print(f"[store] Failed to update Typhoon role in guild {guild.id}: {e}")
-        await promote_store_role_display(guild, existing)
-        return existing
-    try:
-        role = await guild.create_role(
-            name=FEEDERBUCKS_TYPHOON_ROLE_NAME,
-            color=FEEDERBUCKS_TYPHOON_ROLE_COLOR,
-            hoist=True,
-            reason="Create default VIP Feeder store role."
-        )
-        await promote_store_role_display(guild, role)
-        return role
-    except discord.Forbidden:
-        print(f"[store] Missing permissions to create Typhoon role in guild {guild.id}")
-        return None
-    except Exception as e:
-        print(f"[store] Failed to create Typhoon role in guild {guild.id}: {e}")
-        return None
 
 async def promote_store_role_display(guild, role):
     if role is None:
@@ -537,27 +536,26 @@ async def purchase_store_role(member, item_key, custom_role_name=None, quantity=
         role = guild.get_role(int(role_id)) if role_id else None
         is_custom_role = bool(existing_entry.get("is_custom_role", False))
         role_name = existing_entry.get("role_name")
+        if role is None and item_key == STORE_ITEM_VIP_FEEDER:
+            role = await ensure_vip_feeder_role(guild)
+            role_name = role.name if role else VIP_FEEDER_ROLE_NAME
+        if role is None and item_key == STORE_ITEM_CUSTOM_ROLE:
+            role_name = (existing_entry.get("custom_role_name") or custom_role_name or role_name or "").strip()
+            if not role_name:
+                return False, "I couldn't find your existing custom role name to extend this purchase."
+            try:
+                role = await guild.create_role(
+                    name=role_name,
+                    color=CUSTOM_STORE_ROLE_COLOR,
+                    reason=f"Recreated custom store role for {member}."
+                )
+            except discord.Forbidden:
+                return False, "I can't recreate your custom role because I'm missing the `Manage Roles` permission."
+            except Exception as e:
+                return False, f"I couldn't recreate your custom role: `{e}`"
+            await promote_store_role_display(guild, role)
         if role is None:
-            if item_key == STORE_ITEM_FEEDERBUCKS_TYPHOON:
-                role = await ensure_typhoon_role(guild)
-                role_name = role.name if role else FEEDERBUCKS_TYPHOON_ROLE_NAME
-            elif item_key == STORE_ITEM_CUSTOM_ROLE:
-                role_name = (existing_entry.get("custom_role_name") or custom_role_name or role_name or "").strip()
-                if not role_name:
-                    return False, "I couldn’t find your existing custom role name to extend this purchase."
-                try:
-                    role = await guild.create_role(
-                        name=role_name,
-                        color=CUSTOM_STORE_ROLE_COLOR,
-                        reason=f"Recreated custom store role for {member}."
-                    )
-                except discord.Forbidden:
-                    return False, "I can’t recreate your custom role because I’m missing the `Manage Roles` permission."
-                except Exception as e:
-                    return False, f"I couldn’t recreate your custom role: `{e}`"
-                await promote_store_role_display(guild, role)
-        if role is None:
-            return False, "I couldn’t locate the role tied to your active purchase."
+            return False, "I couldn't locate the role tied to your active purchase."
         await promote_store_role_display(guild, role)
         if role not in member.roles:
             try:
@@ -589,10 +587,10 @@ async def purchase_store_role(member, item_key, custom_role_name=None, quantity=
             "quantity": quantity,
             "duration_days": duration_days,
         }
-    if item_key == STORE_ITEM_FEEDERBUCKS_TYPHOON:
-        role = await ensure_typhoon_role(guild)
+    if item_key == STORE_ITEM_VIP_FEEDER:
+        role = await ensure_vip_feeder_role(guild)
         if role is None:
-            return False, "I couldn’t create or locate the `VIP Feeder` role. Please make sure I have `Manage Roles`."
+            return False, "I couldn't create or locate the `VIP Feeder` role. Please make sure I have `Manage Roles`."
         role_name = role.name
         is_custom_role = False
     elif item_key == STORE_ITEM_CUSTOM_ROLE:
@@ -1669,7 +1667,7 @@ async def on_ready():
                 except:
                     continue
     for guild in bot.guilds:
-        await ensure_typhoon_role(guild)
+        await ensure_vip_feeder_role(guild)
     await cleanup_expired_store_roles()
     # Start the periodic MMR refresh task **after** restores finish
     if not refresh_all_mmrs.is_running():
@@ -1934,7 +1932,7 @@ async def on_raw_reaction_add(payload):
 # Sends a welcome message with instructions when the bot joins a new server.
 @bot.event
 async def on_guild_join(guild):
-    await ensure_typhoon_role(guild)
+    await ensure_vip_feeder_role(guild)
     welcome_embed = discord.Embed(
         title="👋 Welcome to FeederBot!",
         description=(
