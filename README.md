@@ -1,6 +1,6 @@
 # FeederBot
 
-FeederBot is a Python Discord bot for running **Dota 2 inhouse lobbies** inside a Discord server. It handles lobby management, Steam account linking, MMR fetching, team generation, Immortal Draft flows, live match polling, betting, coins, and per-server configuration.
+FeederBot is a Python Discord bot for running **Dota 2 inhouse lobbies** inside a Discord server. It handles lobby management, Steam account linking, MMR fetching, team generation, Immortal Draft flows, live match polling, betting, Feederbucks, and per-server configuration.
 
 This README reflects the current project structure and behavior in the codebase, including the split modules in `FeederBot.py`, `commands.py`, `immortal_draft.py`, `match_tracker.py`, `mmr_manager.py`, `betting_manager.py`, and Firebase setup.
 
@@ -17,7 +17,7 @@ FeederBot is built around a per-server inhouse workflow:
 5. In **regular mode**, FeederBot generates MMR-balanced teams.
 6. In **immortal mode**, FeederBot generates captains and runs an interactive Immortal Draft.
 7. Once the match appears on Steam, FeederBot polls the live match.
-8. After the match ends, it resolves bets, adjusts inhouse MMR, awards coins, and posts a result summary.
+8. After the match ends, it resolves bets, adjusts inhouse MMR, awards Feederbucks, and posts a result summary.
 
 ---
 
@@ -86,14 +86,14 @@ Want to run automated Dota 2 inhouse lobbies in your server?
 - Leaderboard command for top inhouse players
 - Double-down token support for doubling inhouse MMR gain/loss during active inhouse matches
 
-### Coins, betting, and store
+### Feederbucks, betting, and store
 - Per-guild wallet system
 - Default wallet seeding for users
 - Betting on Radiant/Dire during active matches
 - Bet updates allowed only as same-team increases
 - Store system with purchasable `dd_tokens`
-- Coin transfer command between users
-- Participation coin rewards after match completion
+- Feederbucks transfer command between users
+- Participation Feederbucks rewards after match completion
 
 ### Per-server configuration
 Each Discord server can have its own:
@@ -131,7 +131,7 @@ FeederBot/
 ├── immortal_draft.py     # Immortal Draft session, buttons, timer, autopick, cancel flow
 ├── match_tracker.py      # Completed match result lookup (STRATZ + OpenDota fallback)
 ├── mmr_manager.py        # Inhouse MMR storage, adjustment, leaderboard helpers
-├── betting_manager.py    # Coins, bets, dd token, and wallet helpers
+├── betting_manager.py    # Feederbucks, bets, dd token, and wallet helpers
 ├── firebase_setup.py     # Firebase Admin / Firestore initialization
 ├── hero_id_map.json      # Cached hero ID -> hero name mapping
 ├── requirements.txt      # Python dependencies
@@ -156,7 +156,7 @@ Below is the current command set reflected in `commands.py`.
 - `!buy dd_tokens <amount>` — buy double-down tokens
 - `!dd_tokens [@user]` — show double-down token balance
 - `!dd` — activate double-down for the current inhouse match before 2:00
-- `!send <amount> <@user>` — send coins to another user
+- `!send <amount> <@user>` — send Feederbucks to another user
 - `!setpreferredroles <1 2 3 4 5> [@user]` — set preferred roles in ranked order
 - `!viewpreferredroles [@user]` — view preferred roles
 - `!livematch` — repost/refresh the live match embed
@@ -240,7 +240,7 @@ Stores per-server settings such as:
 Stores server-specific inhouse MMR and nickname.
 
 ### `wallets/{guild_id}/users/{user_id}`
-Stores coin balances and optionally nicknames.
+Stores Feederbucks balances and optionally nicknames.
 
 ### `bets/{guild_id}/entries/{user_id}`
 Stores active bet entry per user.
@@ -375,7 +375,7 @@ If a result is found:
 - bets are resolved
 - inhouse MMR is adjusted for inhouse matches
 - double-downs are applied and cleared
-- all participants are awarded 50 coins
+- all participants are awarded 50 Feederbucks
 
 ---
 
