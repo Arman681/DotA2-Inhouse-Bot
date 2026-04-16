@@ -391,47 +391,6 @@ def attach_commands(bot, deps):
         )
         view.message = message
 
-    @bot.command(name="leaderboard_pages", hidden=True)
-    async def leaderboard_legacy(ctx):
-        top_players = get_top_players(ctx.guild.id)
-        if not top_players:
-            await ctx.reply("No leaderboard data found for this server.")
-            return
-        embed = discord.Embed(
-            title="Top 10 Inhouse Players",
-            description=f"Leaderboard for **{ctx.guild.name}**",
-            color=discord.Color.gold()
-        )
-        lines = []
-        medals = ["🥇", "🥈", "🥉"]
-        for rank, (user_id, stored_nickname, mmr) in enumerate(top_players, start=1):
-            # If they’re still in the server, use their current display name
-            member = ctx.guild.get_member(int(user_id))
-            if member:
-                name = member.display_name
-            else:
-                # Fall back to the nickname stored in inhouse_mmr
-                name = stored_nickname or "Unknown"
-                # If that nickname is useless, try the main players collection
-                if name.lower() == "unknown":
-                    player_doc = db.collection("players").document(str(user_id)).get()
-                    if player_doc.exists:
-                        pdata = player_doc.to_dict() or {}
-                        name = (
-                            pdata.get("discord_nickname")
-                            or pdata.get("steam_name")
-                            or name
-                        )
-            prefix = medals[rank - 1] if rank <= 3 else f"**#{rank}**"
-            lines.append(f"{prefix} — **{name}**: `{mmr}` MMR")
-        embed.add_field(
-            name="Rankings",
-            value="\n".join(lines),
-            inline=False
-        )
-        embed.set_footer(text=f"Requested by {ctx.author.display_name}")
-        await ctx.reply(embed=embed)
-
     @commands.cooldown(1, 5, commands.BucketType.user)  # 1 use / 5s per user
     @bot.command(name="bet")
     async def bet(ctx, *args):
@@ -628,14 +587,6 @@ def attach_commands(bot, deps):
             inline=False
         )
         await ctx.reply(embed=embed)
-
-    @bot.command(name="_legacy_store", hidden=True)
-    async def store_legacy(ctx):
-        await ctx.reply(
-            "**Store**\n"
-            f"**Double-Down Tokens** — `{DD_TOKEN_COST}` Feederbucks for one token\n\n"
-            "Use: `!buy 1 <amount>`"
-        )
 
     @bot.command(name="buy")
     async def buy(ctx, *, raw_args: str = None):
