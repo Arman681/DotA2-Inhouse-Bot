@@ -4,6 +4,7 @@ import math
 import time
 import discord
 import re
+import shlex
 from discord.ext import commands
 
 def attach_commands(bot, deps):
@@ -38,6 +39,12 @@ def attach_commands(bot, deps):
     activate_double_down            = deps["activate_double_down"]
     get_active_double_down_users    = deps["get_active_double_down_users"]
     clear_active_double_downs       = deps["clear_active_double_downs"]
+    get_store_item_info             = deps["get_store_item_info"]
+    normalize_store_item_name       = deps["normalize_store_item_name"]
+    get_store_cost                  = deps["get_store_cost"]
+    save_store_cost_override        = deps["save_store_cost_override"]
+    purchase_store_role             = deps["purchase_store_role"]
+    log_store_purchase              = deps["log_store_purchase"]
 
     # Match / live tracking
     fetch_live_match_for_guild   = deps["fetch_live_match_for_guild"]
@@ -95,6 +102,40 @@ def attach_commands(bot, deps):
     adjust_mmr                   = deps["adjust_mmr"]
 
     # ============================== General Commands ==============================
+
+    def parse_store_tokens(raw: str):
+        if raw is None:
+            return [], ""
+        text = raw.strip()
+        if not text:
+            return [], ""
+        try:
+            tokens = shlex.split(text)
+        except ValueError:
+            tokens = text.split()
+        return tokens, text
+
+    def parse_store_item_and_remainder(raw: str):
+        tokens, _ = parse_store_tokens(raw)
+        if not tokens:
+            return None, ""
+        for end in range(len(tokens), 0, -1):
+            candidate = " ".join(tokens[:end])
+            item_key = normalize_store_item_name(candidate)
+            if item_key:
+                return item_key, " ".join(tokens[end:]).strip()
+        return None, ""
+
+    STORE_ITEM_ORDER = [
+        "dd_tokens",
+        "role_feederbucks_typhoon",
+        "role_custom_role",
+    ]
+
+    def get_store_item_key_by_index(item_index: int):
+        if 1 <= item_index <= len(STORE_ITEM_ORDER):
+            return STORE_ITEM_ORDER[item_index - 1]
+        return None
 
     @bot.command(name="cfg")
     async def cfg_cmd(ctx, steam_id: str, member: discord.Member = None, *, force: str = None):
@@ -440,6 +481,30 @@ def attach_commands(bot, deps):
 
     @bot.command(name="store")
     async def store(ctx):
+        lines = []
+        for index, item_key in enumerate(STORE_ITEM_ORDER, start=1):
+            item_info = get_store_item_info(item_key)
+            item_cost = get_store_cost(ctx.guild.id, item_key)
+            description = f"`{item_cost}` coins"
+            if item_key == "dd_tokens":
+                description += " each"
+            elif item_key == "role_feederbucks_typhoon":
+                description += " for a bright green role that expires in 7 days"
+            elif item_key == "role_custom_role":
+                description += " for a bright blue custom role that expires in 7 days"
+            lines.append(f"`{index}`. **{item_info['display_name']}** - {description}")
+        await ctx.reply(
+            "**Store**\n"
+            + "\n".join(lines)
+            + "\n\n"
+            + "Use: `!buy <item_index> <amount> [any additional optional parameters]`\n"
+            + "Example: `!buy 1 1`\n"
+            + "Example: `!buy 2 2`\n"
+            + "Example: `!buy 3 1 My Custom Role`"
+        )
+
+    @bot.command(name="_legacy_store", hidden=True)
+    async def store_legacy(ctx):
         await ctx.reply(
             "**Store**\n"
             f"**dd_tokens** — `{DD_TOKEN_COST}` coins each\n\n"
@@ -447,7 +512,183 @@ def attach_commands(bot, deps):
         )
 
     @bot.command(name="buy")
-    async def buy(ctx, item: str = None, amount: int = 1):
+    async def buy(ctx, *, raw_args: str = None):
+        if raw_args is None:
+            await ctx.reply(
+                "Usage: `!buy <item_index> <amount> [any additional optional parameters]`\n"
+                "Example: `!buy 1 1`\n"
+                "Example: `!buy 2 3`\n"
+                "Example: `!buy 3 1 My Custom Role`"
+            )
+            return
+        tokens, _ = parse_store_tokens(raw_args)
+        if not tokens:
+            await ctx.reply("Usage: `!buy <item_index> <amount> [any additional optional parameters]`")
+            return
+        try:
+            item_index = int(tokens[0])
+        except ValueError:
+            await ctx.reply("The first argument to `!buy` must be the store item index from `!store`.")
+            return
+        item_key = get_store_item_key_by_index(item_index)
+        if item_key is None:
+            await ctx.reply(f"Invalid store item index. Please choose a number from `1` to `{len(STORE_ITEM_ORDER)}`.")
+            return
+        guild_id = str(ctx.guild.id)
+        user_id = str(ctx.author.id)
+        nickname = ctx.author.display_name
+        item_info = get_store_item_info(item_key)
+        item_cost = get_store_cost(guild_id, item_key)
+        current_balance = get_balance(guild_id, user_id, nickname=nickname)
+
+        if item_key == "dd_tokens":
+            amount = 1
+            if len(tokens) >= 2:
+                try:
+                    amount = int(tokens[1])
+                except ValueError:
+                    await ctx.reply("Usage: `!buy 1 <amount>`")
+                    return
+            if amount <= 0:
+                await ctx.reply("Amount must be greater than 0.")
+                return
+            total_cost = item_cost * amount
+            if current_balance < total_cost:
+                await ctx.reply(
+                    f"You do not have enough coins.\n"
+                    f"Cost: `{total_cost}` coins\n"
+                    f"Your balance: `{current_balance}` coins"
+                )
+                return
+            update_balance(guild_id, user_id, -total_cost, nickname=nickname)
+            update_dd_token_balance(guild_id, user_id, amount, nickname=nickname)
+            log_store_purchase(
+                guild_id,
+                user_id,
+                item_key,
+                total_cost,
+                details={"amount": amount, "nickname": nickname}
+            )
+            new_balance = get_balance(guild_id, user_id, nickname=nickname)
+            new_tokens = get_dd_token_balance(guild_id, user_id, nickname=nickname)
+            await ctx.reply(
+                f"You bought `{amount}` dd_tokens for `{total_cost}` coins.\n"
+                f"New balance: `{new_balance}` coins\n"
+                f"Your dd_tokens: `{new_tokens}`"
+            )
+            return
+
+        amount = 1
+        if len(tokens) >= 2:
+            try:
+                amount = int(tokens[1])
+            except ValueError:
+                await ctx.reply("Usage: `!buy <item_index> <amount> [any additional optional parameters]`")
+                return
+        if amount <= 0:
+            await ctx.reply("Amount must be greater than 0.")
+            return
+        total_cost = item_cost * amount
+        if current_balance < total_cost:
+            await ctx.reply(
+                f"You do not have enough coins.\n"
+                f"Cost: `{total_cost}` coins\n"
+                f"Your balance: `{current_balance}` coins"
+            )
+            return
+        custom_role_name = " ".join(tokens[2:]).strip() if item_key == "role_custom_role" else None
+        success, result = await purchase_store_role(
+            ctx.author,
+            item_key,
+            custom_role_name=custom_role_name,
+            quantity=amount,
+        )
+        if not success:
+            await ctx.reply(result)
+            return
+        update_balance(guild_id, user_id, -total_cost, nickname=nickname)
+        log_store_purchase(
+            guild_id,
+            user_id,
+            item_key,
+            total_cost,
+            details={
+                "nickname": nickname,
+                "role_name": result["role_name"],
+                "expires_at": result["expires_at"],
+                "is_custom_role": result["is_custom_role"],
+                "amount": amount,
+                "duration_days": result["duration_days"],
+                "extended": result["extended"],
+            }
+        )
+        new_balance = get_balance(guild_id, user_id, nickname=nickname)
+        await ctx.reply(
+            f"You bought `{item_info['display_name']}` x`{amount}` for `{total_cost}` coins.\n"
+            f"Assigned role: `{result['role_name']}`\n"
+            f"Expires: `{result['expires_at'].strftime('%Y-%m-%d %H:%M UTC')}`\n"
+            f"Duration added: `{result['duration_days']}` day(s)\n"
+            f"New balance: `{new_balance}` coins"
+        )
+
+    @buy.error
+    async def buy_error(ctx, error):
+        if isinstance(error, commands.BadArgument):
+            await ctx.reply(
+                "Usage: `!buy <item_index> <amount> [any additional optional parameters]`"
+            )
+        else:
+            await ctx.reply("An unexpected error occurred while buying from the store.")
+
+    @bot.command(name="modifycost")
+    @is_admin_or_has_role()
+    async def modifycost(ctx, *, raw_args: str = None):
+        if not raw_args:
+            await ctx.reply("Usage: `!modifycost <item_index|item_name> <cost>`")
+            return
+        tokens, _ = parse_store_tokens(raw_args)
+        if len(tokens) < 2:
+            await ctx.reply("Usage: `!modifycost <item_index|item_name> <cost>`")
+            return
+        try:
+            new_cost = int(tokens[-1])
+        except ValueError:
+            await ctx.reply("The last argument must be a whole-number coin cost.")
+            return
+        if new_cost < 0:
+            await ctx.reply("Cost cannot be negative.")
+            return
+        item_name = " ".join(tokens[:-1]).strip()
+        item_key = None
+        if len(tokens[:-1]) == 1:
+            try:
+                item_index = int(tokens[0])
+            except ValueError:
+                item_index = None
+            if item_index is not None:
+                item_key = get_store_item_key_by_index(item_index)
+                if item_key is None:
+                    await ctx.reply(f"Invalid store item index. Please choose a number from `1` to `{len(STORE_ITEM_ORDER)}`.")
+                    return
+        if item_key is None:
+            item_key = normalize_store_item_name(item_name)
+        if item_key is None:
+            await ctx.reply(
+                "Unknown store item. Try a store index from `!store`, `dd_tokens`, `Role: Feederbucks Typhoon`, or `Role: Custom Role`."
+            )
+            return
+        save_store_cost_override(
+            ctx.guild.id,
+            item_key,
+            new_cost,
+            server_name=ctx.guild.name,
+            set_by=ctx.author.id,
+        )
+        item_info = get_store_item_info(item_key)
+        await ctx.reply(f"Updated `{item_info['display_name']}` to `{new_cost}` coins for this server.")
+
+    @bot.command(name="_legacy_buy", hidden=True)
+    async def buy_legacy(ctx, item: str = None, amount: int = 1):
         if item is None:
             await ctx.reply("Usage: !buy `dd_tokens` `<amount>`")
             return
@@ -480,8 +721,8 @@ def attach_commands(bot, deps):
             f"Your dd_tokens: `{new_tokens}`"
         )
 
-    @buy.error
-    async def buy_error(ctx, error):
+    @buy_legacy.error
+    async def buy_legacy_error(ctx, error):
         if isinstance(error, commands.BadArgument):
             await ctx.reply("Usage: !buy `dd_tokens` `<amount>`")
         else:
@@ -1510,7 +1751,7 @@ def attach_commands(bot, deps):
                     "__**Betting / Store Commands**__\n"
                     "**!bet `<amt>` `<radiant|dire>`** - Bet coins on the current inhouse match.\n"
                     "**!store** - View the store.\n"
-                    "**!buy `<dd_tokens>` `<amount>`** - Buy double down tokens.\n"
+                    "**!buy `<item_index>` `<amount>` `[any additional optional parameters]`** - Buy a store item by its index from `!store`.\n"
                     "**!dd_tokens `[@user]`** - View double down token balance.\n"
                     "**!dd** - Double your inhouse MMR gain/loss for the current match.\n\n"
                     "__**Admin Commands**__\n"
@@ -1544,6 +1785,7 @@ def attach_commands(bot, deps):
 
                     "__**Bot Settings**__\n"
                     "**!changeprefix `<new_prefix>`** - Change the bot command prefix for this server.\n"
+                    "**!modifycost `<item_index|item_name>` `<cost>`** - Override a store item cost for this server. Example: `!modifycost 2 60000`.\n"
                     "**!viewlogs** - View recent configuration logs for this server.\n"
                     "**!viewlogs --verbose** - View detailed logs with full Firestore data.\n\n"
 
