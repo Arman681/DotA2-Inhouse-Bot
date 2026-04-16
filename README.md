@@ -153,7 +153,7 @@ Below is the current command set reflected in `commands.py`.
 - `!balance [@user]` — show wallet balance
 - `!bet [amount] [radiant|dire]` — place or increase a bet on the active match
 - `!store` — show store items
-- `!buy dd_tokens <amount>` — buy double-down tokens
+- `!buy 1 <amount>` — buy double-down tokens
 - `!dd_tokens [@user]` — show double-down token balance
 - `!dd` — activate double-down for the current inhouse match before 2:00
 - `!send <amount> <@user>` — send Feederbucks to another user
