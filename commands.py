@@ -574,7 +574,7 @@ def attach_commands(bot, deps):
     async def bet_error(ctx, error):
         await ctx.reply("An unexpected error occurred while placing your bet. Usage: `!bet [amount] [radiant|dire]`.")
 
-    @bot.command(name="balance")
+    @bot.command(name="balance", aliases=["money", "feederbucks"])
     async def balance(ctx, member: discord.Member = None):
         member = member or ctx.author
         user_id = str(member.id)
