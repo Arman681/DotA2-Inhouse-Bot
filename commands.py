@@ -897,7 +897,23 @@ def attach_commands(bot, deps):
         )
 
     @bot.command(name="send")
-    async def send_feederbucks(ctx, amount: int, member: discord.Member):
+    async def send_feederbucks(ctx, first: str = None, second: str = None):
+        if first is None or second is None:
+            await ctx.reply("Usage: !send `<amount>` `<@user>` or `!send <@user> <amount>`")
+            return
+        converter = commands.MemberConverter()
+        amount = None
+        member = None
+        try:
+            amount = int(first)
+            member = await converter.convert(ctx, second)
+        except (ValueError, commands.BadArgument):
+            try:
+                amount = int(second)
+                member = await converter.convert(ctx, first)
+            except (ValueError, commands.BadArgument):
+                await ctx.reply("Invalid argument. Usage: !send `<amount>` `<@user>` or `!send <@user> <amount>`.")
+                return
         if amount <= 0:
             await ctx.reply("Amount must be greater than 0.")
             return
@@ -917,9 +933,9 @@ def attach_commands(bot, deps):
     @send_feederbucks.error
     async def send_feederbucks_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: !send `<amount>` `<@user>`")
+            await ctx.reply("Usage: !send `<amount>` `<@user>` or `!send <@user> <amount>`")
         elif isinstance(error, commands.BadArgument):
-            await ctx.reply("Invalid argument. Usage: !send `<amount>` `<@user>` — make sure `<amount>` is a number and `<@user>` is a valid user.")
+            await ctx.reply("Invalid argument. Usage: !send `<amount>` `<@user>` or `!send <@user> <amount>`.")
         else:
             await ctx.reply("An unexpected error occurred while sending Feederbucks.")
 
