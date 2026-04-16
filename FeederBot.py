@@ -213,17 +213,17 @@ async def poll_live_match(match_id, guild, random_mode=False):
             clear_active_double_downs(guild.id)
         except Exception as e:
             print(f"[poll_live_match] Failed to adjust MMR: {e}")
-    # Award 50 coins to all players who played in the match
+    # Award 50 Feederbucks to all players who played in the match
     all_player_ids = winner_ids + loser_ids
     for discord_id in all_player_ids:
         member = guild.get_member(int(discord_id))
         nickname = member.display_name if member else str(discord_id)
         # use betting_manager helper so nickname is persisted
         update_balance(guild.id, str(discord_id), 50, nickname=nickname)
-    print(f"[poll_live_match] Awarded 50 coins to {len(all_player_ids)} participants in match {match_id}")
+    print(f"[poll_live_match] Awarded 50 Feederbucks to {len(all_player_ids)} participants in match {match_id}")
     # Send match summary
     try:
-        await channel.send(f"Match `{match_id}` has ended with a {winning_team} victory. Bets have been resolved and Inhouse-MMR updated.\n All participants received **50 coins** for playing.")
+        await channel.send(f"Match `{match_id}` has ended with a {winning_team} victory. Bets have been resolved and Inhouse-MMR updated.\n All participants received **50 Feederbucks** for playing.")
         print(f"[poll_live_match] Match summary sent to channel ID: {channel.id}")
     except Exception as e:
         print(f"[poll_live_match] Failed to send match summary: {e}")
@@ -2302,7 +2302,7 @@ deps = {
     "get_mmr": get_mmr,
     "get_inhouse_mmr": get_inhouse_mmr,
     "get_top_players": get_top_players,
-    # coins/betting
+    # Feederbucks/betting
     "get_balance": get_balance,
     "place_bet": place_bet,
     "update_balance": update_balance,
