@@ -123,6 +123,7 @@ from bot.ui.manual_captain_select import (
 from bot.state.runtime_state import (
     ALLOWED_CAPTAIN_POLICIES,
     GLOBAL_ADMIN_ID,
+    IMMORTAL_MAX_ROLLS,
     MAX_ROLLS,
     active_match_ids,
     captain_draft_state,
@@ -130,12 +131,16 @@ from bot.state.runtime_state import (
     immortal_draft_running,
     inhouse_mode,
     live_channel_ids,
+    live_embed_messages,
     lobby_channel_ids,
     lobby_message,
     lobby_players,
+    match_tracking_start_times,
     match_wait_tasks,
     original_teams,
+    polling_tasks,
     prefix_cache,
+    random_polling_flags,
     rocket_lock,
     roll_count,
     team_rolls,
@@ -409,21 +414,6 @@ async def refresh_all_mmrs():
 async def cleanup_expired_store_roles_task():
     await cleanup_expired_store_roles()
 
-# Assigns players to roles based on their preferences and MMR, prioritizing optimal fit
-    assignments = assign_roles_with_preferences(team, preference_map, mmr_map)
-    total_score = 0
-    for role, player in assignments.items():
-        uid = str(player[0])
-        preferences = preference_map.get(uid) if preference_map else get_preferred_roles(uid)
-        if not preferences:
-            continue
-        try:
-            preference_rank = preferences.index(role) + 1
-        except ValueError:
-            preference_rank = 6
-        total_score += preference_rank
-    return total_score, assignments
-
 # ========================================================================================================================
 # ================================================ Bot Event Handlers ================================================
 # ========================================================================================================================
@@ -431,12 +421,12 @@ async def cleanup_expired_store_roles_task():
 # Runs once when the bot starts and begins the MMR refresh task.
 @bot.event
 async def on_ready():
-    global hero_id_to_name
+    global hero_id_map
     print(f"{bot.user} is online!")
     active_match_ids.clear()
     clear_all_bets(bot)
     # Cache hero IDs
-    hero_id_to_name = await fetch_hero_id_to_name_map()
+    hero_id_map = await fetch_hero_id_to_name_map()
     # Load live_channel_ids from Firestore
     docs = db.collection("guild_specific_info").stream()
     for doc in docs:
@@ -788,18 +778,6 @@ async def on_guild_join(guild):
 # ============================================== Embed Builders Section ==============================================
 # ========================================================================================================================
 
-# ============================= Lobby Embed Functions =============================
-
-# Builds and returns a lobby embed showing current players and the server's password.
-    immortal_draft_running[guild_id] = False
-    captain_draft_state.pop(guild_id, None)
-    original_teams.pop(guild_id, None)
-    msg = lobby_message.get(guild_id)
-    if msg:
-        try:
-            await msg.add_reaction("⚔️")
-        except Exception:
-            pass
 
 configure_store_service(db_client=db, firestore_module=firestore, bot_instance=bot)
 configure_embed_service(
