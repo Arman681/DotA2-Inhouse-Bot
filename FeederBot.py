@@ -43,6 +43,12 @@ from betting_manager import (
 )
 from match_tracker import fetch_match_result
 from immortal_draft import ImmortalDraftSession, Candidate, set_cancel_callback
+from processed_match_log import (
+    get_bound_league_id,
+    get_processed_match,
+    is_match_processed,
+    log_processed_match,
+)
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -147,6 +153,17 @@ async def close_http_session():
 # ============================================ Core Functions & Utilities ============================================
 # ========================================================================================================================
 
+def clear_match_tracking_state(guild_id: int):
+    active_match_ids.pop(guild_id, None)
+    polling_tasks.pop(guild_id, None)
+    random_polling_flags.pop(guild_id, None)
+    match_tracking_start_times.pop(guild_id, None)
+    live_embed_messages.pop(guild_id, None)
+    _last_fetch_stats.pop(guild_id, None)
+    _last_active_match_id.pop(guild_id, None)
+    _last_selected_match_id.pop(guild_id, None)
+
+
 # Polls a live Dota 2 match, updates Discord with status, and resolves bets/MMR after the match ends
 async def poll_live_match(match_id, guild, random_mode=False):
     print(f"[poll_live_match] Started polling match {match_id} for guild {guild.name} (random_mode={random_mode})")
@@ -190,16 +207,21 @@ async def poll_live_match(match_id, guild, random_mode=False):
     if not result:
         print(f"[poll_live_match] No match result found for match {match_id} after {max_retries} attempts. Skipping bet resolution.")
         # Clean up memory even if result is missing
-        active_match_ids.pop(guild.id, None)
-        polling_tasks.pop(guild.id, None)
-        random_polling_flags.pop(guild.id, None)
-        match_tracking_start_times.pop(guild.id, None)
-        live_embed_messages.pop(guild.id, None)
-        _last_fetch_stats.pop(guild.id, None)
-        _last_active_match_id.pop(guild.id, None)
-        _last_selected_match_id.pop(guild.id, None)
+        clear_match_tracking_state(guild.id)
         if channel:
             await channel.send("Match ended but no result was found. Polling has been stopped.")
+        return
+    if is_match_processed(guild.id, match_id):
+        existing = get_processed_match(guild.id, match_id) or {}
+        print(f"[poll_live_match] Match {match_id} was already processed for guild {guild.id}. Skipping duplicate resolution.")
+        clear_match_tracking_state(guild.id)
+        if channel:
+            processed_at = existing.get("processed_at", "unknown time")
+            await channel.send(
+                f"Match `{match_id}` was already processed earlier"
+                f" (source: `{existing.get('source', 'unknown')}`, processed_at: `{processed_at}`). "
+                "Skipping duplicate resolution."
+            )
         return
     # Proceed with resolution
     winning_team = "radiant" if result["radiant_win"] else "dire"
@@ -220,6 +242,20 @@ async def poll_live_match(match_id, guild, random_mode=False):
         nickname = member.display_name if member else str(discord_id)
         # use betting_manager helper so nickname is persisted
         update_balance(guild.id, str(discord_id), 50, nickname=nickname)
+    try:
+        log_processed_match(
+            guild.id,
+            match_id,
+            league_id=None if random_mode else get_bound_league_id(guild.id),
+            source="auto_poll",
+            processors=["betting", "inhouse_mmr", "feederbucks"],
+            winning_team=winning_team,
+            random_mode=random_mode,
+            processed_by="system",
+            player_count=len(all_player_ids),
+        )
+    except Exception as e:
+        print(f"[poll_live_match] Failed to log processed match {match_id}: {e}")
     print(f"[poll_live_match] Awarded 50 Feederbucks to {len(all_player_ids)} participants in match {match_id}")
     # Send match summary
     try:
@@ -228,14 +264,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
     except Exception as e:
         print(f"[poll_live_match] Failed to send match summary: {e}")
     # Clean up memory
-    active_match_ids.pop(guild.id, None)
-    polling_tasks.pop(guild.id, None)
-    random_polling_flags.pop(guild.id, None)
-    match_tracking_start_times.pop(guild.id, None)
-    live_embed_messages.pop(guild.id, None)
-    _last_fetch_stats.pop(guild.id, None)
-    _last_active_match_id.pop(guild.id, None)
-    _last_selected_match_id.pop(guild.id, None)
+    clear_match_tracking_state(guild.id)
 
 # =============================== Permission Checks ===============================
 
@@ -2524,6 +2553,10 @@ deps = {
     # misc
     "get_discord_id_from_steam_id": get_discord_id_from_steam_id,
     "adjust_mmr": adjust_mmr,
+    "get_bound_league_id": get_bound_league_id,
+    "get_processed_match": get_processed_match,
+    "is_match_processed": is_match_processed,
+    "log_processed_match": log_processed_match,
     "save_preferred_roles_setting": save_preferred_roles_setting,
 }
 set_cancel_callback(handle_immortal_draft_cancel)
