@@ -25,6 +25,36 @@ from dotenv import load_dotenv
 from firebase_admin import firestore
 import bot.storage.firebase_setup  # ensures Firebase is initialized before anything else
 from bot.commands.commands import attach_commands
+from bot.services.guild_config_service import (
+    configure_guild_config,
+    get_captain_policy as _get_captain_policy,
+    load_guild_prefix as _load_guild_prefix,
+    load_inhouse_mode_for_guild as _load_inhouse_mode_for_guild,
+    load_lobby_message_id as _load_lobby_message_id,
+    load_lobby_password_for_guild as _load_lobby_password_for_guild,
+    load_lobby_players as _load_lobby_players,
+    load_player_config as _load_player_config,
+    load_preferred_roles_setting as _load_preferred_roles_setting,
+    log_store_purchase as persist_store_purchase,
+    save_guild_prefix as _save_guild_prefix,
+    save_inhouse_mode_for_guild as _save_inhouse_mode_for_guild,
+    save_league_guild_mapping as _save_league_guild_mapping,
+    save_lobby_message_id as _save_lobby_message_id,
+    save_lobby_password_for_guild as _save_lobby_password_for_guild,
+    save_lobby_players as _save_lobby_players,
+    save_player_config as _save_player_config,
+    save_preferred_roles_setting as _save_preferred_roles_setting,
+    set_captain_policy as _set_captain_policy,
+)
+from bot.services.live_tracking_service import (
+    clear_match_tracking_state as _clear_match_tracking_state,
+    configure_live_tracking,
+    convert_to_steam32 as _convert_to_steam32,
+    fetch_live_match_for_guild as _fetch_live_match_for_guild,
+    fetch_mmr as _fetch_mmr,
+    poll_live_match as _poll_live_match,
+    wait_for_match_then_start_polling as _wait_for_match_then_start_polling,
+)
 from bot.services.mmr_manager import adjust_mmr, get_inhouse_mmr, get_top_players
 from bot.services.betting_manager import (
     clear_guild_bets,
@@ -49,6 +79,47 @@ from bot.services.processed_match_log import (
     is_match_processed,
     log_processed_match,
 )
+from bot.state.runtime_state import (
+    ALLOWED_CAPTAIN_POLICIES,
+    CUSTOM_STORE_ROLE_COLOR,
+    GLOBAL_ADMIN_ID,
+    IMMORTAL_MAX_ROLLS,
+    MAX_ROLLS,
+    MMR_ROLE_OVERRULE_THRESHOLD,
+    ROLE_FIT_WEIGHT,
+    STORE_ITEM_ALIASES,
+    STORE_ITEM_CUSTOM_ROLE,
+    STORE_ITEM_DD_TOKENS,
+    STORE_ITEM_VIP_FEEDER,
+    STORE_ROLE_DURATION_DAYS,
+    VIP_FEEDER_ROLE_COLOR,
+    VIP_FEEDER_ROLE_NAME,
+    _last_active_match_id,
+    _last_fetch_stats,
+    _last_selected_match_id,
+    active_match_ids,
+    captain_draft_state,
+    captain_policy_by_guild,
+    captain_policy_threshold_by_guild,
+    display_name,
+    immortal_draft_running,
+    inhouse_mode,
+    live_channel_ids,
+    live_embed_messages,
+    lobby_channel_ids,
+    lobby_message,
+    lobby_players,
+    match_tracking_start_times,
+    match_wait_tasks,
+    original_teams,
+    polling_tasks,
+    prefix_cache,
+    random_polling_flags,
+    rocket_lock,
+    roll_count,
+    team_rolls,
+    valid_team_combos,
+)
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -58,65 +129,13 @@ STEAM_API_KEY = os.getenv("STEAM_API_KEY")
 GLOBAL_ADMIN_ID = 187959278949105664
 
 db = firestore.client()
+configure_guild_config(db_client=db, firestore_module=firestore)
 intents = discord.Intents.default()
 intents.message_content = True
 intents.reactions = True
 intents.guilds = True
 intents.members = True
-
-inhouse_mode = {}          # {guild_id: "regular" or "immortal"}
-lobby_players = {}         # {guild_id: list of (user_id, name, mmr)}
-lobby_channel_ids = {}     # {guild_id: channel_id}
-lobby_message = {}         # {guild_id: message}
-roll_count = {}            # {guild_id: int}
-team_rolls = {}            # {guild_id: list of team tuples}
-original_teams = {}        # {guild_id: team tuple}
-captain_draft_state = {}   # {guild_id: {"pairs": [...], "index": 0}}
-live_channel_ids = {}      # {guild_id: channel_id}
-active_match_ids = {}      # {guild_id: match_id}
-live_embed_messages = {}   # {guild_id: message}
-polling_tasks = {}         # {guild_id: asyncio.Task} for per-server polling
-match_tracking_start_times = {}  # {guild_id: unix_timestamp}
-random_polling_flags = {}        # {guild_id: True/False}
-valid_team_combos = {}     # {guild_id: int} for how many valid team combinations were found
-prefix_cache = {}          # {guild_id: prefix}
-rocket_lock = {}           # {guild_id: True/False}
-match_wait_tasks = {}      # {guild_id: asyncio.Task} waiting for Steam match
-display_name = {}          # {steam_id: display_name}
-# Debug log de-dupers to avoid noisy repeats during polling
-_last_fetch_stats = {}         # {guild_id: (checked_total, passed_total)}
-_last_active_match_id = {}     # {guild_id: last_match_id}
-_last_selected_match_id = {}   # {guild_id: selected_match_id}
-immortal_draft_running: dict[int, bool] = {}   # guild_id -> started?
-# --- Captain selection policy ---
-ALLOWED_CAPTAIN_POLICIES = {"min_diff", "top2_if_close", "simulate"}
-captain_policy_by_guild: dict[int, str] = {}          # e.g. { 123: "min_diff" }
-captain_policy_threshold_by_guild: dict[int, int] = {} # e.g. { 123: 150 } (only for top2_if_close)
-
-MAX_ROLLS = 5  # for regular
-IMMORTAL_MAX_ROLLS = 3  # for immortal
-MMR_ROLE_OVERRULE_THRESHOLD = 1500
-ROLE_FIT_WEIGHT = 10  # You can adjust this based on how much role fit matters
-STORE_ITEM_DD_TOKENS = "dd_tokens"
-STORE_ITEM_VIP_FEEDER = "role_vip_feeder"
-STORE_ITEM_CUSTOM_ROLE = "role_custom_role"
-STORE_ROLE_DURATION_DAYS = 7
-VIP_FEEDER_ROLE_NAME = "VIP Feeder"
-VIP_FEEDER_ROLE_COLOR = discord.Color.from_rgb(57, 255, 20)
-CUSTOM_STORE_ROLE_COLOR = discord.Color.from_rgb(0, 191, 255)
-STORE_ITEM_ALIASES = {
-    STORE_ITEM_DD_TOKENS: {
-        "dd_tokens", "ddtoken", "ddtokens", "double down token", "double down tokens"
-    },
-    STORE_ITEM_VIP_FEEDER: {
-        "role: vip feeder", "vip feeder", "role_vip_feeder"
-    },
-    STORE_ITEM_CUSTOM_ROLE: {
-        "role: custom role", "custom role", "role_custom_role"
-    },
-}
-
-HERO_CACHE_FILE = os.path.join(os.path.dirname(__file__), "bot", "data", "hero_id_map.json")
+HERO_CACHE_FILE = os.path.join(os.path.dirname(__file__), "data", "hero_id_map.json")
 hero_id_map = {}
 if os.path.exists(HERO_CACHE_FILE):
     try:
@@ -596,18 +615,14 @@ def get_active_store_role_entry(guild_id, user_id, item_key):
 
 def log_store_purchase(guild_id, user_id, item_key, cost, details=None):
     item_info = get_store_item_info(item_key) or {}
-    payload = {
-        "guild_id": str(guild_id),
-        "user_id": str(user_id),
-        "item_key": item_key,
-        "item_name": item_info.get("display_name", item_key),
-        "cost": int(cost),
-        "timestamp": firestore.SERVER_TIMESTAMP,
-        "timestamp_utc": datetime.now(timezone.utc),
-    }
-    if details:
-        payload.update(details)
-    db.collection("store_purchases").document(str(guild_id)).collection("entries").add(payload)
+    persist_store_purchase(
+        guild_id,
+        user_id,
+        item_key,
+        cost,
+        item_info.get("display_name", item_key),
+        details=details,
+    )
 
 async def promote_store_role_display(guild, role):
     if role is None:
@@ -2465,6 +2480,50 @@ async def handle_immortal_draft_cancel(guild_id: int):
             await msg.add_reaction("⚔️")
         except Exception:
             pass
+
+configure_live_tracking(
+    bot_instance=bot,
+    db_client=db,
+    steam_api_key_value=STEAM_API_KEY,
+    stratz_token_value=STRATZ_TOKEN,
+    get_http_session_fn=get_http_session,
+    format_live_match_embed_fn=format_live_match_embed,
+    fetch_match_result_fn=fetch_match_result,
+    map_steam_ids_to_discord_ids_fn=map_steam_ids_to_discord_ids,
+    resolve_bets_fn=resolve_bets,
+    get_active_double_down_users_fn=get_active_double_down_users,
+    adjust_mmr_fn=adjust_mmr,
+    clear_active_double_downs_fn=clear_active_double_downs,
+    update_balance_fn=update_balance,
+    get_processed_match_fn=get_processed_match,
+    is_match_processed_fn=is_match_processed,
+    log_processed_match_fn=log_processed_match,
+    get_bound_league_id_fn=get_bound_league_id,
+)
+
+save_player_config = _save_player_config
+load_player_config = _load_player_config
+save_guild_prefix = _save_guild_prefix
+load_guild_prefix = _load_guild_prefix
+save_lobby_password_for_guild = _save_lobby_password_for_guild
+load_lobby_password_for_guild = _load_lobby_password_for_guild
+save_inhouse_mode_for_guild = _save_inhouse_mode_for_guild
+load_inhouse_mode_for_guild = _load_inhouse_mode_for_guild
+save_league_guild_mapping = _save_league_guild_mapping
+save_lobby_message_id = _save_lobby_message_id
+load_lobby_message_id = _load_lobby_message_id
+save_lobby_players = _save_lobby_players
+load_lobby_players = _load_lobby_players
+save_preferred_roles_setting = _save_preferred_roles_setting
+load_preferred_roles_setting = _load_preferred_roles_setting
+get_captain_policy = _get_captain_policy
+set_captain_policy = _set_captain_policy
+clear_match_tracking_state = _clear_match_tracking_state
+convert_to_steam32 = _convert_to_steam32
+fetch_mmr = _fetch_mmr
+fetch_live_match_for_guild = _fetch_live_match_for_guild
+poll_live_match = _poll_live_match
+wait_for_match_then_start_polling = _wait_for_match_then_start_polling
 
 deps = {
     # checks

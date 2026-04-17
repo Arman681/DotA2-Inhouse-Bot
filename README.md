@@ -2,7 +2,7 @@
 
 FeederBot is a Python Discord bot for running **Dota 2 inhouse lobbies** inside a Discord server. It handles lobby management, Steam account linking, MMR fetching, team generation, Immortal Draft flows, live match polling, betting, Feederbucks, and per-server configuration.
 
-This README reflects the current project structure and behavior in the codebase, including the split modules in `FeederBot.py`, `commands.py`, `immortal_draft.py`, `match_tracker.py`, `mmr_manager.py`, `betting_manager.py`, and Firebase setup.
+This README reflects the current project structure and behavior in the codebase, including the split modules under `bot/main.py`, `bot/commands/`, `bot/services/`, and `bot/storage/`.
 
 ---
 
@@ -126,7 +126,7 @@ Each Discord server can have its own:
 
 ```text
 FeederBot/
-├── FeederBot.py          # Main bot entry point, events, lobby flow, team balancing, polling
+├── bot/main.py          # Main bot entry point, events, lobby flow, team balancing, polling
 ├── commands.py           # All text-command registration and handlers
 ├── immortal_draft.py     # Immortal Draft session, buttons, timer, autopick, cancel flow
 ├── match_tracker.py      # Completed match result lookup (STRATZ + OpenDota fallback)
@@ -307,7 +307,7 @@ Create a `.env` file in the project root with the required variables shown above
 
 ### 5. Run the bot
 ```bash
-python FeederBot.py
+python -m bot.main
 ```
 
 ---
@@ -317,7 +317,7 @@ python FeederBot.py
 The included `Procfile` is currently:
 
 ```text
-worker: python FeederBot.py
+worker: python -m bot.main
 ```
 
 ### Basic deployment steps
@@ -390,7 +390,7 @@ Most player-facing commands like `!cfg`, `!bet`, `!balance`, `!mmr`, and role pr
 Used for lobby management and server configuration commands.
 
 ### Global admin
-A single hard-coded Discord user ID in `FeederBot.py` is allowed to use `!pose` and automatically bypasses admin-role checks.
+A single hard-coded Discord user ID in `bot/main.py` is allowed to use `!pose` and automatically bypasses admin-role checks.
 
 ---
 

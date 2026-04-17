@@ -1,1 +1,1 @@
-worker: python FeederBot.py
+worker: python -m bot.main

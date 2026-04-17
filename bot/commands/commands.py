@@ -8,7 +8,7 @@ import shlex
 from discord.ext import commands
 
 def attach_commands(bot, deps):
-    # ---- pull in all helpers/state you already have in FeederBot.py ----
+    # ---- pull in all helpers/state exposed by the main bot entrypoint ----
     # Checks / auth
     user_is_admin_or_has_role = deps["user_is_admin_or_has_role"]   # async fn(author) -> bool
     is_admin_or_has_role      = deps["is_admin_or_has_role"]        # decorator factory @is_admin_or_has_role()
