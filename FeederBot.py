@@ -17,16 +17,16 @@ import aiohttp, asyncio, os, json, random
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import discord, itertools
-import firebase_setup  # ensures Firebase is initialized before anything else
 from itertools import combinations
 from concurrent.futures import ThreadPoolExecutor
 from discord.ext import commands, tasks
 from discord import ui
 from dotenv import load_dotenv
 from firebase_admin import firestore
-from commands import attach_commands
-from mmr_manager import adjust_mmr, get_inhouse_mmr, get_top_players
-from betting_manager import (
+import bot.storage.firebase_setup  # ensures Firebase is initialized before anything else
+from bot.commands.commands import attach_commands
+from bot.services.mmr_manager import adjust_mmr, get_inhouse_mmr, get_top_players
+from bot.services.betting_manager import (
     clear_guild_bets,
     get_balance,
     place_bet,
@@ -41,9 +41,9 @@ from betting_manager import (
     get_active_double_down_users,
     clear_active_double_downs,
 )
-from match_tracker import fetch_match_result
-from immortal_draft import ImmortalDraftSession, Candidate, set_cancel_callback
-from processed_match_log import (
+from bot.services.match_tracker import fetch_match_result
+from bot.services.immortal_draft import ImmortalDraftSession, Candidate, set_cancel_callback
+from bot.services.processed_match_log import (
     get_bound_league_id,
     get_processed_match,
     is_match_processed,
@@ -116,7 +116,7 @@ STORE_ITEM_ALIASES = {
     },
 }
 
-HERO_CACHE_FILE = "hero_id_map.json"
+HERO_CACHE_FILE = os.path.join(os.path.dirname(__file__), "bot", "data", "hero_id_map.json")
 hero_id_map = {}
 if os.path.exists(HERO_CACHE_FILE):
     try:
