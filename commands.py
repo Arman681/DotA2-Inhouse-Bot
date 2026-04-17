@@ -54,6 +54,10 @@ def attach_commands(bot, deps):
     format_live_match_embed      = deps["format_live_match_embed"]
     map_steam_ids_to_discord_ids = deps["map_steam_ids_to_discord_ids"]
     fetch_match_result           = deps["fetch_match_result"]
+    get_bound_league_id          = deps["get_bound_league_id"]
+    get_processed_match          = deps["get_processed_match"]
+    is_match_processed           = deps["is_match_processed"]
+    log_processed_match          = deps["log_processed_match"]
 
     # In-memory state dicts (same ones you already maintain)
     active_match_ids            = deps["active_match_ids"]
@@ -1438,6 +1442,13 @@ def attach_commands(bot, deps):
         if not match_id.isdigit():
             await ctx.reply("Match ID must be a number.")
             return
+        if is_match_processed(ctx.guild.id, match_id):
+            existing = get_processed_match(ctx.guild.id, match_id) or {}
+            await ctx.reply(
+                f"Match `{match_id}` was already processed earlier "
+                f"(source: `{existing.get('source', 'unknown')}`)."
+            )
+            return
         result = fetch_match_result(match_id)
         if not result:
             await ctx.reply("Could not fetch match result. Check the match ID.")
@@ -1456,6 +1467,20 @@ def attach_commands(bot, deps):
                 update_balance(ctx.guild.id, discord_id, 50)
             except Exception as e:
                 print(f"[ERROR] Failed to award Feederbucks to user {discord_id}: {e}")
+        try:
+            log_processed_match(
+                ctx.guild.id,
+                match_id,
+                league_id=get_bound_league_id(ctx.guild.id),
+                source="submitmatch",
+                processors=["betting", "inhouse_mmr", "feederbucks"],
+                winning_team=winning_team,
+                random_mode=False,
+                processed_by=str(ctx.author),
+                player_count=len(all_player_ids),
+            )
+        except Exception as e:
+            print(f"[submitmatch] Failed to log processed match {match_id}: {e}")
         await ctx.reply(f"Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\nAll participants received **50 Feederbucks** for playing.")
     @submitmatch.error
     async def submitmatch_error(ctx, error):
