@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 def from_opendota(steam_id: int):
     # Convert to 32-bit only if it's a 64-bit SteamID
     if steam_id > 76561197960265728:
@@ -28,9 +29,10 @@ def from_opendota(steam_id: int):
         "leaderboard_rank": leaderboard_rank
     }
 
+
 def main():
     if len(sys.argv) != 2 or not sys.argv[1].isdigit():
-        print("Usage: python run_public_player_rank.py <steam_id_64_or_account_id>")
+        print("Usage: python scripts/run_public_player_rank.py <steam_id_64_or_account_id>")
         sys.exit(1)
 
     steam_id = int(sys.argv[1])
@@ -39,6 +41,7 @@ def main():
         print(f"Player {steam_id} → rank tier: {data['rank_tier']}, leaderboard rank: {data['leaderboard_rank']}")
     except Exception as e:
         print(f"Error fetching player rank: {e}")
+
 
 if __name__ == "__main__":
     main()

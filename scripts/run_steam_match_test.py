@@ -11,6 +11,7 @@ STEAM_API_KEY = os.getenv("STEAM_API_KEY")
 HISTORY_URL = "https://api.steampowered.com/IDOTA2Match_570/GetMatchHistory/v1"
 DETAILS_URL = "https://api.steampowered.com/IDOTA2Match_570/GetMatchDetails/v1"
 
+
 def get_recent_matches():
     params = {
         "key": STEAM_API_KEY,
@@ -23,6 +24,7 @@ def get_recent_matches():
         sys.exit(1)
     matches = resp.json().get("result", {}).get("matches", [])
     return [m["match_id"] for m in matches]
+
 
 def get_match_winner(match_id):
     params = {
@@ -39,6 +41,7 @@ def get_match_winner(match_id):
         print(f"[{match_id}] ❌ No winner info")
         return None
     return radiant_win
+
 
 if __name__ == "__main__":
     matches = get_recent_matches()
