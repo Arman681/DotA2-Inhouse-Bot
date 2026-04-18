@@ -412,9 +412,16 @@ def attach_commands(bot, deps):
                 net_delta = int(bet.get("net_delta", 0))
                 sign = "+" if net_delta > 0 else ""
                 team = str(bet.get("team", "unknown")).title()
-                bet_lines.append(
-                    f"**{name}**: bet `{amount}` on `{team}`, result `{sign}{net_delta}`"
-                )
+                balance_before = bet.get("balance_before")
+                balance_after = bet.get("balance_after")
+                if balance_before is not None and balance_after is not None:
+                    bet_lines.append(
+                        f"**{name}**: bet `{amount}` on `{team}`, result `{sign}{net_delta}` (`{int(balance_before)}` -> `{int(balance_after)}`)"
+                    )
+                else:
+                    bet_lines.append(
+                        f"**{name}**: bet `{amount}` on `{team}`, result `{sign}{net_delta}`"
+                    )
             embed.add_field(
                 name="Bets",
                 value=truncate_embed_field("\n".join(bet_lines)),
