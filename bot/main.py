@@ -559,6 +559,8 @@ async def on_raw_reaction_add(payload):
             print(f"[on_raw_reaction_add] Ignoring 🚀 press in guild {guild_id} (match already active).")
             await message.remove_reaction(payload.emoji, user)
             return
+        if not await user_is_admin_or_has_role(user):
+            return
         # Lock this guild's rocket press
         rocket_lock[guild_id] = True
         try:
