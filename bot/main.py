@@ -115,6 +115,11 @@ from bot.services.processed_match_log import (
     is_match_processed,
     log_processed_match,
 )
+from bot.services.match_ledger_service import (
+    get_all_match_ledgers,
+    get_recent_match_ledgers,
+    log_match_ledger,
+)
 from bot.ui.manual_captain_select import (
     ManualCaptainSelectView,
     configure_manual_captain_select,
@@ -812,6 +817,8 @@ configure_live_tracking(
     is_match_processed_fn=is_match_processed,
     log_processed_match_fn=log_processed_match,
     get_bound_league_id_fn=get_bound_league_id,
+    log_match_ledger_fn=log_match_ledger,
+    get_discord_id_from_steam_id_fn=get_discord_id_from_steam_id,
 )
 
 deps = {
@@ -905,6 +912,9 @@ deps = {
     "get_processed_match": get_processed_match,
     "is_match_processed": is_match_processed,
     "log_processed_match": log_processed_match,
+    "log_match_ledger": log_match_ledger,
+    "get_all_match_ledgers": get_all_match_ledgers,
+    "get_recent_match_ledgers": get_recent_match_ledgers,
     "save_preferred_roles_setting": save_preferred_roles_setting,
 }
 set_cancel_callback(handle_immortal_draft_cancel)
