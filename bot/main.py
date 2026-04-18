@@ -516,7 +516,10 @@ async def on_raw_reaction_add(payload):
     original_teams.setdefault(guild_id, None)
     if emoji == "👍":
         if len(lobby_players[guild_id]) >= 10:
-            await channel.send(f"{user.mention}, the lobby is already full (10/10). Please wait for someone to leave.")
+            await channel.send(
+                f"{user.mention}, the lobby is already full (10/10). Please wait for someone to leave.",
+                delete_after=8,
+            )
             await message.remove_reaction(payload.emoji, user)
             return
         if not any(uid == user.id for uid, _, _ in lobby_players[guild_id]):
