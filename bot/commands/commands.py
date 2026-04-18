@@ -2,6 +2,7 @@
 import asyncio
 import math
 import time
+from datetime import datetime, timezone
 import discord
 import re
 import shlex
@@ -58,6 +59,9 @@ def attach_commands(bot, deps):
     get_processed_match          = deps["get_processed_match"]
     is_match_processed           = deps["is_match_processed"]
     log_processed_match          = deps["log_processed_match"]
+    log_match_ledger            = deps["log_match_ledger"]
+    get_all_match_ledgers       = deps["get_all_match_ledgers"]
+    get_recent_match_ledgers    = deps["get_recent_match_ledgers"]
 
     # In-memory state dicts (same ones you already maintain)
     active_match_ids            = deps["active_match_ids"]
@@ -224,6 +228,252 @@ def attach_commands(bot, deps):
         @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
         async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
             total_pages = max(1, math.ceil(len(self.players) / LEADERBOARD_PAGE_SIZE))
+            if self.page_index < total_pages - 1:
+                self.page_index += 1
+            await self.refresh(interaction)
+
+    LEDGER_PAGE_SIZE = 1
+    LEDGER_MAX_PAGES = 5
+
+    def format_ledger_timestamp(value):
+        if hasattr(value, "to_datetime"):
+            value = value.to_datetime()
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return discord.utils.format_dt(value, style="f")
+        return "Unknown"
+
+    def truncate_embed_field(text: str, limit: int = 1024):
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
+    def format_compact_number(value):
+        value = int(value or 0)
+        if abs(value) >= 1000:
+            return f"{value / 1000:.1f}k"
+        return str(value)
+
+    def build_ledger_player_stats(guild, raw_player_stats):
+        results = []
+        for stat in raw_player_stats or []:
+            steam_id = str(stat.get("steam_id", ""))
+            discord_id = stat.get("user_id") or (get_discord_id_from_steam_id(steam_id) if steam_id else None)
+            member = guild.get_member(int(discord_id)) if discord_id and str(discord_id).isdigit() else None
+            nickname = member.display_name if member else (stat.get("nickname") or (str(discord_id) if discord_id else steam_id))
+            enriched = dict(stat)
+            enriched["steam_id"] = steam_id
+            enriched["user_id"] = str(discord_id) if discord_id else None
+            enriched["nickname"] = nickname
+            results.append(enriched)
+        return results
+
+    def compute_kda(stat):
+        kills = int(stat.get("kills", 0) or 0)
+        assists = int(stat.get("assists", 0) or 0)
+        deaths = int(stat.get("deaths", 0) or 0)
+        return round((kills + assists) / max(1, deaths), 2)
+
+    def get_best_stat_entries(guild, entries):
+        categories = {
+            "Best KDA": {
+                "value_fn": compute_kda,
+                "format_fn": lambda stat: f"{compute_kda(stat):.2f}",
+            },
+            "Highest GPM": {
+                "value_fn": lambda stat: int(stat.get("gpm", 0) or 0),
+                "format_fn": lambda stat: f"{int(stat.get('gpm', 0) or 0)}",
+            },
+            "Highest XPM": {
+                "value_fn": lambda stat: int(stat.get("xpm", 0) or 0),
+                "format_fn": lambda stat: f"{int(stat.get('xpm', 0) or 0)}",
+            },
+            "Highest Avg APM": {
+                "value_fn": lambda stat: int(stat.get("avg_apm", 0) or 0),
+                "format_fn": lambda stat: f"{int(stat.get('avg_apm', 0) or 0)}",
+            },
+            "Highest Hero Damage": {
+                "value_fn": lambda stat: int(stat.get("hero_damage", 0) or 0),
+                "format_fn": lambda stat: format_compact_number(stat.get("hero_damage", 0)),
+            },
+            "Highest Building Damage": {
+                "value_fn": lambda stat: int(stat.get("building_damage", 0) or 0),
+                "format_fn": lambda stat: format_compact_number(stat.get("building_damage", 0)),
+            },
+        }
+        best = {}
+        for entry in entries:
+            processed_at = entry.get("processed_at")
+            match_id = entry.get("match_id", "Unknown")
+            for stat in build_ledger_player_stats(guild, entry.get("player_stats") or []):
+                user_id = str(stat.get("user_id") or "")
+                member = guild.get_member(int(user_id)) if user_id.isdigit() else None
+                name = member.display_name if member else stat.get("nickname") or stat.get("steam_id") or "Unknown"
+                for label, cfg in categories.items():
+                    value = cfg["value_fn"](stat)
+                    current = best.get(label)
+                    if current is None or value > current["sort_value"]:
+                        best[label] = {
+                            "label": label,
+                            "player_name": name,
+                            "display_value": cfg["format_fn"](stat),
+                            "sort_value": value,
+                            "match_id": match_id,
+                            "processed_at": processed_at,
+                        }
+        return best
+
+    def build_topstats_embed(guild, best_entries, requester_name: str):
+        embed = discord.Embed(
+            title="Top Match Stats",
+            description=f"Best recorded player performances for **{guild.name}**",
+            color=discord.Color.green(),
+        )
+        ordered_labels = [
+            "Best KDA",
+            "Highest GPM",
+            "Highest XPM",
+            "Highest Avg APM",
+            "Highest Hero Damage",
+            "Highest Building Damage",
+        ]
+        for label in ordered_labels:
+            item = best_entries.get(label)
+            if not item:
+                embed.add_field(name=label, value="No data recorded yet.", inline=False)
+                continue
+            timestamp_text = format_ledger_timestamp(item.get("processed_at"))
+            embed.add_field(
+                name=label,
+                value=(
+                    f"**{item['player_name']}** — `{item['display_value']}`\n"
+                    f"Match `{item['match_id']}` • {timestamp_text}"
+                ),
+                inline=False,
+            )
+        embed.set_footer(text=f"Requested by {requester_name}")
+        return embed
+
+    def build_ledger_embed(guild, entries, page_index: int, requester_name: str):
+        total_pages = max(1, min(len(entries), LEDGER_MAX_PAGES))
+        entry = entries[page_index]
+        match_id = entry.get("match_id", "Unknown")
+        winning_team = (entry.get("winning_team") or "unknown").title()
+        source = entry.get("source", "unknown")
+        league_id = entry.get("league_id") or "N/A"
+        timestamp_text = format_ledger_timestamp(entry.get("processed_at"))
+        mmr_changes = entry.get("mmr_changes") or []
+        bet_results = entry.get("bet_results") or []
+        embed = discord.Embed(
+            title="Match Ledger",
+            description=(
+                f"Ledger for **{guild.name}**\n"
+                f"**Match ID:** `{match_id}`\n"
+                f"**Date/Time:** {timestamp_text}\n"
+                f"**Winning Team:** `{winning_team}`\n"
+                f"**League ID:** `{league_id}`\n"
+                f"**Source:** `{source}`"
+            ),
+            color=discord.Color.blurple(),
+        )
+        if mmr_changes:
+            mmr_lines = []
+            for change in mmr_changes:
+                user_id = str(change.get("user_id", ""))
+                member = guild.get_member(int(user_id)) if user_id.isdigit() else None
+                name = member.display_name if member else change.get("nickname") or f"User {user_id}"
+                delta = int(change.get("delta", 0))
+                old_mmr = int(change.get("old_mmr", 0))
+                new_mmr = int(change.get("new_mmr", 0))
+                doubled = " x2" if change.get("doubled") else ""
+                sign = "+" if delta > 0 else ""
+                mmr_lines.append(
+                    f"**{name}**: `{sign}{delta}` MMR{doubled} (`{old_mmr}` -> `{new_mmr}`)"
+                )
+            embed.add_field(
+                name="Inhouse MMR",
+                value=truncate_embed_field("\n".join(mmr_lines)),
+                inline=False,
+            )
+        else:
+            embed.add_field(
+                name="Inhouse MMR",
+                value="No inhouse MMR adjustments were recorded for this match.",
+                inline=False,
+            )
+        if bet_results:
+            bet_lines = []
+            for bet in bet_results:
+                user_id = str(bet.get("user_id", ""))
+                member = guild.get_member(int(user_id)) if user_id.isdigit() else None
+                name = member.display_name if member else bet.get("nickname") or f"User {user_id}"
+                amount = int(bet.get("amount", 0))
+                net_delta = int(bet.get("net_delta", 0))
+                sign = "+" if net_delta > 0 else ""
+                team = str(bet.get("team", "unknown")).title()
+                bet_lines.append(
+                    f"**{name}**: bet `{amount}` on `{team}`, result `{sign}{net_delta}`"
+                )
+            embed.add_field(
+                name="Bets",
+                value=truncate_embed_field("\n".join(bet_lines)),
+                inline=False,
+            )
+        else:
+            embed.add_field(
+                name="Bets",
+                value="No bets were recorded for this match.",
+                inline=False,
+            )
+        embed.set_footer(text=f"Page {page_index + 1}/{total_pages} • Requested by {requester_name}")
+        return embed
+
+    class LedgerView(discord.ui.View):
+        def __init__(self, author_id: int, guild, entries, requester_name: str):
+            super().__init__(timeout=600)
+            self.author_id = author_id
+            self.guild = guild
+            self.entries = entries[:LEDGER_MAX_PAGES]
+            self.requester_name = requester_name
+            self.page_index = 0
+            self.message = None
+            self.sync_buttons()
+        def sync_buttons(self):
+            total_pages = max(1, len(self.entries))
+            self.prev_page.disabled = self.page_index <= 0
+            self.next_page.disabled = self.page_index >= total_pages - 1
+        async def interaction_check(self, interaction: discord.Interaction) -> bool:
+            if interaction.user.id != self.author_id:
+                await interaction.response.send_message(
+                    "Only the user who opened this ledger can change pages.",
+                    ephemeral=True
+                )
+                return False
+            return True
+        async def refresh(self, interaction: discord.Interaction):
+            self.sync_buttons()
+            await interaction.response.edit_message(
+                embed=build_ledger_embed(self.guild, self.entries, self.page_index, self.requester_name),
+                view=self
+            )
+        async def on_timeout(self):
+            for child in self.children:
+                child.disabled = True
+            if self.message:
+                try:
+                    await self.message.edit(view=self)
+                except Exception:
+                    pass
+        @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+        async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if self.page_index > 0:
+                self.page_index -= 1
+            await self.refresh(interaction)
+
+        @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+        async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+            total_pages = max(1, len(self.entries))
             if self.page_index < total_pages - 1:
                 self.page_index += 1
             await self.refresh(interaction)
@@ -395,6 +645,38 @@ def attach_commands(bot, deps):
             view=view
         )
         view.message = message
+
+    @bot.command(name="ledger")
+    async def ledger(ctx):
+        entries = get_recent_match_ledgers(ctx.guild.id, limit=LEDGER_MAX_PAGES)
+        if not entries:
+            await ctx.reply("No ledger data found for this server yet.")
+            return
+        view = LedgerView(
+            author_id=ctx.author.id,
+            guild=ctx.guild,
+            entries=entries,
+            requester_name=ctx.author.display_name,
+        )
+        message = await ctx.reply(
+            embed=build_ledger_embed(ctx.guild, entries, 0, ctx.author.display_name),
+            view=view
+        )
+        view.message = message
+
+    @bot.command(name="topstats")
+    async def topstats(ctx):
+        entries = get_all_match_ledgers(ctx.guild.id)
+        if not entries:
+            await ctx.reply("No match data found for this server yet.")
+            return
+        best_entries = get_best_stat_entries(ctx.guild, entries)
+        if not best_entries:
+            await ctx.reply("No player stat data has been recorded yet.")
+            return
+        await ctx.reply(
+            embed=build_topstats_embed(ctx.guild, best_entries, ctx.author.display_name)
+        )
 
     @commands.cooldown(1, 5, commands.BucketType.user)  # 1 use / 5s per user
     @bot.command(name="bet")
@@ -1467,13 +1749,14 @@ def attach_commands(bot, deps):
         if not result:
             await ctx.reply("Could not fetch match result. Check the match ID.")
             return
+        player_stats = build_ledger_player_stats(ctx.guild, result.get("player_stats", []))
         winner_ids = map_steam_ids_to_discord_ids(result["radiantplayers"] if result["radiant_win"] else result["direplayers"])
         loser_ids = map_steam_ids_to_discord_ids(result["direplayers"] if result["radiant_win"] else result["radiantplayers"])
         winning_team = "radiant" if result["radiant_win"] else "dire"
         doubled_user_ids = get_active_double_down_users(ctx.guild.id)
-        await adjust_mmr(bot, winner_ids, loser_ids, ctx.guild.id, doubled_user_ids=doubled_user_ids)
+        mmr_changes = await adjust_mmr(bot, winner_ids, loser_ids, ctx.guild.id, doubled_user_ids=doubled_user_ids)
         clear_active_double_downs(ctx.guild.id)
-        resolve_bets(ctx.guild.id, winning_team)
+        bet_results = resolve_bets(ctx.guild.id, winning_team)
         clear_guild_bets(ctx.guild.id)
         all_player_ids = winner_ids + loser_ids
         for discord_id in all_player_ids:
@@ -1495,6 +1778,21 @@ def attach_commands(bot, deps):
             )
         except Exception as e:
             print(f"[submitmatch] Failed to log processed match {match_id}: {e}")
+        try:
+            log_match_ledger(
+                ctx.guild.id,
+                match_id,
+                league_id=get_bound_league_id(ctx.guild.id),
+                source="submitmatch",
+                winning_team=winning_team,
+                random_mode=False,
+                processed_by=str(ctx.author),
+                mmr_changes=mmr_changes,
+                bet_results=bet_results,
+                player_stats=player_stats,
+            )
+        except Exception as e:
+            print(f"[submitmatch] Failed to log ledger entry for match {match_id}: {e}")
         await ctx.reply(f"Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\nAll participants received **50 Feederbucks** for playing.")
     @submitmatch.error
     async def submitmatch_error(ctx, error):
@@ -1878,6 +2176,8 @@ def attach_commands(bot, deps):
                     "**!inhouse_mmr `[@user]`** - Show inhouse MMR for yourself or another user.\n"
                     "**!balance `[@user]`** - Show your or another user's Feederbucks balance.\n"
                     "**!leaderboard** - View top 10 inhouse MMR players in this server.\n"
+                    "**!ledger** - View the last 5 processed matches with MMR and bet results.\n"
+                    "**!topstats** - View the best recorded player stats from logged matches.\n"
                     "**!send `<amount>` `<@user>`** - Send Feederbucks to another user in the server.\n"
                     "**!livematch** - Recall and refresh the live match embed in the channel (30s cooldown).\n\n"
                    
