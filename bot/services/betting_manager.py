@@ -104,12 +104,17 @@ def clear_active_double_downs(guild_id):
 
 def place_bet(user_id, team, amount, delta, guild_id, nickname):
     entry_ref = db.collection("bets").document(str(guild_id)).collection("entries").document(str(user_id))
+    balance_before_bet = int(get_balance(guild_id, user_id, nickname) or 0)
+    wager_delta = int(delta or 0)
+    balance_after_bet = balance_before_bet - wager_delta
     update_balance(guild_id, user_id, -delta, nickname)
     entry_ref.set({
         "nickname": nickname,
         "user_id": str(user_id),
         "team": team,
-        "amount": amount,
+        "amount": int(amount or 0),
+        "balance_before_bet": balance_before_bet,
+        "balance_after_bet": balance_after_bet,
         "timestamp": firestore.SERVER_TIMESTAMP
     })
     return True
@@ -126,13 +131,16 @@ def resolve_bets(guild_id, winning_team):
         nickname = data.get("nickname", "Unknown")
         team = data.get("team")
         amount = int(data.get("amount", 0) or 0)
+        balance_before_bet = int(data.get("balance_before_bet", get_balance(guild_id, user_id, nickname) if user_id else 1000) or 0)
+        balance_after_bet = int(data.get("balance_after_bet", balance_before_bet - amount) or 0)
         if not user_id or not team:
             print(f"[WARN] Missing data in doc {doc.id}")
             batch.delete(doc.reference)
             continue
         if team == winning_team:
             wallet_ref = db.collection("wallets").document(str(guild_id)).collection("users").document(str(user_id))
-            batch.set(wallet_ref, {"balance": firestore.Increment(amount * 2), "nickname": nickname}, merge=True)
+            final_balance = balance_after_bet + (amount * 2)
+            batch.set(wallet_ref, {"balance": final_balance, "nickname": nickname}, merge=True)
             logs.append(("win", user_id, amount, team, nickname))
             results.append({
                 "user_id": str(user_id),
@@ -142,6 +150,8 @@ def resolve_bets(guild_id, winning_team):
                 "won": True,
                 "net_delta": amount,
                 "gross_payout": amount * 2,
+                "balance_before": balance_before_bet,
+                "balance_after": final_balance,
             })
         else:
             logs.append(("lose", user_id, amount, team, nickname))
@@ -153,6 +163,8 @@ def resolve_bets(guild_id, winning_team):
                 "won": False,
                 "net_delta": -amount,
                 "gross_payout": 0,
+                "balance_before": balance_before_bet,
+                "balance_after": balance_after_bet,
             })
         batch.delete(doc.reference)
     batch.commit()
