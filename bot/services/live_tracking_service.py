@@ -44,6 +44,8 @@ get_processed_match = None
 is_match_processed = None
 log_processed_match = None
 get_bound_league_id = None
+log_match_ledger = None
+get_discord_id_from_steam_id = None
 
 
 def configure_live_tracking(
@@ -65,12 +67,14 @@ def configure_live_tracking(
     is_match_processed_fn,
     log_processed_match_fn,
     get_bound_league_id_fn,
+    log_match_ledger_fn,
+    get_discord_id_from_steam_id_fn,
 ):
     global bot, db, steam_api_key, stratz_token, get_http_session
     global format_live_match_embed, fetch_match_result, map_steam_ids_to_discord_ids
     global resolve_bets, get_active_double_down_users, adjust_mmr, clear_active_double_downs
     global update_balance, get_processed_match, is_match_processed, log_processed_match
-    global get_bound_league_id
+    global get_bound_league_id, log_match_ledger, get_discord_id_from_steam_id
     bot = bot_instance
     db = db_client
     steam_api_key = steam_api_key_value
@@ -88,6 +92,8 @@ def configure_live_tracking(
     is_match_processed = is_match_processed_fn
     log_processed_match = log_processed_match_fn
     get_bound_league_id = get_bound_league_id_fn
+    log_match_ledger = log_match_ledger_fn
+    get_discord_id_from_steam_id = get_discord_id_from_steam_id_fn
 
 
 def clear_match_tracking_state(guild_id: int):
@@ -99,6 +105,21 @@ def clear_match_tracking_state(guild_id: int):
     _last_fetch_stats.pop(guild_id, None)
     _last_active_match_id.pop(guild_id, None)
     _last_selected_match_id.pop(guild_id, None)
+
+
+def build_ledger_player_stats(guild, raw_player_stats):
+    results = []
+    for stat in raw_player_stats or []:
+        steam_id = str(stat.get("steam_id", ""))
+        discord_id = get_discord_id_from_steam_id(steam_id) if steam_id else None
+        member = guild.get_member(int(discord_id)) if discord_id and guild else None
+        nickname = member.display_name if member else (str(discord_id) if discord_id else steam_id)
+        enriched = dict(stat)
+        enriched["steam_id"] = steam_id
+        enriched["user_id"] = str(discord_id) if discord_id else None
+        enriched["nickname"] = nickname
+        results.append(enriched)
+    return results
 
 
 async def poll_live_match(match_id, guild, random_mode=False):
@@ -157,11 +178,13 @@ async def poll_live_match(match_id, guild, random_mode=False):
     winning_team = "radiant" if result["radiant_win"] else "dire"
     winner_ids = map_steam_ids_to_discord_ids(result["radiantplayers"] if result["radiant_win"] else result["direplayers"])
     loser_ids = map_steam_ids_to_discord_ids(result["direplayers"] if result["radiant_win"] else result["radiantplayers"])
-    resolve_bets(guild.id, winning_team)
+    player_stats = build_ledger_player_stats(guild, result.get("player_stats", []))
+    bet_results = resolve_bets(guild.id, winning_team)
+    mmr_changes = []
     if not random_mode:
         try:
             doubled_user_ids = get_active_double_down_users(guild.id)
-            await adjust_mmr(bot, winner_ids, loser_ids, guild.id, doubled_user_ids=doubled_user_ids)
+            mmr_changes = await adjust_mmr(bot, winner_ids, loser_ids, guild.id, doubled_user_ids=doubled_user_ids)
             clear_active_double_downs(guild.id)
         except Exception as e:
             print(f"[poll_live_match] Failed to adjust MMR: {e}")
@@ -184,6 +207,21 @@ async def poll_live_match(match_id, guild, random_mode=False):
         )
     except Exception as e:
         print(f"[poll_live_match] Failed to log processed match {match_id}: {e}")
+    try:
+        log_match_ledger(
+            guild.id,
+            match_id,
+            league_id=None if random_mode else get_bound_league_id(guild.id),
+            source="auto_poll",
+            winning_team=winning_team,
+            random_mode=random_mode,
+            processed_by="system",
+            mmr_changes=mmr_changes,
+            bet_results=bet_results,
+            player_stats=player_stats,
+        )
+    except Exception as e:
+        print(f"[poll_live_match] Failed to log ledger entry for match {match_id}: {e}")
     print(f"[poll_live_match] Awarded 50 Feederbucks to {len(all_player_ids)} participants in match {match_id}")
     try:
         await channel.send(f"Match `{match_id}` has ended with a {winning_team} victory. Bets have been resolved and Inhouse-MMR updated.\n All participants received **50 Feederbucks** for playing.")
