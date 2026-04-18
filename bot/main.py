@@ -436,6 +436,7 @@ async def on_ready():
         fetch_match_result,
         get_discord_id_from_steam_id,
         bot,
+        [str(guild.id) for guild in bot.guilds],
     )
     # Cache hero IDs
     hero_id_map = await fetch_hero_id_to_name_map()
