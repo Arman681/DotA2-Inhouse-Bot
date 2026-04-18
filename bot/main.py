@@ -116,6 +116,7 @@ from bot.services.processed_match_log import (
     log_processed_match,
 )
 from bot.services.match_ledger_service import (
+    migrate_processed_matches_to_match_data,
     get_all_match_ledgers,
     get_recent_match_ledgers,
     log_match_ledger,
@@ -430,6 +431,12 @@ async def on_ready():
     print(f"{bot.user} is online!")
     active_match_ids.clear()
     clear_all_bets(bot)
+    await asyncio.to_thread(
+        migrate_processed_matches_to_match_data,
+        fetch_match_result,
+        get_discord_id_from_steam_id,
+        bot,
+    )
     # Cache hero IDs
     hero_id_map = await fetch_hero_id_to_name_map()
     # Load live_channel_ids from Firestore
