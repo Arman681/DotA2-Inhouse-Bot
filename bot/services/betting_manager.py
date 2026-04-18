@@ -1,14 +1,13 @@
 import bot.storage.firebase_setup  # ensures Firebase is initialized before anything else
 from firebase_admin import firestore
-from datetime import datetime
-import re
 
 db = firestore.client()
 
 DD_TOKEN_COST = 1000
 
+
 # ====================================
-# 🔹 WALLET FUNCTIONS
+# Wallet Functions
 # ====================================
 
 def get_balance(guild_id, user_id, nickname=None):
@@ -17,7 +16,6 @@ def get_balance(guild_id, user_id, nickname=None):
     snap = ref.get()
     if snap.exists:
         return snap.to_dict().get("balance", 1000)
-    # Auto-seed
     payload = {"balance": 1000}
     if nickname:
         payload["nickname"] = nickname
@@ -31,7 +29,6 @@ def update_balance(guild_id, user_id, delta, nickname=None):
     if snap.exists and isinstance(snap.to_dict(), dict):
         current = snap.to_dict().get("balance", 1000)
     else:
-        # Seed brand-new wallets at 1000 to match get_balance()
         current = 1000
     new_balance = int(current) + int(delta)
     payload = {"balance": new_balance}
@@ -40,7 +37,7 @@ def update_balance(guild_id, user_id, delta, nickname=None):
     ref.set(payload, merge=True)
 
 # ====================================
-# 🔹 DOUBLE DOWN TOKEN FUNCTIONS
+# Double Down Token Functions
 # ====================================
 
 def get_dd_token_balance(guild_id, user_id, nickname=None):
@@ -99,10 +96,10 @@ def clear_active_double_downs(guild_id):
     for doc in docs:
         batch.delete(doc.reference)
     batch.commit()
-    print(f"[CLEAR] ✅ Deleted all active double downs for guild {guild_id}")
+    print(f"[CLEAR] Deleted all active double downs for guild {guild_id}")
 
 # ====================================
-# 🔹 BETTING FUNCTIONS
+# Betting Functions
 # ====================================
 
 def place_bet(user_id, team, amount, delta, guild_id, nickname):
@@ -121,38 +118,53 @@ def resolve_bets(guild_id, winning_team):
     entries = list(db.collection("bets").document(str(guild_id)).collection("entries").stream())
     print(f"[RESOLVE_BETS] Resolving {len(entries)} bets for guild: {guild_id}")
     batch = db.batch()
-    logs = [] # collect messages to send after commit: (outcome, user_id, amount, team)
+    logs = []
+    results = []
     for doc in entries:
         data = doc.to_dict()
         user_id = data.get("user_id")
         nickname = data.get("nickname", "Unknown")
         team = data.get("team")
-        amount = data.get("amount", 0)
+        amount = int(data.get("amount", 0) or 0)
         if not user_id or not team:
             print(f"[WARN] Missing data in doc {doc.id}")
             batch.delete(doc.reference)
             continue
+        if team == winning_team:
+            wallet_ref = db.collection("wallets").document(str(guild_id)).collection("users").document(str(user_id))
+            batch.set(wallet_ref, {"balance": firestore.Increment(amount * 2), "nickname": nickname}, merge=True)
+            logs.append(("win", user_id, amount, team, nickname))
+            results.append({
+                "user_id": str(user_id),
+                "nickname": nickname,
+                "team": team,
+                "amount": amount,
+                "won": True,
+                "net_delta": amount,
+                "gross_payout": amount * 2,
+            })
         else:
-            if team == winning_team:
-                wallet_ref = db.collection("wallets").document(str(guild_id)).collection("users").document(str(user_id))
-                # stake + winnings in one atomic add, no read
-                batch.set(wallet_ref, {"balance": firestore.Increment(amount * 2), "nickname": nickname}, merge=True)
-                logs.append(("win", user_id, amount, team, nickname))
-            else:
-                logs.append(("lose", user_id, amount, team, nickname))
-            # clear the bet row either way
-            batch.delete(doc.reference)
-    # Commit all changes at once
+            logs.append(("lose", user_id, amount, team, nickname))
+            results.append({
+                "user_id": str(user_id),
+                "nickname": nickname,
+                "team": team,
+                "amount": amount,
+                "won": False,
+                "net_delta": -amount,
+                "gross_payout": 0,
+            })
+        batch.delete(doc.reference)
     batch.commit()
-    # Send logs to a designated channel or log them
     for outcome, user_id, amount, team, nickname in logs:
         if outcome == "win":
-            print(f"[RESOLVE_BETS] ✅ {nickname} ({user_id}) won {amount} on {team}")
+            print(f"[RESOLVE_BETS] WIN {nickname} ({user_id}) won {amount} on {team}")
         else:
-            print(f"[RESOLVE_BETS] ❌ {nickname} ({user_id}) lost {amount} on {team}")
+            print(f"[RESOLVE_BETS] LOSE {nickname} ({user_id}) lost {amount} on {team}")
+    return results
 
 # ====================================
-# 🔹 CLEANUP FUNCTIONS
+# Cleanup Functions
 # ====================================
 
 def clear_guild_bets(guild_id):
@@ -161,7 +173,7 @@ def clear_guild_bets(guild_id):
     for entry in entries_ref:
         batch.delete(entry.reference)
     batch.commit()
-    print(f"[CLEAR] ✅ Deleted all bets for guild {guild_id}")
+    print(f"[CLEAR] Deleted all bets for guild {guild_id}")
 
 def clear_all_bets(bot):
     for guild in bot.guilds:
@@ -170,4 +182,4 @@ def clear_all_bets(bot):
         for entry in entries:
             db.collection("bets").document(guild_id).collection("entries").document(entry.id).delete()
             print(f"[CLEAR] Deleted entry {entry.id} from guild {guild_id}")
-    print("[INIT] 🧹 Cleared ALL bets from Firestore on startup.")
+    print("[INIT] Cleared ALL bets from Firestore on startup.")
