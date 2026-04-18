@@ -1,9 +1,114 @@
-import os, requests
+import os
+import requests
 
 STRATZ_TOKEN = os.getenv("STRATZ_TOKEN")
 
+
+def _is_radiant_opendota_player(player):
+    return bool(player.get("isRadiant")) if "isRadiant" in player else int(player.get("player_slot", 0)) < 128
+
+
+def _average_int(values):
+    cleaned = [int(v) for v in (values or []) if v is not None]
+    if not cleaned:
+        return None
+    return round(sum(cleaned) / len(cleaned))
+
+
+def _build_stratz_result(match_json):
+    players = match_json.get("players", []) or []
+    radiantplayers = [str(p["steamAccountId"]) for p in players if p.get("isRadiant")]
+    direplayers = [str(p["steamAccountId"]) for p in players if not p.get("isRadiant")]
+    player_stats = []
+
+    for player in players:
+        steam_account_id = player.get("steamAccountId")
+        if steam_account_id is None:
+            continue
+
+        actions_per_minute = (
+            (player.get("stats") or {}).get("actionsPerMinute") or []
+        )
+        player_stats.append({
+            "steam_id": str(steam_account_id),
+            "is_radiant": bool(player.get("isRadiant")),
+            "kills": int(player.get("kills", 0) or 0),
+            "deaths": int(player.get("deaths", 0) or 0),
+            "assists": int(player.get("assists", 0) or 0),
+            "last_hits": int(player.get("numLastHits", 0) or 0),
+            "denies": int(player.get("numDenies", 0) or 0),
+            "net_worth": int(player.get("networth", 0) or 0),
+            "gpm": int(player.get("goldPerMinute", 0) or 0),
+            "xpm": int(player.get("experiencePerMinute", 0) or 0),
+            "hero_damage": int(player.get("heroDamage", 0) or 0),
+            "building_damage": int(player.get("towerDamage", 0) or 0),
+            "actions_per_minute_timeline": [int(v) for v in actions_per_minute if v is not None],
+            "avg_apm": _average_int(actions_per_minute),
+        })
+
+    return {
+        "radiant_win": bool(match_json.get("didRadiantWin")),
+        "radiantplayers": radiantplayers,
+        "direplayers": direplayers,
+        "player_stats": player_stats,
+    }
+
+
+def _build_opendota_result(match_json):
+    players = match_json.get("players", []) or []
+    radiantplayers = [
+        str(p["account_id"])
+        for p in players
+        if p.get("account_id") is not None and _is_radiant_opendota_player(p)
+    ]
+    direplayers = [
+        str(p["account_id"])
+        for p in players
+        if p.get("account_id") is not None and not _is_radiant_opendota_player(p)
+    ]
+    player_stats = []
+    for player in players:
+        account_id = player.get("account_id")
+        if account_id is None:
+            continue
+        player_stats.append({
+            "steam_id": str(account_id),
+            "is_radiant": _is_radiant_opendota_player(player),
+            "kills": int(player.get("kills", 0) or 0),
+            "deaths": int(player.get("deaths", 0) or 0),
+            "assists": int(player.get("assists", 0) or 0),
+            "last_hits": int(player.get("last_hits", 0) or 0),
+            "denies": int(player.get("denies", 0) or 0),
+            "net_worth": int(player.get("net_worth", player.get("total_gold", 0)) or 0),
+            "gpm": int(player.get("gold_per_min", 0) or 0),
+            "xpm": int(player.get("xp_per_min", 0) or 0),
+            "hero_damage": int(player.get("hero_damage", 0) or 0),
+            "building_damage": int(player.get("tower_damage", 0) or 0),
+            "total_dead_time": int(player.get("total_dead_time", 0) or 0),
+            "actions_per_minute_timeline": [],
+            "avg_apm": None,
+        })
+    return {
+        "radiant_win": bool(match_json.get("radiant_win")),
+        "radiantplayers": radiantplayers,
+        "direplayers": direplayers,
+        "player_stats": player_stats,
+    }
+
+
+def _fetch_opendota_result(match_id):
+    try:
+        r = requests.get(f"https://api.opendota.com/api/matches/{match_id}", timeout=7)
+        print("[OpenDota] code:", r.status_code)
+        if r.status_code == 200:
+            print("[match-result] source=OpenDota")
+            return _build_opendota_result(r.json())
+    except Exception as e:
+        print("[OpenDota] Exception:", e)
+    return None
+
+
 def fetch_match_result(match_id):
-    # ---- STRATZ (single try; no sleeps) ----
     try:
         url = "https://api.stratz.com/graphql"
         headers = {
@@ -17,51 +122,41 @@ def fetch_match_result(match_id):
               match(id: {match_id}) {{
                 id
                 didRadiantWin
-                players {{ 
-                    steamAccountId 
-                    isRadiant 
+                players {{
+                  steamAccountId
+                  isRadiant
+                  kills
+                  deaths
+                  assists
+                  numLastHits
+                  numDenies
+                  networth
+                  goldPerMinute
+                  experiencePerMinute
+                  heroDamage
+                  towerDamage
+                  stats {{
+                    actionsPerMinute
+                  }}
                 }}
               }}
             }}
             """
         }
-        resp = requests.post(url, json=query, headers=headers, timeout=6)
+        resp = requests.post(url, json=query, headers=headers, timeout=8)
         print("[STRATZ] code:", resp.status_code)
         if resp.status_code == 200:
-            m = resp.json().get("data", {}).get("match")
-            if m:  # indexed
-                radiant_win = bool(m["didRadiantWin"])
-                players = m.get("players", []) or []
-                radiantplayers = [str(p["steamAccountId"]) for p in players if p.get("isRadiant")]
-                direplayers    = [str(p["steamAccountId"]) for p in players if not p.get("isRadiant")]
+            match_data = resp.json().get("data", {}).get("match")
+            if match_data:
                 print("[match-result] source=STRATZ")
-                return {"radiant_win": radiant_win, "radiantplayers": radiantplayers, "direplayers": direplayers}
-            # 200 but no data → not indexed yet; let outer loop retry later
-            print("[STRATZ] 200 but no data → not indexed yet")
+                return _build_stratz_result(match_data)
+            print("[STRATZ] 200 but no data -> not indexed yet")
             return None
         if resp.status_code == 429:
-            # rate-limited; let outer loop wait and retry later
-            print("[STRATZ] 429 rate-limited → defer to outer retry")
+            print("[STRATZ] 429 rate-limited -> defer to outer retry")
             return None
-        # Non-200 (not 429) → try OpenDota once
-        print(f"[STRATZ] HTTP {resp.status_code} → will try OpenDota")
+        print(f"[STRATZ] HTTP {resp.status_code} -> will try OpenDota")
     except Exception as e:
         print("[STRATZ] Exception:", e)
-    # ---- OpenDota (single try; no sleeps) ----
-    try:
-        r = requests.get(f"https://api.opendota.com/api/matches/{match_id}", timeout=7)
-        print("[OpenDota] code:", r.status_code)
-        if r.status_code == 200:
-            j = r.json()
-            radiant_win = bool(j.get("radiant_win"))
-            players = j.get("players", []) or []
-            def is_radiant(p):
-                return bool(p.get("isRadiant")) if "isRadiant" in p else int(p.get("player_slot", 0)) < 128
-            radiantplayers = [str(p["account_id"]) for p in players if p.get("account_id") is not None and is_radiant(p)]
-            direplayers    = [str(p["account_id"]) for p in players if p.get("account_id") is not None and not is_radiant(p)]
-            print("[match-result] source=OpenDota")
-            return {"radiant_win": radiant_win, "radiantplayers": radiantplayers, "direplayers": direplayers}
-    except Exception as e:
-        print("[OpenDota] Exception:", e)
-    # 404/429/5xx or any failure → let outer loop retry later
-    return None
+
+    return _fetch_opendota_result(match_id)
