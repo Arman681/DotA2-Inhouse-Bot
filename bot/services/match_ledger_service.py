@@ -132,14 +132,20 @@ def migrate_processed_matches_to_match_data(
     fetch_match_result_fn=None,
     get_discord_id_from_steam_id_fn=None,
     bot_instance=None,
+    guild_ids=None,
 ):
     migrated = 0
     enriched = 0
     skipped = 0
     errors = 0
-    guild_docs = db.collection("processed_matches").stream()
-    for guild_doc in guild_docs:
-        guild_id = guild_doc.id
+    discovered_guild_ids = set()
+    if guild_ids:
+        discovered_guild_ids.update(str(gid) for gid in guild_ids if gid is not None)
+    else:
+        discovered_guild_ids.update(doc.id for doc in db.collection("guild_specific_info").stream())
+        discovered_guild_ids.update(doc.id for doc in db.collection("processed_matches").stream())
+
+    for guild_id in discovered_guild_ids:
         try:
             legacy_matches = _legacy_processed_collection(guild_id).stream()
             for legacy_doc in legacy_matches:
