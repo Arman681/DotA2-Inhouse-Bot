@@ -679,11 +679,8 @@ async def on_raw_reaction_add(payload):
         )
     elif emoji == "♻️" and len(lobby_players[guild_id]) == 10:
         mode = inhouse_mode.get(guild_id, "regular")
-        """# Get the member object from the guild
-        member = guild.get_member(payload.user_id)
-        # Check if they are admin or have special roles
-        if not await user_is_admin_or_has_role(member):
-            return"""
+        if not await user_is_admin_or_has_role(user):
+            return
         if immortal_draft_running.get(guild_id):
             return
         # REGULAR INHOUSE REROLL
