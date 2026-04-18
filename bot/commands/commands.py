@@ -455,7 +455,8 @@ def attach_commands(bot, deps):
         if not match:
             await ctx.reply("Could not retrieve live match info. Betting may be closed.")
             return
-        duration = match.get("scoreboard", {}).get("duration", 0)
+        scoreboard = match.get("scoreboard") or {}
+        duration = scoreboard.get("duration", 0)
         if is_random:
             start_time = match_tracking_start_times.get(ctx.guild.id)
             if start_time and (time.time() - start_time > 180):
@@ -503,7 +504,11 @@ def attach_commands(bot, deps):
         is_update = False
         if existing_bet_doc.exists:
             existing_bet = existing_bet_doc.to_dict()
-            previous_bet = existing_bet.get("amount", 0)
+            try:
+                previous_bet = int(existing_bet.get("amount", 0) or 0)
+            except (TypeError, ValueError):
+                await ctx.reply("Your existing bet amount is invalid in storage. Please contact an admin.")
+                return
             previous_team = existing_bet.get("team", "")
             if team != previous_team:
                 await ctx.reply(
@@ -519,7 +524,11 @@ def attach_commands(bot, deps):
             if not amount_is_all:
                 delta = amount - previous_bet
             is_update = True
-        current_balance = get_balance(ctx.guild.id, ctx.author.id, nickname=nickname)
+        try:
+            current_balance = int(get_balance(ctx.guild.id, ctx.author.id, nickname=nickname) or 0)
+        except (TypeError, ValueError):
+            await ctx.reply("Your wallet balance is invalid in storage. Please contact an admin.")
+            return
         if amount_is_all:
             amount = current_balance + previous_bet
             if amount <= previous_bet:
@@ -551,6 +560,11 @@ def attach_commands(bot, deps):
                 )
     @bet.error
     async def bet_error(ctx, error):
+        if isinstance(error, commands.CommandOnCooldown):
+            await ctx.reply(f"You're betting too fast. Try again in `{error.retry_after:.1f}` seconds.")
+            return
+        original = getattr(error, "original", error)
+        print(f"[bet_error] guild={getattr(ctx.guild, 'id', 'dm')} user={ctx.author.id} error={type(original).__name__}: {original}")
         await ctx.reply("An unexpected error occurred while placing your bet. Usage: `!bet [amount] [radiant|dire]`.")
 
     @bot.command(name="balance", aliases=["money", "feederbucks"])
