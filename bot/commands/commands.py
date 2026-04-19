@@ -151,9 +151,9 @@ def attach_commands(bot, deps):
 
     LEADERBOARD_PAGE_SIZE = 10
     MEDAL_EMOJIS = ["\U0001F947", "\U0001F948", "\U0001F949"]
-    PAGE_PREV_LABEL = "<"
-    PAGE_NEXT_LABEL = ">"
-    FOOTER_SEPARATOR = " | "
+    PAGE_PREV_LABEL = "\u25C0"
+    PAGE_NEXT_LABEL = "\u25B6"
+    FOOTER_SEPARATOR = " \u2022 "
 
     def build_leaderboard_embed(guild, players, page_index: int, requester_name: str):
         total_pages = max(1, math.ceil(len(players) / LEADERBOARD_PAGE_SIZE))
@@ -801,7 +801,7 @@ def attach_commands(bot, deps):
             await ctx.reply("No leaderboard data found for this server.")
             return
         embed_builder = lambda rows, page_index, requester_name: build_shared_ranked_embed(
-            "Inhouse Leaderboard",
+            "Inhouse MMR Leaderboard",
             ctx.guild,
             rows,
             page_index,
@@ -833,7 +833,7 @@ def attach_commands(bot, deps):
             rows,
             page_index,
             requester_name,
-            value_formatter=lambda row: f"`{row[2]:.2f}` AVG IMP (`{row[3]}` matches)",
+            value_formatter=lambda row: f"`{row[2]:.2f}` (`{row[3]}` matches)",
             description=(
                 f"Leaderboard for **{ctx.guild.name}**\n\n"
                 "**IMP:** Individual Match Performance by STRATZ"
