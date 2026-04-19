@@ -62,6 +62,8 @@ def attach_commands(bot, deps):
     log_match_ledger            = deps["log_match_ledger"]
     get_all_match_ledgers       = deps["get_all_match_ledgers"]
     get_recent_match_ledgers    = deps["get_recent_match_ledgers"]
+    schedule_match_imp_enrichment = deps["schedule_match_imp_enrichment"]
+    get_top_avg_imp_players       = deps["get_top_avg_imp_players"]
 
     # In-memory state dicts (same ones you already maintain)
     active_match_ids            = deps["active_match_ids"]
@@ -226,6 +228,81 @@ def attach_commands(bot, deps):
             await self.refresh(interaction)
 
         @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+        async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+            total_pages = max(1, math.ceil(len(self.players) / LEADERBOARD_PAGE_SIZE))
+            if self.page_index < total_pages - 1:
+                self.page_index += 1
+            await self.refresh(interaction)
+
+    def build_avgimp_embed(guild, players, page_index: int, requester_name: str):
+        total_pages = max(1, math.ceil(len(players) / LEADERBOARD_PAGE_SIZE))
+        start = page_index * LEADERBOARD_PAGE_SIZE
+        end = start + LEADERBOARD_PAGE_SIZE
+        page_players = players[start:end]
+        embed = discord.Embed(
+            title="Average IMP Leaderboard",
+            description=f"Leaderboard for **{guild.name}**",
+            color=discord.Color.teal(),
+        )
+        medals = ["ðŸ¥‡", "ðŸ¥ˆ", "ðŸ¥‰"]
+        lines = []
+        for rank, (user_id, stored_nickname, avg_imp, match_count) in enumerate(page_players, start=start + 1):
+            member = guild.get_member(int(user_id))
+            name = member.display_name if member else (stored_nickname or f"User {user_id}")
+            prefix = medals[rank - 1] if rank <= 3 else f"**#{rank}**"
+            lines.append(f"{prefix} - **{name}**: `{avg_imp:.2f}` AVG IMP (`{match_count}` matches)")
+        embed.add_field(name="Rankings", value="\n".join(lines), inline=False)
+        embed.set_footer(text=f"Page {page_index + 1}/{total_pages} â€¢ Requested by {requester_name}")
+        return embed
+
+    class AvgImpView(discord.ui.View):
+        def __init__(self, author_id: int, guild, players, requester_name: str):
+            super().__init__(timeout=600)
+            self.author_id = author_id
+            self.guild = guild
+            self.players = players
+            self.requester_name = requester_name
+            self.page_index = 0
+            self.message = None
+            self.sync_buttons()
+
+        def sync_buttons(self):
+            total_pages = max(1, math.ceil(len(self.players) / LEADERBOARD_PAGE_SIZE))
+            self.prev_page.disabled = self.page_index <= 0
+            self.next_page.disabled = self.page_index >= total_pages - 1
+
+        async def interaction_check(self, interaction: discord.Interaction) -> bool:
+            if interaction.user.id != self.author_id:
+                await interaction.response.send_message(
+                    "Only the user who opened this leaderboard can change pages.",
+                    ephemeral=True,
+                )
+                return False
+            return True
+
+        async def refresh(self, interaction: discord.Interaction):
+            self.sync_buttons()
+            await interaction.response.edit_message(
+                embed=build_avgimp_embed(self.guild, self.players, self.page_index, self.requester_name),
+                view=self,
+            )
+
+        async def on_timeout(self):
+            for child in self.children:
+                child.disabled = True
+            if self.message:
+                try:
+                    await self.message.edit(view=self)
+                except Exception:
+                    pass
+
+        @discord.ui.button(label="â—€", style=discord.ButtonStyle.secondary)
+        async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if self.page_index > 0:
+                self.page_index -= 1
+            await self.refresh(interaction)
+
+        @discord.ui.button(label="â–¶", style=discord.ButtonStyle.secondary)
         async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
             total_pages = max(1, math.ceil(len(self.players) / LEADERBOARD_PAGE_SIZE))
             if self.page_index < total_pages - 1:
@@ -650,6 +727,24 @@ def attach_commands(bot, deps):
         message = await ctx.reply(
             embed=build_leaderboard_embed(ctx.guild, top_players, 0, ctx.author.display_name),
             view=view
+        )
+        view.message = message
+
+    @bot.command(name="avgimp")
+    async def avgimp(ctx):
+        top_players = get_top_avg_imp_players(ctx.guild.id)
+        if not top_players:
+            await ctx.reply("No average IMP data found for this server yet. Players need at least 4 matches with IMP data.")
+            return
+        view = AvgImpView(
+            author_id=ctx.author.id,
+            guild=ctx.guild,
+            players=top_players,
+            requester_name=ctx.author.display_name,
+        )
+        message = await ctx.reply(
+            embed=build_avgimp_embed(ctx.guild, top_players, 0, ctx.author.display_name),
+            view=view,
         )
         view.message = message
 
@@ -1800,6 +1895,15 @@ def attach_commands(bot, deps):
             )
         except Exception as e:
             print(f"[submitmatch] Failed to log ledger entry for match {match_id}: {e}")
+        try:
+            schedule_match_imp_enrichment(
+                ctx.guild.id,
+                match_id,
+                channel_id=ctx.channel.id,
+                notify_on_success=True,
+            )
+        except Exception as e:
+            print(f"[submitmatch] Failed to schedule IMP enrichment for match {match_id}: {e}")
         await ctx.reply(f"Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\nAll participants received **50 Feederbucks** for playing.")
     @submitmatch.error
     async def submitmatch_error(ctx, error):
@@ -2183,6 +2287,7 @@ def attach_commands(bot, deps):
                     "**!inhouse_mmr `[@user]`** - Show inhouse MMR for yourself or another user.\n"
                     "**!balance `[@user]`** - Show your or another user's Feederbucks balance.\n"
                     "**!leaderboard** - View top 10 inhouse MMR players in this server.\n"
+                    "**!avgimp** - View the highest average IMP players in this server (minimum 4 matches).\n"
                     "**!ledger** - View the last 5 processed matches with MMR and bet results.\n"
                     "**!topstats** - View the best recorded player stats from logged matches.\n"
                     "**!send `<amount>` `<@user>`** - Send Feederbucks to another user in the server.\n"
