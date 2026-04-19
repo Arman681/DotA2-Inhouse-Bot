@@ -46,6 +46,7 @@ log_processed_match = None
 get_bound_league_id = None
 log_match_ledger = None
 get_discord_id_from_steam_id = None
+schedule_match_imp_enrichment = None
 
 
 def configure_live_tracking(
@@ -69,12 +70,14 @@ def configure_live_tracking(
     get_bound_league_id_fn,
     log_match_ledger_fn,
     get_discord_id_from_steam_id_fn,
+    schedule_match_imp_enrichment_fn,
 ):
     global bot, db, steam_api_key, stratz_token, get_http_session
     global format_live_match_embed, fetch_match_result, map_steam_ids_to_discord_ids
     global resolve_bets, get_active_double_down_users, adjust_mmr, clear_active_double_downs
     global update_balance, get_processed_match, is_match_processed, log_processed_match
     global get_bound_league_id, log_match_ledger, get_discord_id_from_steam_id
+    global schedule_match_imp_enrichment
     bot = bot_instance
     db = db_client
     steam_api_key = steam_api_key_value
@@ -94,6 +97,7 @@ def configure_live_tracking(
     get_bound_league_id = get_bound_league_id_fn
     log_match_ledger = log_match_ledger_fn
     get_discord_id_from_steam_id = get_discord_id_from_steam_id_fn
+    schedule_match_imp_enrichment = schedule_match_imp_enrichment_fn
 
 
 def clear_match_tracking_state(guild_id: int):
@@ -224,6 +228,16 @@ async def poll_live_match(match_id, guild, random_mode=False):
             )
         except Exception as e:
             print(f"[poll_live_match] Failed to log ledger entry for match {match_id}: {e}")
+        if schedule_match_imp_enrichment:
+            try:
+                schedule_match_imp_enrichment(
+                    guild.id,
+                    match_id,
+                    channel_id=channel.id if channel else None,
+                    notify_on_success=True,
+                )
+            except Exception as e:
+                print(f"[poll_live_match] Failed to schedule IMP enrichment for match {match_id}: {e}")
     elif should_log_random_match:
         try:
             log_match_ledger(
