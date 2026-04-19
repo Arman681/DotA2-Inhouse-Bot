@@ -120,6 +120,13 @@ from bot.services.match_ledger_service import (
     get_recent_match_ledgers,
     log_match_ledger,
 )
+from bot.services.match_imp_service import (
+    configure_match_imp_service,
+    get_top_avg_imp_players,
+    recalculate_avg_imp_for_all_guilds,
+    schedule_due_imp_enrichments,
+    schedule_match_imp_enrichment,
+)
 from bot.ui.manual_captain_select import (
     ManualCaptainSelectView,
     configure_manual_captain_select,
@@ -419,6 +426,11 @@ async def refresh_all_mmrs():
 async def cleanup_expired_store_roles_task():
     await cleanup_expired_store_roles()
 
+
+@tasks.loop(hours=1)
+async def retry_pending_match_imp_task():
+    await schedule_due_imp_enrichments()
+
 # ========================================================================================================================
 # ================================================ Bot Event Handlers ================================================
 # ========================================================================================================================
@@ -482,8 +494,13 @@ async def on_ready():
     if not cleanup_expired_store_roles_task.is_running():
         cleanup_expired_store_roles_task.start()
         print("[on_ready] Started cleanup_expired_store_roles_task.")
+    if not retry_pending_match_imp_task.is_running():
+        retry_pending_match_imp_task.start()
+        print("[on_ready] Started retry_pending_match_imp_task.")
     _ = get_http_session()  # ensure session exists
     print("[on_ready] Shared aiohttp session is ready")
+    await recalculate_avg_imp_for_all_guilds()
+    await schedule_due_imp_enrichments()
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
@@ -799,6 +816,10 @@ configure_manual_captain_select(
     is_placeholder_player_fn=is_placeholder_player,
     build_immortal_embed_fn=build_immortal_embed,
 )
+configure_match_imp_service(
+    bot_instance=bot,
+    get_discord_id_from_steam_id_fn=get_discord_id_from_steam_id,
+)
 configure_live_tracking(
     bot_instance=bot,
     db_client=db,
@@ -819,6 +840,7 @@ configure_live_tracking(
     get_bound_league_id_fn=get_bound_league_id,
     log_match_ledger_fn=log_match_ledger,
     get_discord_id_from_steam_id_fn=get_discord_id_from_steam_id,
+    schedule_match_imp_enrichment_fn=schedule_match_imp_enrichment,
 )
 
 deps = {
@@ -915,6 +937,8 @@ deps = {
     "log_match_ledger": log_match_ledger,
     "get_all_match_ledgers": get_all_match_ledgers,
     "get_recent_match_ledgers": get_recent_match_ledgers,
+    "schedule_match_imp_enrichment": schedule_match_imp_enrichment,
+    "get_top_avg_imp_players": get_top_avg_imp_players,
     "save_preferred_roles_setting": save_preferred_roles_setting,
 }
 set_cancel_callback(handle_immortal_draft_cancel)
