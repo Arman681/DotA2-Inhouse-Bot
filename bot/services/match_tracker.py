@@ -44,6 +44,8 @@ def _build_stratz_result(match_json):
             "building_damage": int(player.get("towerDamage", 0) or 0),
             "actions_per_minute_timeline": [int(v) for v in actions_per_minute if v is not None],
             "avg_apm": _average_int(actions_per_minute),
+            "position": None,
+            "imp": None,
         })
 
     return {
@@ -87,6 +89,8 @@ def _build_opendota_result(match_json):
             "total_dead_time": int(player.get("total_dead_time", 0) or 0),
             "actions_per_minute_timeline": [],
             "avg_apm": None,
+            "position": None,
+            "imp": None,
         })
     return {
         "radiant_win": bool(match_json.get("radiant_win")),
@@ -160,3 +164,86 @@ def fetch_match_result(match_id):
         print("[STRATZ] Exception:", e)
 
     return _fetch_opendota_result(match_id)
+
+
+def _normalize_position(raw_position):
+    if not raw_position:
+        return None
+    raw_position = str(raw_position).strip().upper()
+    mapping = {
+        "POSITION_1": "pos1",
+        "POSITION_2": "pos2",
+        "POSITION_3": "pos3",
+        "POSITION_4": "pos4",
+        "POSITION_5": "pos5",
+    }
+    return mapping.get(raw_position)
+
+
+def fetch_match_imp_data(match_id):
+    try:
+        url = "https://api.stratz.com/graphql"
+        headers = {
+            "Authorization": f"Bearer {STRATZ_TOKEN}",
+            "Content-Type": "application/json",
+            "User-Agent": "STRATZ_API",
+        }
+        query = {
+            "query": """
+            query CheckMatchImp($matchId: Long!) {
+              match(id: $matchId) {
+                id
+                players {
+                  steamAccount {
+                    id
+                    name
+                  }
+                  hero {
+                    id
+                    displayName
+                  }
+                  position
+                  imp
+                }
+              }
+            }
+            """,
+            "variables": {"matchId": int(match_id)},
+        }
+        resp = requests.post(url, json=query, headers=headers, timeout=8)
+        print("[STRATZ IMP] code:", resp.status_code)
+        if resp.status_code != 200:
+            return None
+        match_data = resp.json().get("data", {}).get("match")
+        if not match_data:
+            return None
+        players = match_data.get("players", []) or []
+        if not players:
+            return None
+
+        imp_players = []
+        for player in players:
+            steam_account = player.get("steamAccount") or {}
+            steam_id = steam_account.get("id")
+            position = _normalize_position(player.get("position"))
+            imp_value = player.get("imp")
+            hero = player.get("hero") or {}
+            imp_players.append({
+                "steam_id": str(steam_id) if steam_id is not None else None,
+                "steam_name": steam_account.get("name"),
+                "hero_id": hero.get("id"),
+                "hero_name": hero.get("displayName"),
+                "position": position,
+                "imp": int(imp_value) if imp_value is not None else None,
+            })
+
+        ready_players = [
+            player for player in imp_players
+            if player.get("steam_id") and player.get("position") is not None and player.get("imp") is not None
+        ]
+        if len(ready_players) != len(imp_players):
+            return None
+        return imp_players
+    except Exception as e:
+        print("[STRATZ IMP] Exception:", e)
+        return None
