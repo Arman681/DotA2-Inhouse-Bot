@@ -150,6 +150,10 @@ def attach_commands(bot, deps):
         return None
 
     LEADERBOARD_PAGE_SIZE = 10
+    MEDAL_EMOJIS = ["\U0001F947", "\U0001F948", "\U0001F949"]
+    PAGE_PREV_LABEL = "<"
+    PAGE_NEXT_LABEL = ">"
+    FOOTER_SEPARATOR = " | "
 
     def build_leaderboard_embed(guild, players, page_index: int, requester_name: str):
         total_pages = max(1, math.ceil(len(players) / LEADERBOARD_PAGE_SIZE))
@@ -241,18 +245,20 @@ def attach_commands(bot, deps):
         page_players = players[start:end]
         embed = discord.Embed(
             title="Average IMP Leaderboard",
-            description=f"Leaderboard for **{guild.name}**",
+            description=(
+                f"Leaderboard for **{guild.name}**\n\n"
+                "**IMP:** Individual Match Performance by STRATZ"
+            ),
             color=discord.Color.teal(),
         )
-        medals = ["ðŸ¥‡", "ðŸ¥ˆ", "ðŸ¥‰"]
         lines = []
         for rank, (user_id, stored_nickname, avg_imp, match_count) in enumerate(page_players, start=start + 1):
             member = guild.get_member(int(user_id))
             name = member.display_name if member else (stored_nickname or f"User {user_id}")
-            prefix = medals[rank - 1] if rank <= 3 else f"**#{rank}**"
+            prefix = MEDAL_EMOJIS[rank - 1] if rank <= 3 else f"**#{rank}**"
             lines.append(f"{prefix} - **{name}**: `{avg_imp:.2f}` AVG IMP (`{match_count}` matches)")
         embed.add_field(name="Rankings", value="\n".join(lines), inline=False)
-        embed.set_footer(text=f"Page {page_index + 1}/{total_pages} â€¢ Requested by {requester_name}")
+        embed.set_footer(text=f"Page {page_index + 1}/{total_pages}{FOOTER_SEPARATOR}Requested by {requester_name}")
         return embed
 
     class AvgImpView(discord.ui.View):
@@ -296,15 +302,91 @@ def attach_commands(bot, deps):
                 except Exception:
                     pass
 
-        @discord.ui.button(label="â—€", style=discord.ButtonStyle.secondary)
+        @discord.ui.button(label=PAGE_PREV_LABEL, style=discord.ButtonStyle.secondary)
         async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
             if self.page_index > 0:
                 self.page_index -= 1
             await self.refresh(interaction)
 
-        @discord.ui.button(label="â–¶", style=discord.ButtonStyle.secondary)
+        @discord.ui.button(label=PAGE_NEXT_LABEL, style=discord.ButtonStyle.secondary)
         async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
             total_pages = max(1, math.ceil(len(self.players) / LEADERBOARD_PAGE_SIZE))
+            if self.page_index < total_pages - 1:
+                self.page_index += 1
+            await self.refresh(interaction)
+
+    def build_shared_ranked_embed(title: str, guild, rows, page_index: int, requester_name: str, value_formatter, description: str | None = None, color=discord.Color.blurple()):
+        total_pages = max(1, math.ceil(len(rows) / LEADERBOARD_PAGE_SIZE))
+        start = page_index * LEADERBOARD_PAGE_SIZE
+        end = start + LEADERBOARD_PAGE_SIZE
+        page_rows = rows[start:end]
+        embed = discord.Embed(
+            title=title,
+            description=description or f"Leaderboard for **{guild.name}**",
+            color=color,
+        )
+        lines = []
+        for rank, row in enumerate(page_rows, start=start + 1):
+            user_id = str(row[0])
+            stored_nickname = row[1]
+            member = guild.get_member(int(user_id)) if user_id.isdigit() else None
+            name = member.display_name if member else (stored_nickname or f"User {user_id}")
+            prefix = MEDAL_EMOJIS[rank - 1] if rank <= 3 else f"**#{rank}**"
+            lines.append(f"{prefix} - **{name}**: {value_formatter(row)}")
+        embed.add_field(name="Rankings", value="\n".join(lines), inline=False)
+        embed.set_footer(text=f"Page {page_index + 1}/{total_pages}{FOOTER_SEPARATOR}Requested by {requester_name}")
+        return embed
+
+    class SharedRankedView(discord.ui.View):
+        def __init__(self, *, author_id: int, rows, requester_name: str, embed_builder):
+            super().__init__(timeout=600)
+            self.author_id = author_id
+            self.rows = rows
+            self.requester_name = requester_name
+            self.embed_builder = embed_builder
+            self.page_index = 0
+            self.message = None
+            self.sync_buttons()
+
+        def sync_buttons(self):
+            total_pages = max(1, math.ceil(len(self.rows) / LEADERBOARD_PAGE_SIZE))
+            self.prev_page.disabled = self.page_index <= 0
+            self.next_page.disabled = self.page_index >= total_pages - 1
+
+        async def interaction_check(self, interaction: discord.Interaction) -> bool:
+            if interaction.user.id != self.author_id:
+                await interaction.response.send_message(
+                    "Only the user who opened this leaderboard can change pages.",
+                    ephemeral=True,
+                )
+                return False
+            return True
+
+        async def refresh(self, interaction: discord.Interaction):
+            self.sync_buttons()
+            await interaction.response.edit_message(
+                embed=self.embed_builder(self.rows, self.page_index, self.requester_name),
+                view=self,
+            )
+
+        async def on_timeout(self):
+            for child in self.children:
+                child.disabled = True
+            if self.message:
+                try:
+                    await self.message.edit(view=self)
+                except Exception:
+                    pass
+
+        @discord.ui.button(label=PAGE_PREV_LABEL, style=discord.ButtonStyle.secondary)
+        async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if self.page_index > 0:
+                self.page_index -= 1
+            await self.refresh(interaction)
+
+        @discord.ui.button(label=PAGE_NEXT_LABEL, style=discord.ButtonStyle.secondary)
+        async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+            total_pages = max(1, math.ceil(len(self.rows) / LEADERBOARD_PAGE_SIZE))
             if self.page_index < total_pages - 1:
                 self.page_index += 1
             await self.refresh(interaction)
@@ -718,14 +800,23 @@ def attach_commands(bot, deps):
         if not top_players:
             await ctx.reply("No leaderboard data found for this server.")
             return
-        view = LeaderboardView(
+        embed_builder = lambda rows, page_index, requester_name: build_shared_ranked_embed(
+            "Inhouse Leaderboard",
+            ctx.guild,
+            rows,
+            page_index,
+            requester_name,
+            value_formatter=lambda row: f"`{row[2]}` MMR",
+            color=discord.Color.gold(),
+        )
+        view = SharedRankedView(
             author_id=ctx.author.id,
-            guild=ctx.guild,
-            players=top_players,
+            rows=top_players,
             requester_name=ctx.author.display_name,
+            embed_builder=embed_builder,
         )
         message = await ctx.reply(
-            embed=build_leaderboard_embed(ctx.guild, top_players, 0, ctx.author.display_name),
+            embed=embed_builder(top_players, 0, ctx.author.display_name),
             view=view
         )
         view.message = message
@@ -736,14 +827,27 @@ def attach_commands(bot, deps):
         if not top_players:
             await ctx.reply("No average IMP data found for this server yet. Players need at least 4 matches with IMP data.")
             return
-        view = AvgImpView(
+        embed_builder = lambda rows, page_index, requester_name: build_shared_ranked_embed(
+            "Average IMP Leaderboard",
+            ctx.guild,
+            rows,
+            page_index,
+            requester_name,
+            value_formatter=lambda row: f"`{row[2]:.2f}` AVG IMP (`{row[3]}` matches)",
+            description=(
+                f"Leaderboard for **{ctx.guild.name}**\n\n"
+                "**IMP:** Individual Match Performance by STRATZ"
+            ),
+            color=discord.Color.teal(),
+        )
+        view = SharedRankedView(
             author_id=ctx.author.id,
-            guild=ctx.guild,
-            players=top_players,
+            rows=top_players,
             requester_name=ctx.author.display_name,
+            embed_builder=embed_builder,
         )
         message = await ctx.reply(
-            embed=build_avgimp_embed(ctx.guild, top_players, 0, ctx.author.display_name),
+            embed=embed_builder(top_players, 0, ctx.author.display_name),
             view=view,
         )
         view.message = message
