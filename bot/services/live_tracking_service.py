@@ -193,38 +193,67 @@ async def poll_live_match(match_id, guild, random_mode=False):
         member = guild.get_member(int(discord_id))
         nickname = member.display_name if member else str(discord_id)
         update_balance(guild.id, str(discord_id), 50, nickname=nickname)
-    try:
-        log_processed_match(
-            guild.id,
-            match_id,
-            league_id=None if random_mode else get_bound_league_id(guild.id),
-            source="auto_poll",
-            processors=["betting", "inhouse_mmr", "feederbucks"],
-            winning_team=winning_team,
-            random_mode=random_mode,
-            processed_by="system",
-            player_count=len(all_player_ids),
-        )
-    except Exception as e:
-        print(f"[poll_live_match] Failed to log processed match {match_id}: {e}")
-    try:
-        log_match_ledger(
-            guild.id,
-            match_id,
-            league_id=None if random_mode else get_bound_league_id(guild.id),
-            source="auto_poll",
-            winning_team=winning_team,
-            random_mode=random_mode,
-            processed_by="system",
-            mmr_changes=mmr_changes,
-            bet_results=bet_results,
-            player_stats=player_stats,
-        )
-    except Exception as e:
-        print(f"[poll_live_match] Failed to log ledger entry for match {match_id}: {e}")
+    should_log_random_match = bool(bet_results)
+    if not random_mode:
+        try:
+            log_processed_match(
+                guild.id,
+                match_id,
+                league_id=get_bound_league_id(guild.id),
+                source="auto_poll",
+                processors=["betting", "inhouse_mmr", "feederbucks"],
+                winning_team=winning_team,
+                random_mode=False,
+                processed_by="system",
+                player_count=len(all_player_ids),
+            )
+        except Exception as e:
+            print(f"[poll_live_match] Failed to log processed match {match_id}: {e}")
+        try:
+            log_match_ledger(
+                guild.id,
+                match_id,
+                league_id=get_bound_league_id(guild.id),
+                source="auto_poll",
+                winning_team=winning_team,
+                random_mode=False,
+                processed_by="system",
+                mmr_changes=mmr_changes,
+                bet_results=bet_results,
+                player_stats=player_stats,
+            )
+        except Exception as e:
+            print(f"[poll_live_match] Failed to log ledger entry for match {match_id}: {e}")
+    elif should_log_random_match:
+        try:
+            log_match_ledger(
+                guild.id,
+                match_id,
+                league_id=None,
+                source="auto_poll",
+                winning_team=winning_team,
+                random_mode=True,
+                processed_by="system",
+                mmr_changes=[],
+                bet_results=bet_results,
+                player_stats=[],
+            )
+        except Exception as e:
+            print(f"[poll_live_match] Failed to log random bet ledger entry for match {match_id}: {e}")
+    else:
+        print(f"[poll_live_match] Random match {match_id} had no bets. Skipping match_data logging.")
     print(f"[poll_live_match] Awarded 50 Feederbucks to {len(all_player_ids)} participants in match {match_id}")
     try:
-        await channel.send(f"Match `{match_id}` has ended with a {winning_team} victory. Bets have been resolved and Inhouse-MMR updated.\n All participants received **50 Feederbucks** for playing.")
+        if random_mode:
+            await channel.send(
+                f"Match `{match_id}` has ended with a {winning_team} victory. Bets have been resolved.\n"
+                "All participants received **50 Feederbucks** for playing."
+            )
+        else:
+            await channel.send(
+                f"Match `{match_id}` has ended with a {winning_team} victory. Bets have been resolved and Inhouse-MMR updated.\n"
+                "All participants received **50 Feederbucks** for playing."
+            )
         print(f"[poll_live_match] Match summary sent to channel ID: {channel.id}")
     except Exception as e:
         print(f"[poll_live_match] Failed to send match summary: {e}")
