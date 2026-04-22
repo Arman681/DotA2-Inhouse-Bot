@@ -1652,7 +1652,10 @@ def attach_commands(bot, deps):
         await full_post_rocket_reset(guild_id, message)
         save_lobby_players(guild_id, current_players)
         await update_lobby_embed(ctx.guild)
-        await ctx.reply(f"Replaced **{old_target_name}** with **{new_tuple[1]}** in the lobby.")
+        await ctx.reply(
+            f"Replaced **{old_target_name}** with **{new_tuple[1]}** in the lobby.",
+            delete_after=8,
+        )
     @replace_in_lobby.error
     async def replace_in_lobby_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
