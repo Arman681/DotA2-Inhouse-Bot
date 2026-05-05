@@ -12,18 +12,22 @@ db = firestore.client()
 
 bot = None
 get_discord_id_from_steam_id = None
+update_balance = None
 _imp_enrichment_tasks = {}
 
 IMP_RETRY_INTERVAL_SECONDS = 150
 IMP_RETRY_WINDOW_SECONDS = 600
 IMP_MAX_ATTEMPTS = 3
 IMP_MIN_MATCHES_FOR_AVERAGE = 4
+MVP_FEEDERBUCKS_AWARD = 1000
+MVP_FEEDERBUCKS_AWARD_ID = "mvp_highest_imp"
 
 
-def configure_match_imp_service(*, bot_instance, get_discord_id_from_steam_id_fn):
-    global bot, get_discord_id_from_steam_id
+def configure_match_imp_service(*, bot_instance, get_discord_id_from_steam_id_fn, update_balance_fn=None):
+    global bot, get_discord_id_from_steam_id, update_balance
     bot = bot_instance
     get_discord_id_from_steam_id = get_discord_id_from_steam_id_fn
+    update_balance = update_balance_fn
 
 
 def _match_ref(guild_id, match_id):
@@ -135,6 +139,83 @@ def _get_mvp(player_stats):
     }
 
 
+def _mark_mvp_award_on_player_stats(player_stats, mvp):
+    user_id = str((mvp or {}).get("user_id") or "")
+    if not user_id:
+        return player_stats
+    for stat in player_stats or []:
+        if str(stat.get("user_id") or "") == user_id:
+            stat["mvp"] = True
+            stat["mvp_feederbucks_award"] = MVP_FEEDERBUCKS_AWARD
+            stat["mvp_award_id"] = MVP_FEEDERBUCKS_AWARD_ID
+            break
+    return player_stats
+
+
+def _mvp_award_already_recorded(match_data):
+    if bool(match_data.get("mvp_feederbucks_awarded")):
+        return True
+    return any(
+        str(award.get("award_id") or "") == MVP_FEEDERBUCKS_AWARD_ID
+        for award in (match_data.get("feederbucks_awards") or [])
+        if isinstance(award, dict)
+    )
+
+
+def _build_mvp_feederbucks_update(guild_id, match_id, match_data, mvp, player_stats):
+    if not mvp:
+        return {}
+
+    user_id = str(mvp.get("user_id") or "")
+    if not user_id.isdigit():
+        return {}
+
+    existing_awards = [
+        award for award in (match_data.get("feederbucks_awards") or [])
+        if isinstance(award, dict)
+    ]
+    if _mvp_award_already_recorded(match_data):
+        player_stats = _mark_mvp_award_on_player_stats(player_stats, mvp)
+        return {
+            "player_stats": player_stats,
+            "mvp_feederbucks_awarded": True,
+            "mvp_feederbucks_award_amount": MVP_FEEDERBUCKS_AWARD,
+            "feederbucks_awards": existing_awards,
+        }
+
+    if update_balance is None:
+        print(f"[match_imp] Cannot award MVP Feederbucks for match {match_id}: update_balance is not configured.")
+        return {}
+
+    nickname = mvp.get("nickname") or f"User {user_id}"
+    try:
+        balance_after = update_balance(guild_id, user_id, MVP_FEEDERBUCKS_AWARD, nickname=nickname)
+    except Exception as e:
+        print(f"[match_imp] Failed to award MVP Feederbucks for guild={guild_id} match={match_id} user={user_id}: {e}")
+        return {}
+
+    player_stats = _mark_mvp_award_on_player_stats(player_stats, mvp)
+    existing_awards.append({
+        "award_id": MVP_FEEDERBUCKS_AWARD_ID,
+        "user_id": user_id,
+        "nickname": nickname,
+        "amount": MVP_FEEDERBUCKS_AWARD,
+        "reason": "MVP Bonus",
+        "source": "highest_imp",
+        "imp": mvp.get("imp"),
+        "position": mvp.get("position"),
+        "balance_before": int(balance_after) - MVP_FEEDERBUCKS_AWARD,
+        "balance_after": int(balance_after),
+    })
+    return {
+        "player_stats": player_stats,
+        "mvp_feederbucks_awarded": True,
+        "mvp_feederbucks_award_amount": MVP_FEEDERBUCKS_AWARD,
+        "mvp_feederbucks_awarded_at": firestore.SERVER_TIMESTAMP,
+        "feederbucks_awards": existing_awards,
+    }
+
+
 async def _announce_mvp(guild_id, match_id, channel_id, winning_team, player_stats):
     if not bot or not channel_id:
         return
@@ -152,9 +233,15 @@ async def _announce_mvp(guild_id, match_id, channel_id, winning_team, player_sta
     mention = f"<@{mvp['user_id']}>" if str(mvp.get("user_id") or "").isdigit() else mvp["nickname"]
     winning_text = (winning_team or "unknown").title()
     position_text = mvp.get("position") or "unknown position"
+    awarded = any(
+        str(stat.get("user_id") or "") == str(mvp.get("user_id") or "")
+        and bool(stat.get("mvp_feederbucks_award"))
+        for stat in player_stats or []
+    )
+    award_text = f" and **+{MVP_FEEDERBUCKS_AWARD} Feederbucks**" if awarded else ""
     await channel.send(
         f"Match `{match_id}` update: **{winning_text}** won.\n"
-        f"MVP: {mention} with **IMP {mvp['imp']}** ({position_text})."
+        f"MVP: {mention} with **IMP {mvp['imp']}** ({position_text}){award_text}."
     )
 
 
@@ -257,14 +344,28 @@ async def _run_imp_attempt(guild_id, match_id, *, channel_id=None, notify_on_suc
         if not (match_data.get("player_stats") or []):
             return
         if _has_complete_imp_data(match_data):
-            match_ref.set(
-                {
-                    "imp_positions_pending": False,
-                    "imp_positions_status": "complete",
-                    "imp_positions_completed_at": firestore.SERVER_TIMESTAMP,
-                },
-                merge=True,
-            )
+            player_stats = match_data.get("player_stats") or []
+            mvp = _get_mvp(player_stats)
+            update_payload = {
+                "imp_positions_pending": False,
+                "imp_positions_status": "complete",
+                "imp_positions_completed_at": firestore.SERVER_TIMESTAMP,
+            }
+            if mvp:
+                update_payload.update({
+                    "mvp_user_id": str(mvp.get("user_id")) if mvp.get("user_id") else None,
+                    "mvp_nickname": mvp.get("nickname"),
+                    "mvp_imp": mvp.get("imp"),
+                    "mvp_position": mvp.get("position"),
+                })
+                update_payload.update(_build_mvp_feederbucks_update(
+                    guild_id,
+                    match_id,
+                    match_data,
+                    mvp,
+                    player_stats,
+                ))
+            match_ref.set(update_payload, merge=True)
             await recalculate_avg_imp_for_guild(guild_id)
             return
 
@@ -326,6 +427,13 @@ async def _run_imp_attempt(guild_id, match_id, *, channel_id=None, notify_on_suc
                     "mvp_imp": mvp.get("imp"),
                     "mvp_position": mvp.get("position"),
                 })
+                update_payload.update(_build_mvp_feederbucks_update(
+                    guild_id,
+                    match_id,
+                    refreshed_data,
+                    mvp,
+                    merged_stats,
+                ))
             match_ref.set(update_payload, merge=True)
             await recalculate_avg_imp_for_guild(guild_id)
             if should_notify and stored_channel_id:

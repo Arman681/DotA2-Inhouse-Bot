@@ -566,6 +566,19 @@ def attach_commands(bot, deps):
             return f"{value / 1000:.1f}k"
         return str(value)
 
+    def build_feederbucks_award(award_id, user_id, nickname, amount, reason, balance_after=None):
+        payload = {
+            "award_id": str(award_id),
+            "user_id": str(user_id),
+            "nickname": nickname,
+            "amount": int(amount or 0),
+            "reason": reason,
+        }
+        if balance_after is not None:
+            payload["balance_after"] = int(balance_after)
+            payload["balance_before"] = int(balance_after) - int(amount or 0)
+        return payload
+
     def build_ledger_player_stats(guild, raw_player_stats):
         results = []
         for stat in raw_player_stats or []:
@@ -676,6 +689,7 @@ def attach_commands(bot, deps):
         timestamp_text = format_ledger_timestamp(entry.get("processed_at"))
         mmr_changes = entry.get("mmr_changes") or []
         bet_results = entry.get("bet_results") or []
+        feederbucks_awards = entry.get("feederbucks_awards") or []
         embed = discord.Embed(
             title="Match Ledger",
             description=(
@@ -743,6 +757,28 @@ def attach_commands(bot, deps):
             embed.add_field(
                 name="Bets",
                 value="No bets were recorded for this match.",
+                inline=False,
+            )
+        if feederbucks_awards:
+            award_lines = []
+            for award in feederbucks_awards:
+                user_id = str(award.get("user_id", ""))
+                member = guild.get_member(int(user_id)) if user_id.isdigit() else None
+                name = member.display_name if member else award.get("nickname") or f"User {user_id}"
+                amount = int(award.get("amount", 0) or 0)
+                sign = "+" if amount > 0 else ""
+                reason = award.get("reason") or "Award"
+                balance_before = award.get("balance_before")
+                balance_after = award.get("balance_after")
+                if balance_before is not None and balance_after is not None:
+                    award_lines.append(
+                        f"**{name}**: `{reason}` `{sign}{amount}` Feederbucks (`{int(balance_before)}` -> `{int(balance_after)}`)"
+                    )
+                else:
+                    award_lines.append(f"**{name}**: `{reason}` `{sign}{amount}` Feederbucks")
+            embed.add_field(
+                name="Feederbucks",
+                value=truncate_embed_field("\n".join(award_lines)),
                 inline=False,
             )
         embed.set_footer(text=f"Page {page_index + 1}/{total_pages} • Requested by {requester_name}")
@@ -2292,9 +2328,20 @@ def attach_commands(bot, deps):
         bet_results = resolve_bets(ctx.guild.id, winning_team, match_id=match_id, match_result=result)
         clear_guild_bets(ctx.guild.id)
         all_player_ids = winner_ids + loser_ids
+        feederbucks_awards = []
         for discord_id in all_player_ids:
             try:
-                update_balance(ctx.guild.id, discord_id, 50)
+                member = ctx.guild.get_member(int(discord_id))
+                nickname = member.display_name if member else str(discord_id)
+                balance_after = update_balance(ctx.guild.id, discord_id, 50, nickname=nickname)
+                feederbucks_awards.append(build_feederbucks_award(
+                    f"participation_{discord_id}",
+                    discord_id,
+                    nickname,
+                    50,
+                    "Participation",
+                    balance_after=balance_after,
+                ))
             except Exception as e:
                 print(f"[ERROR] Failed to award Feederbucks to user {discord_id}: {e}")
         try:
@@ -2323,6 +2370,7 @@ def attach_commands(bot, deps):
                 mmr_changes=mmr_changes,
                 bet_results=bet_results,
                 player_stats=player_stats,
+                feederbucks_awards=feederbucks_awards,
             )
         except Exception as e:
             print(f"[submitmatch] Failed to log ledger entry for match {match_id}: {e}")
@@ -2719,7 +2767,7 @@ def attach_commands(bot, deps):
                     "**!balance `[@user]`** - Show your or another user's Feederbucks balance.\n"
                     "**!leaderboard** - View top 10 inhouse MMR players in this server.\n"
                     "**!avgimp** - View the highest average IMP players in this server (minimum 4 matches).\n"
-                    "**!ledger** - View the last 5 processed matches with MMR and bet results.\n"
+                    "**!ledger** - View the last 5 processed matches with MMR, bets, and Feederbucks awards.\n"
                     "**!topstats** - View the best recorded player stats from logged matches.\n"
                     "**!send `<amount>` `<@user>`** - Send Feederbucks to another user in the server.\n"
                     "**!livematch** - Recall and refresh the live match embed in the channel (30s cooldown).\n\n"

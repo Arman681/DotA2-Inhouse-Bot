@@ -839,6 +839,7 @@ configure_manual_captain_select(
 configure_match_imp_service(
     bot_instance=bot,
     get_discord_id_from_steam_id_fn=get_discord_id_from_steam_id,
+    update_balance_fn=update_balance,
 )
 configure_live_tracking(
     bot_instance=bot,

@@ -28,6 +28,7 @@ def log_match_ledger(
     mmr_changes=None,
     bet_results=None,
     player_stats=None,
+    feederbucks_awards=None,
 ):
     payload = {
         "guild_id": str(guild_id),
@@ -41,6 +42,7 @@ def log_match_ledger(
         "mmr_changes": list(mmr_changes or []),
         "bet_results": list(bet_results or []),
         "player_stats": list(player_stats or []),
+        "feederbucks_awards": list(feederbucks_awards or []),
     }
     _ledger_ref(guild_id, match_id).set(payload, merge=True)
 

@@ -49,6 +49,8 @@ log_match_ledger = None
 get_discord_id_from_steam_id = None
 schedule_match_imp_enrichment = None
 
+PARTICIPATION_FEEDERBUCKS_AWARD = 50
+
 
 def configure_live_tracking(
     *,
@@ -127,6 +129,20 @@ def build_ledger_player_stats(guild, raw_player_stats):
     return results
 
 
+def build_feederbucks_award(award_id, user_id, nickname, amount, reason, balance_after=None):
+    payload = {
+        "award_id": str(award_id),
+        "user_id": str(user_id),
+        "nickname": nickname,
+        "amount": int(amount or 0),
+        "reason": reason,
+    }
+    if balance_after is not None:
+        payload["balance_after"] = int(balance_after)
+        payload["balance_before"] = int(balance_after) - int(amount or 0)
+    return payload
+
+
 async def poll_live_match(match_id, guild, random_mode=False):
     print(f"[poll_live_match] Started polling match {match_id} for guild {guild.name} (random_mode={random_mode})")
     live_embed_messages.pop(guild.id, None)
@@ -195,10 +211,24 @@ async def poll_live_match(match_id, guild, random_mode=False):
         except Exception as e:
             print(f"[poll_live_match] Failed to adjust MMR: {e}")
     all_player_ids = winner_ids + loser_ids
+    feederbucks_awards = []
     for discord_id in all_player_ids:
         member = guild.get_member(int(discord_id))
         nickname = member.display_name if member else str(discord_id)
-        update_balance(guild.id, str(discord_id), 50, nickname=nickname)
+        balance_after = update_balance(
+            guild.id,
+            str(discord_id),
+            PARTICIPATION_FEEDERBUCKS_AWARD,
+            nickname=nickname,
+        )
+        feederbucks_awards.append(build_feederbucks_award(
+            f"participation_{discord_id}",
+            str(discord_id),
+            nickname,
+            PARTICIPATION_FEEDERBUCKS_AWARD,
+            "Participation",
+            balance_after=balance_after,
+        ))
     should_log_random_match = bool(bet_results)
     if not random_mode:
         try:
@@ -227,6 +257,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
                 mmr_changes=mmr_changes,
                 bet_results=bet_results,
                 player_stats=player_stats,
+                feederbucks_awards=feederbucks_awards,
             )
         except Exception as e:
             print(f"[poll_live_match] Failed to log ledger entry for match {match_id}: {e}")
@@ -253,6 +284,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
                 mmr_changes=[],
                 bet_results=bet_results,
                 player_stats=[],
+                feederbucks_awards=feederbucks_awards,
             )
         except Exception as e:
             print(f"[poll_live_match] Failed to log random bet ledger entry for match {match_id}: {e}")
