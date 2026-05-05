@@ -40,7 +40,6 @@ def attach_commands(bot, deps):
     MARKET_FIRST_BLOOD              = deps["MARKET_FIRST_BLOOD"]
     MARKET_FIRST_TO_10              = deps["MARKET_FIRST_TO_10"]
     MARKET_FIRST_TOWER              = deps["MARKET_FIRST_TOWER"]
-    MARKET_FIRST_ROSHAN             = deps["MARKET_FIRST_ROSHAN"]
     MARKET_DURATION_35              = deps["MARKET_DURATION_35"]
     MARKET_TOTAL_KILLS_50           = deps["MARKET_TOTAL_KILLS_50"]
     MARKET_ORDER                    = deps["MARKET_ORDER"]
@@ -1098,7 +1097,7 @@ def attach_commands(bot, deps):
             else:
                 await ctx.reply(
                     "You’re not in the current match. Please specify a team:\n"
-                    "Example: `!bet radiant`, `!bet 2 dire 250`, or `!bet 6 over 250`."
+                    "Example: `!bet radiant`, `!bet 2 dire 250`, or `!bet 5 over 250`."
                 )
                 return
         # Normalize & validate team now that it’s known
@@ -1212,7 +1211,7 @@ def attach_commands(bot, deps):
             name="Markets",
             value=(
                 "`Match Winner`, `First Blood`, and `First to 10 Kills` are always available when a match is active.\n"
-                "When prop markets are enabled, `First Tower`, `First Roshan`, `Game Duration O/U 35:00`, and `Total Kills O/U 50` are also available.\n"
+                "When prop markets are enabled, `First Tower`, `Game Duration O/U 35:00`, and `Total Kills O/U 50` are also available.\n"
                 "Players in the active match may only bet on Match Winner, and only on their own team."
             ),
             inline=False,
@@ -1221,7 +1220,8 @@ def attach_commands(bot, deps):
             name="Integrity",
             value=(
                 "Collusion, bribery, or intentional gameplay manipulation for betting outcomes is prohibited.\n"
-                "Admins/Inhouse Admins may void suspicious markets and refund affected bets."
+                "Admins/Inhouse Admins may void suspicious markets and refund affected bets.\n"
+                "First Tower is voided/refunded if both teams lose a tower between Steam API polls."
             ),
             inline=False,
         )
@@ -1318,7 +1318,7 @@ def attach_commands(bot, deps):
         elif selector in ("side", "sides"):
             market_ids = [market_id for market_id in existing_market_ids if market_id != MARKET_MATCH_WINNER]
         elif selector in ("prop", "props"):
-            prop_ids = {MARKET_FIRST_TOWER, MARKET_FIRST_ROSHAN, MARKET_DURATION_35, MARKET_TOTAL_KILLS_50}
+            prop_ids = {MARKET_FIRST_TOWER, MARKET_DURATION_35, MARKET_TOTAL_KILLS_50}
             market_ids = [market_id for market_id in existing_market_ids if market_id in prop_ids]
         else:
             market_id = normalize_market_id(selector)
