@@ -53,6 +53,7 @@ def _build_stratz_result(match_json):
         "radiantplayers": radiantplayers,
         "direplayers": direplayers,
         "player_stats": player_stats,
+        "total_kills": sum(int(p.get("kills", 0) or 0) for p in players),
     }
 
 
@@ -97,6 +98,8 @@ def _build_opendota_result(match_json):
         "radiantplayers": radiantplayers,
         "direplayers": direplayers,
         "player_stats": player_stats,
+        "duration": int(match_json.get("duration", 0) or 0),
+        "total_kills": sum(int(p.get("kills", 0) or 0) for p in players),
     }
 
 
