@@ -261,11 +261,13 @@ async def format_live_match_embed(match, guild):
         radiant_players.append("-")
     while len(dire_players) < 5:
         dire_players.append("-")
-    embed.add_field(name="**Radiant**", value="\n".join(radiant_players), inline=True)
-    embed.add_field(name="**Dire**", value="\n".join(dire_players), inline=True)
+    radiant_value = "\n".join(radiant_players)
+    dire_value = "\n".join(dire_players)
     betting_left, betting_right = _format_live_betting_columns(guild.id, match_id)
     if betting_left:
-        embed.add_field(name="Betting", value=betting_left, inline=True)
-        embed.add_field(name="\u200b", value=betting_right, inline=True)
-    embed.add_field(name="Match Info", value=f"League ID: `{league_id}`\nMatch ID: `{match_id}`", inline=False)
+        radiant_value += f"\n\n**Betting**\n{betting_left}"
+        dire_value += f"\n\n\u200b\n{betting_right}"
+    radiant_value += f"\n\n**Match Info**\nLeague ID: `{league_id}`\nMatch ID: `{match_id}`"
+    embed.add_field(name="**Radiant**", value=radiant_value, inline=True)
+    embed.add_field(name="**Dire**", value=dire_value, inline=True)
     return embed
