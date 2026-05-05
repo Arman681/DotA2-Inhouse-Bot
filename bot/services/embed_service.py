@@ -40,6 +40,17 @@ def _format_multiplier(value):
         return "--x"
 
 
+def _scoreboard_team_score(scoreboard, team):
+    team_data = scoreboard.get(team) or {}
+    score = team_data.get("score")
+    if score is not None:
+        try:
+            return int(score)
+        except (TypeError, ValueError):
+            pass
+    return sum(int(player.get("kills", 0) or 0) for player in team_data.get("players", []) or [])
+
+
 def _format_live_betting_summary(guild_id, match_id):
     summary = get_betting_summary(guild_id, match_id)
     if not summary:
@@ -208,8 +219,8 @@ async def format_live_match_embed(match, guild):
         minutes = duration // 60
         seconds = duration % 60
         timer = f"{minutes}:{seconds:02d}"
-        radiant_kills = sum(p.get("kills", 0) for p in scoreboard.get("radiant", {}).get("players", []))
-        dire_kills = sum(p.get("kills", 0) for p in scoreboard.get("dire", {}).get("players", []))
+        radiant_kills = _scoreboard_team_score(scoreboard, "radiant")
+        dire_kills = _scoreboard_team_score(scoreboard, "dire")
     else:
         timer = "-"
         radiant_kills = 0
