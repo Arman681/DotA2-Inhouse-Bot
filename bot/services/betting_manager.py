@@ -24,15 +24,16 @@ MARKET_FIRST_TOWER = "firsttower"
 MARKET_FIRST_ROSHAN = "firstroshan"
 MARKET_DURATION_35 = "duration35"
 MARKET_TOTAL_KILLS_50 = "totalkills50"
+FIRST_TOWER_AMBIGUOUS = "ambiguous_tower_trade"
 
 BASE_MARKET_ORDER = [MARKET_MATCH_WINNER, MARKET_FIRST_BLOOD, MARKET_FIRST_TO_10]
 PROP_MARKET_ORDER = [
     MARKET_FIRST_TOWER,
-    MARKET_FIRST_ROSHAN,
     MARKET_DURATION_35,
     MARKET_TOTAL_KILLS_50,
 ]
 MARKET_ORDER = BASE_MARKET_ORDER + PROP_MARKET_ORDER
+DEPRECATED_MARKET_IDS = {MARKET_FIRST_ROSHAN}
 
 MARKET_DEFINITIONS = {
     MARKET_MATCH_WINNER: {
@@ -75,19 +76,9 @@ MARKET_DEFINITIONS = {
         "prop_market": True,
         "options": ["radiant", "dire"],
     },
-    MARKET_FIRST_ROSHAN: {
-        "id": MARKET_FIRST_ROSHAN,
-        "index": 5,
-        "label": "First Roshan",
-        "short_label": "First Roshan",
-        "seed": DEFAULT_SIDE_POOL_SEED,
-        "side_market": True,
-        "prop_market": True,
-        "options": ["radiant", "dire"],
-    },
     MARKET_DURATION_35: {
         "id": MARKET_DURATION_35,
-        "index": 6,
+        "index": 5,
         "label": "Game Duration O/U 35:00",
         "short_label": "Duration 35:00",
         "seed": DEFAULT_SIDE_POOL_SEED,
@@ -97,7 +88,7 @@ MARKET_DEFINITIONS = {
     },
     MARKET_TOTAL_KILLS_50: {
         "id": MARKET_TOTAL_KILLS_50,
-        "index": 7,
+        "index": 6,
         "label": "Total Kills O/U 50",
         "short_label": "Total Kills 50",
         "seed": DEFAULT_SIDE_POOL_SEED,
@@ -131,13 +122,7 @@ MARKET_ALIASES = {
     "first_tower": MARKET_FIRST_TOWER,
     "firsttowerkill": MARKET_FIRST_TOWER,
     "first_tower_kill": MARKET_FIRST_TOWER,
-    "5": MARKET_FIRST_ROSHAN,
-    "roshan": MARKET_FIRST_ROSHAN,
-    "rosh": MARKET_FIRST_ROSHAN,
-    "firstroshan": MARKET_FIRST_ROSHAN,
-    "first_roshan": MARKET_FIRST_ROSHAN,
-    "firstrosh": MARKET_FIRST_ROSHAN,
-    "6": MARKET_DURATION_35,
+    "5": MARKET_DURATION_35,
     "duration": MARKET_DURATION_35,
     "duration35": MARKET_DURATION_35,
     "duration_35": MARKET_DURATION_35,
@@ -145,6 +130,7 @@ MARKET_ALIASES = {
     "game_duration": MARKET_DURATION_35,
     "overunder35": MARKET_DURATION_35,
     "ou35": MARKET_DURATION_35,
+    "6": MARKET_TOTAL_KILLS_50,
     "7": MARKET_TOTAL_KILLS_50,
     "kills": MARKET_TOTAL_KILLS_50,
     "totalkills": MARKET_TOTAL_KILLS_50,
@@ -602,14 +588,14 @@ def get_live_kill_scores(match):
     scoreboard = _scoreboard_from_match(match)
     radiant = scoreboard.get("radiant") or {}
     dire = scoreboard.get("dire") or {}
-    radiant_players = radiant.get("players") or []
-    dire_players = dire.get("players") or []
-    radiant_kills = sum(_safe_int(p.get("kills"), 0) for p in radiant_players)
-    dire_kills = sum(_safe_int(p.get("kills"), 0) for p in dire_players)
-    if radiant_kills == 0:
-        radiant_kills = _safe_int(radiant.get("score"), radiant_kills)
-    if dire_kills == 0:
-        dire_kills = _safe_int(dire.get("score"), dire_kills)
+    radiant_kills = _safe_int(radiant.get("score"), None)
+    dire_kills = _safe_int(dire.get("score"), None)
+    if radiant_kills is None:
+        radiant_players = radiant.get("players") or []
+        radiant_kills = sum(_safe_int(p.get("kills"), 0) for p in radiant_players)
+    if dire_kills is None:
+        dire_players = dire.get("players") or []
+        dire_kills = sum(_safe_int(p.get("kills"), 0) for p in dire_players)
     return radiant_kills, dire_kills
 
 
@@ -752,6 +738,23 @@ def _detect_first_to_10_winner(match, state):
 
 def _detect_first_tower_winner(match, state):
     scoreboard = _scoreboard_from_match(match)
+    radiant_tower_state = _extract_team_stat(scoreboard, "radiant", ("tower_state", "towerState"))
+    dire_tower_state = _extract_team_stat(scoreboard, "dire", ("tower_state", "towerState"))
+    previous = (state.get("live_observations") or {}).get("tower_states") or {}
+    prev_radiant = _safe_int(previous.get("radiant"), None)
+    prev_dire = _safe_int(previous.get("dire"), None)
+    if None not in (radiant_tower_state, dire_tower_state, prev_radiant, prev_dire):
+        radiant_destroyed = int(prev_radiant) & ~int(radiant_tower_state)
+        dire_destroyed = int(prev_dire) & ~int(dire_tower_state)
+        radiant_lost = radiant_destroyed != 0
+        dire_lost = dire_destroyed != 0
+        if radiant_lost and dire_lost:
+            return FIRST_TOWER_AMBIGUOUS
+        if radiant_lost:
+            return "dire"
+        if dire_lost:
+            return "radiant"
+
     direct = _first_matching_team_field(scoreboard, (
         "first_tower_team",
         "firsttower_team",
@@ -762,61 +765,6 @@ def _detect_first_tower_winner(match, state):
     ))
     if direct:
         return direct
-
-    radiant_tower_state = _extract_team_stat(scoreboard, "radiant", ("tower_state", "towerState"))
-    dire_tower_state = _extract_team_stat(scoreboard, "dire", ("tower_state", "towerState"))
-    previous = (state.get("live_observations") or {}).get("tower_states") or {}
-    prev_radiant = _safe_int(previous.get("radiant"), None)
-    prev_dire = _safe_int(previous.get("dire"), None)
-    if None in (radiant_tower_state, dire_tower_state, prev_radiant, prev_dire):
-        return None
-
-    radiant_lost = int(radiant_tower_state).bit_count() < int(prev_radiant).bit_count()
-    dire_lost = int(dire_tower_state).bit_count() < int(prev_dire).bit_count()
-    if radiant_lost and not dire_lost:
-        return "dire"
-    if dire_lost and not radiant_lost:
-        return "radiant"
-    return None
-
-
-def _detect_first_roshan_winner(match, state):
-    scoreboard = _scoreboard_from_match(match)
-    direct = _first_matching_team_field(scoreboard, (
-        "first_roshan_team",
-        "firstroshan_team",
-        "first_roshan",
-        "firstroshan",
-        "roshan_kill_team",
-        "roshan_team",
-        "last_roshan_kill_team",
-    ))
-    if direct:
-        return direct
-
-    radiant_roshan_kills = _extract_team_stat(scoreboard, "radiant", (
-        "roshan_kills",
-        "roshanKills",
-        "roshans_killed",
-        "roshan_count",
-    ))
-    dire_roshan_kills = _extract_team_stat(scoreboard, "dire", (
-        "roshan_kills",
-        "roshanKills",
-        "roshans_killed",
-        "roshan_count",
-    ))
-    previous = (state.get("live_observations") or {}).get("roshan_kills") or {}
-    prev_radiant = _safe_int(previous.get("radiant"), None)
-    prev_dire = _safe_int(previous.get("dire"), None)
-    if None in (radiant_roshan_kills, dire_roshan_kills, prev_radiant, prev_dire):
-        return None
-    radiant_gained = radiant_roshan_kills > prev_radiant
-    dire_gained = dire_roshan_kills > prev_dire
-    if radiant_gained and not dire_gained:
-        return "radiant"
-    if dire_gained and not radiant_gained:
-        return "dire"
     return None
 
 
@@ -862,6 +810,53 @@ def _final_market_winners_from_state(state, match_result=None):
     return winners
 
 
+def _void_market_state(guild_id, market, reason=None, voided_by=None):
+    if market.get("status") == "voided":
+        return {
+            "market_id": market.get("id"),
+            "market_label": market.get("label", market.get("id", "Market")),
+            "bet_count": len(_market_bets(market)),
+            "refunded_total": _safe_int(market.get("refunded_total"), 0),
+            "already_voided": True,
+        }
+
+    refunded_total = 0
+    net_adjustment = 0
+    bets = _market_bets(market)
+    for user_id, bet in bets.items():
+        amount = _safe_int(bet.get("amount"), 0)
+        gross_payout = _safe_int(bet.get("gross_payout"), 0) if market.get("paid") else 0
+        refund_delta = amount - gross_payout
+        nickname = bet.get("nickname")
+        before = int(get_balance(guild_id, user_id, nickname) or 0)
+        after = update_balance(guild_id, user_id, refund_delta, nickname)
+        refunded_total += amount
+        net_adjustment += refund_delta
+        bet["voided"] = True
+        bet["refund_delta"] = refund_delta
+        bet["balance_before_refund"] = before
+        bet["balance_after_refund"] = after
+
+    market["bets"] = bets
+    market["status"] = "voided"
+    market["voided"] = True
+    market["paid"] = True
+    market["winner"] = None
+    market["voided_by"] = str(voided_by) if voided_by else "Unknown"
+    market["void_reason"] = reason or "No reason provided"
+    market["voided_at"] = _now_utc()
+    market["refunded_total"] = refunded_total
+    market["net_refund_adjustment"] = net_adjustment
+    return {
+        "market_id": market.get("id"),
+        "market_label": market.get("label", market.get("id", "Market")),
+        "bet_count": len(bets),
+        "refunded_total": refunded_total,
+        "net_adjustment": net_adjustment,
+        "already_voided": False,
+    }
+
+
 def process_live_betting_markets(guild_id, match_id, match):
     data = update_market_lock_state(guild_id, match_id, match)
     if not data or data.get("status") in {"paid", "cancelled"}:
@@ -870,6 +865,18 @@ def process_live_betting_markets(guild_id, match_id, match):
     markets = deepcopy(data.get("markets") or {})
     now = _now_utc()
     changed = False
+
+    for deprecated_market_id in DEPRECATED_MARKET_IDS:
+        deprecated_market = markets.get(deprecated_market_id)
+        if deprecated_market and not deprecated_market.get("paid"):
+            _void_market_state(
+                guild_id,
+                deprecated_market,
+                reason="Market removed because Steam live data does not identify the result reliably.",
+                voided_by="system",
+            )
+            markets[deprecated_market_id] = deprecated_market
+            changed = True
 
     first_blood = markets.get(MARKET_FIRST_BLOOD)
     if first_blood and first_blood.get("status") in {"open", "locked"} and not first_blood.get("winner"):
@@ -894,21 +901,20 @@ def process_live_betting_markets(guild_id, match_id, match):
     first_tower = markets.get(MARKET_FIRST_TOWER)
     if first_tower and first_tower.get("status") in {"open", "locked"} and not first_tower.get("winner"):
         winner = _detect_first_tower_winner(match, data)
-        if winner:
+        if winner == FIRST_TOWER_AMBIGUOUS:
+            _void_market_state(
+                guild_id,
+                first_tower,
+                reason="Both teams lost a tower between Steam API polls.",
+                voided_by="system",
+            )
+            markets[MARKET_FIRST_TOWER] = first_tower
+            changed = True
+        elif winner:
             first_tower["status"] = "resolved"
             first_tower["winner"] = winner
             first_tower["resolved_at"] = now
             first_tower["result_source"] = "live_scoreboard"
-            changed = True
-
-    first_roshan = markets.get(MARKET_FIRST_ROSHAN)
-    if first_roshan and first_roshan.get("status") in {"open", "locked"} and not first_roshan.get("winner"):
-        winner = _detect_first_roshan_winner(match, data)
-        if winner:
-            first_roshan["status"] = "resolved"
-            first_roshan["winner"] = winner
-            first_roshan["resolved_at"] = now
-            first_roshan["result_source"] = "live_scoreboard"
             changed = True
 
     radiant_kills, dire_kills = get_live_kill_scores(match)
@@ -923,22 +929,12 @@ def process_live_betting_markets(guild_id, match_id, match):
         team: value if value is not None else previous_tower_states.get(team)
         for team, value in tower_states.items()
     }
-    previous_roshan_kills = previous_observations.get("roshan_kills") or {}
-    roshan_kills = {
-        "radiant": _extract_team_stat(scoreboard, "radiant", ("roshan_kills", "roshanKills", "roshans_killed", "roshan_count")),
-        "dire": _extract_team_stat(scoreboard, "dire", ("roshan_kills", "roshanKills", "roshans_killed", "roshan_count")),
-    }
-    roshan_kills = {
-        team: value if value is not None else previous_roshan_kills.get(team)
-        for team, value in roshan_kills.items()
-    }
     updates = {
         "live_observations": {
             "radiant_kills": radiant_kills,
             "dire_kills": dire_kills,
             "duration": _scoreboard_duration(match),
             "tower_states": tower_states,
-            "roshan_kills": roshan_kills,
             "updated_at": now,
         },
         "updated_at": now,
@@ -1133,6 +1129,17 @@ def _resolve_market_bets(guild_id, match_id, winning_team, market_winners=None, 
     total_carryover_added = 0
     now = _now_utc()
 
+    for deprecated_market_id in DEPRECATED_MARKET_IDS:
+        deprecated_market = markets.get(deprecated_market_id)
+        if deprecated_market and not deprecated_market.get("paid"):
+            _void_market_state(
+                guild_id,
+                deprecated_market,
+                reason="Market removed because Steam live data does not identify the result reliably.",
+                voided_by="system",
+            )
+            markets[deprecated_market_id] = deprecated_market
+
     for market_id in MARKET_ORDER:
         market = markets.get(market_id)
         if not market:
@@ -1272,43 +1279,10 @@ def void_market(guild_id, match_id, market_id, reason=None, voided_by=None):
             "already_voided": True,
         }
 
-    refunded_total = 0
-    net_adjustment = 0
-    bets = _market_bets(market)
-    for user_id, bet in bets.items():
-        amount = _safe_int(bet.get("amount"), 0)
-        gross_payout = _safe_int(bet.get("gross_payout"), 0) if market.get("paid") else 0
-        refund_delta = amount - gross_payout
-        nickname = bet.get("nickname")
-        before = int(get_balance(guild_id, user_id, nickname) or 0)
-        after = update_balance(guild_id, user_id, refund_delta, nickname)
-        refunded_total += amount
-        net_adjustment += refund_delta
-        bet["voided"] = True
-        bet["refund_delta"] = refund_delta
-        bet["balance_before_refund"] = before
-        bet["balance_after_refund"] = after
-
-    market["bets"] = bets
-    market["status"] = "voided"
-    market["voided"] = True
-    market["paid"] = True
-    market["winner"] = None
-    market["voided_by"] = str(voided_by) if voided_by else "Unknown"
-    market["void_reason"] = reason or "No reason provided"
-    market["voided_at"] = _now_utc()
-    market["refunded_total"] = refunded_total
-    market["net_refund_adjustment"] = net_adjustment
+    result = _void_market_state(guild_id, market, reason=reason, voided_by=voided_by)
     markets[market_id] = market
     ref.set({"markets": markets, "updated_at": _now_utc()}, merge=True)
-    return {
-        "market_id": market_id,
-        "market_label": market.get("label", market_id),
-        "bet_count": len(bets),
-        "refunded_total": refunded_total,
-        "net_adjustment": net_adjustment,
-        "already_voided": False,
-    }
+    return result
 
 
 def void_markets(guild_id, match_id, market_ids, reason=None, voided_by=None):
