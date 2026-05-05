@@ -27,7 +27,7 @@ def parse_args():
         description=(
             "Inspect live Dota 2 league scoreboard payloads from Steam. "
             "Use this locally while a match is live to discover exact fields for "
-            "first tower, first Roshan, and related betting markets."
+            "first tower, Roshan timer/Aegis clues, and related live scoreboard data."
         )
     )
     parser.add_argument("--league-id", help="Only inspect games from this league ID.")
