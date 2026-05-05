@@ -91,6 +91,8 @@ def attach_commands(bot, deps):
     random_polling_flags        = deps["random_polling_flags"]
     match_tracking_start_times  = deps["match_tracking_start_times"]
     live_embed_messages         = deps["live_embed_messages"]
+    bets_embed_messages         = deps["bets_embed_messages"]
+    bets_refresh_tasks          = deps["bets_refresh_tasks"]
     match_wait_tasks            = deps["match_wait_tasks"]
     original_teams              = deps["original_teams"]
 
@@ -300,6 +302,38 @@ def attach_commands(bot, deps):
             )
         embed.set_footer(text="Bet with !bet <market_number> <option> <amount>")
         return embed
+
+    def betting_markets_have_open_status(guild_id, match_id):
+        summary = get_betting_summary(guild_id, match_id)
+        if not summary:
+            return False
+        return any(
+            str(market.get("status", "")).lower() == "open"
+            for market in summary.get("markets") or []
+        )
+
+    async def refresh_bets_embed_until_locked(guild, match_id, message):
+        guild_id = guild.id
+        try:
+            while True:
+                await asyncio.sleep(15)
+                if active_match_ids.get(guild_id) != match_id:
+                    break
+                try:
+                    await message.edit(embed=build_bets_embed(guild, match_id))
+                except discord.NotFound:
+                    break
+                except Exception as e:
+                    print(f"[bets_refresh] Failed to refresh bets embed for guild={guild_id} match={match_id}: {e}")
+                    break
+                if not betting_markets_have_open_status(guild_id, match_id):
+                    break
+        except asyncio.CancelledError:
+            return
+        finally:
+            current_task = asyncio.current_task()
+            if bets_refresh_tasks.get(guild_id) is current_task:
+                bets_refresh_tasks.pop(guild_id, None)
 
     LEADERBOARD_PAGE_SIZE = 10
     MEDAL_EMOJIS = ["\U0001F947", "\U0001F948", "\U0001F949"]
@@ -1224,17 +1258,41 @@ def attach_commands(bot, deps):
         print(f"[bet_error] guild={getattr(ctx.guild, 'id', 'dm')} user={ctx.author.id} error={type(original).__name__}: {original}")
         await ctx.reply("An unexpected error occurred while placing your bet. Usage: `!bet [market] [amount] [radiant|dire]`.")
 
+    @commands.cooldown(1, 30, commands.BucketType.guild)
     @bot.command(name="bets")
     async def bets(ctx):
         if ctx.guild.id not in active_match_ids:
             await ctx.reply("There is no active match in progress.")
             return
-        match_id = active_match_ids.get(ctx.guild.id)
-        is_random = random_polling_flags.get(ctx.guild.id, False)
-        match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=is_random)
+        guild_id = ctx.guild.id
+        match_id = active_match_ids.get(guild_id)
+        is_random = random_polling_flags.get(guild_id, False)
+        match = await fetch_live_match_for_guild(guild_id, random_mode=is_random)
         if match:
             match_id = match.get("match_id", match_id)
-        await ctx.reply(embed=build_bets_embed(ctx.guild, match_id))
+        old_task = bets_refresh_tasks.pop(guild_id, None)
+        if old_task and not old_task.done():
+            old_task.cancel()
+        previous_message = bets_embed_messages.pop(guild_id, None)
+        if previous_message:
+            try:
+                await previous_message.delete()
+            except Exception:
+                pass
+        message = await ctx.reply(embed=build_bets_embed(ctx.guild, match_id))
+        bets_embed_messages[guild_id] = message
+        if betting_markets_have_open_status(guild_id, match_id):
+            bets_refresh_tasks[guild_id] = asyncio.create_task(
+                refresh_bets_embed_until_locked(ctx.guild, match_id, message)
+            )
+
+    @bets.error
+    async def bets_error(ctx, error):
+        if isinstance(error, commands.CommandOnCooldown):
+            wait_time = math.ceil(error.retry_after)
+            await ctx.reply(f"You must wait {wait_time} seconds before using `!bets` again.")
+            return
+        await ctx.reply("An error occurred while showing active betting markets.")
 
     @bot.command(name="bettingrules")
     async def bettingrules(ctx):
