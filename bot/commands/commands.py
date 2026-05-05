@@ -30,9 +30,30 @@ def attach_commands(bot, deps):
     # Feederbucks / betting
     get_balance                     = deps["get_balance"]
     place_bet                       = deps["place_bet"]
+    place_market_bet                = deps["place_market_bet"]
     update_balance                  = deps["update_balance"]
     resolve_bets                    = deps["resolve_bets"]
     clear_guild_bets                = deps["clear_guild_bets"]
+    BETTING_MODE_CLASSIC            = deps["BETTING_MODE_CLASSIC"]
+    BETTING_MODE_POOL               = deps["BETTING_MODE_POOL"]
+    MARKET_MATCH_WINNER             = deps["MARKET_MATCH_WINNER"]
+    MARKET_FIRST_BLOOD              = deps["MARKET_FIRST_BLOOD"]
+    MARKET_FIRST_TO_10              = deps["MARKET_FIRST_TO_10"]
+    MARKET_FIRST_TOWER              = deps["MARKET_FIRST_TOWER"]
+    MARKET_FIRST_ROSHAN             = deps["MARKET_FIRST_ROSHAN"]
+    MARKET_DURATION_35              = deps["MARKET_DURATION_35"]
+    MARKET_TOTAL_KILLS_50           = deps["MARKET_TOTAL_KILLS_50"]
+    MARKET_ORDER                    = deps["MARKET_ORDER"]
+    get_betting_settings            = deps["get_betting_settings"]
+    get_betting_summary             = deps["get_betting_summary"]
+    get_existing_market_bet         = deps["get_existing_market_bet"]
+    get_public_market_snapshots     = deps["get_public_market_snapshots"]
+    is_market_open_for_betting      = deps["is_market_open_for_betting"]
+    normalize_market_id             = deps["normalize_market_id"]
+    save_betting_mode_for_guild     = deps["save_betting_mode_for_guild"]
+    save_prop_markets_setting       = deps["save_prop_markets_setting"]
+    void_market                     = deps["void_market"]
+    void_markets                    = deps["void_markets"]
     DD_TOKEN_COST                   = deps["DD_TOKEN_COST"]
     get_dd_token_balance            = deps["get_dd_token_balance"]
     update_dd_token_balance         = deps["update_dd_token_balance"]
@@ -148,6 +169,138 @@ def attach_commands(bot, deps):
         if 1 <= item_index <= len(STORE_ITEM_ORDER):
             return STORE_ITEM_ORDER[item_index - 1]
         return None
+
+    def format_fb(amount):
+        try:
+            return f"{int(amount):,}"
+        except (TypeError, ValueError):
+            return "0"
+
+    def format_odds(value):
+        if value is None:
+            return "--x"
+        try:
+            return f"{float(value):.2f}x"
+        except (TypeError, ValueError):
+            return "--x"
+
+    def format_option_label(option):
+        labels = {
+            "radiant": "Radiant",
+            "dire": "Dire",
+            "over": "Over",
+            "under": "Under",
+        }
+        return labels.get(str(option or "").lower(), str(option or "Unknown").title())
+
+    def parse_bool_toggle(value: str | None):
+        lowered = str(value or "").lower().strip()
+        if lowered in ("on", "enable", "enabled", "true", "yes"):
+            return True
+        if lowered in ("off", "disable", "disabled", "false", "no"):
+            return False
+        return None
+
+    def normalize_betting_mode_arg(value: str | None):
+        lowered = str(value or "").lower().strip().replace("-", "_").replace(" ", "_")
+        if lowered in ("classic", "old", "standard"):
+            return BETTING_MODE_CLASSIC
+        if lowered in ("pool", "prizepool", "prize_pool", "twitch"):
+            return BETTING_MODE_POOL
+        return None
+
+    def parse_bet_args(args):
+        tokens = list(args or [])
+        market_id = MARKET_MATCH_WINNER
+        if tokens:
+            first = str(tokens[0]).lower()
+            maybe_market = normalize_market_id(first)
+            if maybe_market and (not first.isdigit() or len(tokens) >= 3):
+                market_id = maybe_market
+                tokens = tokens[1:]
+        amount = None
+        amount_is_all = False
+        team = None
+        for arg in tokens:
+            lower = str(arg).lower()
+            if lower in ("radiant", "dire", "over", "under"):
+                if team is not None and team != lower:
+                    raise ValueError("Please specify only one team: `radiant` or `dire`.")
+                team = lower
+            else:
+                if amount is not None:
+                    raise ValueError("Too many amount values.")
+                if lower == "all":
+                    amount = "all"
+                    amount_is_all = True
+                else:
+                    try:
+                        amount = int(arg)
+                    except ValueError:
+                        raise ValueError("Invalid argument.")
+        return market_id, amount, amount_is_all, team
+
+    def market_status_label(status):
+        labels = {
+            "open": "Open",
+            "locked": "Locked",
+            "resolved": "Resolved",
+            "paid": "Paid",
+            "voided": "Voided",
+            "cancelled": "Cancelled",
+        }
+        return labels.get(str(status or "").lower(), str(status or "Unknown").title())
+
+    def build_bets_embed(guild, match_id):
+        summary = get_betting_summary(guild.id, match_id)
+        if not summary:
+            embed = discord.Embed(
+                title="Active Betting Markets",
+                description="No betting markets are active for this match.",
+                color=discord.Color.red(),
+            )
+            return embed
+        mode = summary.get("mode", BETTING_MODE_CLASSIC)
+        embed = discord.Embed(
+            title="Active Betting Markets",
+            description=(
+                f"Match ID: `{match_id}`\n"
+                f"Mode: `{summary.get('mode_label', 'Classic')}`"
+            ),
+            color=discord.Color.gold(),
+        )
+        for market in summary.get("markets") or []:
+            pools = market.get("pools") or {}
+            options = market.get("options") or ["radiant", "dire"]
+            multipliers = market.get("option_multipliers") or {}
+            status = market_status_label(market.get("status"))
+            winner = market.get("winner")
+            lines = [f"Status: `{status}`"]
+            if winner:
+                lines.append(f"Result: `{format_option_label(winner)}`")
+            if mode == BETTING_MODE_POOL:
+                lines.extend([
+                    f"Prize Pool: `{format_fb(market.get('total_pool'))}`",
+                    f"Seeded: `{format_fb(market.get('seed'))}`",
+                ])
+                for option in options:
+                    lines.append(
+                        f"{format_option_label(option)}: `{format_fb(pools.get(option))}` "
+                        f"| `{format_odds(multipliers.get(option))}`"
+                    )
+            else:
+                lines.extend([
+                    "Odds: `2.00x` classic payout",
+                ])
+                for option in options:
+                    lines.append(f"{format_option_label(option)} Bets: `{format_fb(pools.get(option))}`")
+            embed.add_field(
+                name=f"[{market.get('index')}] {market.get('label')}",
+                value="\n".join(lines),
+                inline=False,
+            )
+        embed.set_footer(text="Bet with !bet <market_number> <option> <amount>")
+        return embed
 
     LEADERBOARD_PAGE_SIZE = 10
     MEDAL_EMOJIS = ["\U0001F947", "\U0001F948", "\U0001F949"]
@@ -571,15 +724,16 @@ def attach_commands(bot, deps):
                 net_delta = int(bet.get("net_delta", 0))
                 sign = "+" if net_delta > 0 else ""
                 team = str(bet.get("team", "unknown")).title()
+                market_label = bet.get("market_label") or "Match Winner"
                 balance_before = bet.get("balance_before")
                 balance_after = bet.get("balance_after")
                 if balance_before is not None and balance_after is not None:
                     bet_lines.append(
-                        f"**{name}**: bet `{amount}` on `{team}`, result `{sign}{net_delta}` (`{int(balance_before)}` -> `{int(balance_after)}`)"
+                        f"**{name}**: `{market_label}` bet `{amount}` on `{team}`, result `{sign}{net_delta}` (`{int(balance_before)}` -> `{int(balance_after)}`)"
                     )
                 else:
                     bet_lines.append(
-                        f"**{name}**: bet `{amount}` on `{team}`, result `{sign}{net_delta}`"
+                        f"**{name}**: `{market_label}` bet `{amount}` on `{team}`, result `{sign}{net_delta}`"
                     )
             embed.add_field(
                 name="Bets",
@@ -888,45 +1042,14 @@ def attach_commands(bot, deps):
     @bot.command(name="bet")
     async def bet(ctx, *args):
         DEFAULT_BET = 100
-        amount_is_all = False
-        # Allow:
-        # !bet
-        # !bet 200
-        # !bet all
-        # !bet radiant
-        # !bet 200 radiant
-        # !bet radiant 200
-        # !bet all radiant
-        amount = None
-        team = None
-        for arg in args:
-            lower = arg.lower()
-            if lower in ("radiant", "dire"):
-                # If they somehow gave two different teams, bail out
-                if team is not None and team != lower:
-                    await ctx.reply("Please specify only one team: `radiant` or `dire`.")
-                    return
-                team = lower
-            else:
-                # Treat anything else as the amount
-                if amount is not None:
-                    await ctx.reply(
-                        "Too many numbers. Usage: `!bet [amount] [radiant|dire]`."
-                    )
-                    return
-                if lower == "all":
-                    amount = "all"
-                    amount_is_all = True
-                else:
-                    try:
-                        amount = int(arg)
-                    except ValueError:
-                        await ctx.reply(
-                            "Invalid argument. Usage: `!bet [amount|all] [radiant|dire]` "
-                            "(`amount` must be a number or `all`)."
-                        )
-                        return
-        # Default to 100 Feederbucks if no amount was explicitly given
+        try:
+            market_id, amount, amount_is_all, team = parse_bet_args(args)
+        except ValueError as exc:
+            await ctx.reply(
+                f"{exc}\n"
+                "Usage: `!bet [market] [amount|all] [radiant|dire]` or `!bet <market_number> <radiant|dire> <amount>`."
+            )
+            return
         if amount is None:
             amount = DEFAULT_BET
         if not amount_is_all and amount <= 0:
@@ -943,17 +1066,16 @@ def attach_commands(bot, deps):
         if not match:
             await ctx.reply("Could not retrieve live match info. Betting may be closed.")
             return
-        scoreboard = match.get("scoreboard") or {}
-        duration = scoreboard.get("duration", 0)
-        if is_random:
-            start_time = match_tracking_start_times.get(ctx.guild.id)
-            if start_time and (time.time() - start_time > 180):
-                await ctx.reply("Bets are closed. More than 3 minutes have passed since this random match began tracking.")
-                return
-        else:
-            if duration >= 120:
-                await ctx.reply("Bets are closed. The match has passed the 2:00 mark.")
-                return
+        match_id = match.get("match_id")
+        market_snapshot = next(
+            (m for m in get_public_market_snapshots(ctx.guild.id, match_id) if m.get("id") == market_id),
+            None,
+        )
+        market_label = (market_snapshot or {}).get("label", "Match Winner")
+        market_options = (market_snapshot or {}).get("options") or ["radiant", "dire"]
+        if not is_market_open_for_betting(ctx.guild.id, match_id, market_id):
+            await ctx.reply(f"Bets are closed for **{market_label}**.")
+            return
         # --- Auto-detect bettor's team if they're playing ---
         player_team = None  # 0 = Radiant, 1 = Dire
         for player in match.get("players", []):
@@ -962,36 +1084,44 @@ def attach_commands(bot, deps):
             if discord_id == str(ctx.author.id):
                 player_team = player.get("team")  # 0 = Radiant, 1 = Dire
                 break
+        if market_id != MARKET_MATCH_WINNER and player_team is not None:
+            await ctx.reply(
+                "Players in the active match cannot bet on side markets like "
+                f"**{market_label}**."
+            )
+            return
         # If team not provided, fill it from player's team (if playing), else prompt
         if team is None:
-            if player_team is not None:
+            if market_id == MARKET_MATCH_WINNER and player_team is not None:
                 team = "radiant" if player_team == 0 else "dire"
                 auto_detected = True # they didn't specify, but we found it
             else:
                 await ctx.reply(
                     "You’re not in the current match. Please specify a team:\n"
-                    "Example: `!bet radiant` (bets 100 Feederbucks) or `!bet 200 radiant`."
+                    "Example: `!bet radiant`, `!bet 2 dire 250`, or `!bet 6 over 250`."
                 )
                 return
         # Normalize & validate team now that it’s known
         team = str(team).lower().strip()
-        if team not in ["radiant", "dire"]:
-            await ctx.reply("Invalid team. Choose `radiant` or `dire`.")
+        if team not in market_options:
+            await ctx.reply(
+                "Invalid option. Choose one of: "
+                + ", ".join(f"`{option}`" for option in market_options)
+                + "."
+            )
             return
-        if player_team is not None:
+        if market_id == MARKET_MATCH_WINNER and player_team is not None:
             if (player_team == 0 and team == "dire") or (player_team == 1 and team == "radiant"):
                 await ctx.reply(
                     f"You are currently playing on the **{'Radiant' if player_team == 0 else 'Dire'}** team.\n"
                     f"You cannot place a bet on the **opposing team** during a match you are in."
                 )
                 return
-        entry_ref = db.collection("bets").document(str(ctx.guild.id)).collection("entries").document(str(ctx.author.id))
-        existing_bet_doc = entry_ref.get()
+        existing_bet = get_existing_market_bet(ctx.guild.id, match_id, market_id, ctx.author.id)
         previous_bet = 0
         delta = amount
         is_update = False
-        if existing_bet_doc.exists:
-            existing_bet = existing_bet_doc.to_dict()
+        if existing_bet:
             try:
                 previous_bet = int(existing_bet.get("amount", 0) or 0)
             except (TypeError, ValueError):
@@ -1000,8 +1130,8 @@ def attach_commands(bot, deps):
             previous_team = existing_bet.get("team", "")
             if team != previous_team:
                 await ctx.reply(
-                    f"You already bet on **{previous_team.capitalize()}**. "
-                    f"You cannot change teams once your bet is placed."
+                    f"You already bet on **{format_option_label(previous_team)}**. "
+                    f"You cannot change options once your bet is placed."
                 )
                 return
             if not amount_is_all and amount <= previous_bet:
@@ -1026,7 +1156,11 @@ def attach_commands(bot, deps):
         if (current_balance + previous_bet) < amount:
             await ctx.reply("You don’t have enough balance.")
         else:
-            place_bet(user_id, team, amount, delta, ctx.guild.id, nickname)
+            try:
+                place_market_bet(user_id, team, amount, delta, ctx.guild.id, match_id, market_id, nickname)
+            except ValueError as exc:
+                await ctx.reply(str(exc))
+                return
             new_balance = current_balance - delta
             prefix = ""
             if auto_detected:
@@ -1037,13 +1171,13 @@ def attach_commands(bot, deps):
             if is_update:
                 await ctx.reply(
                     prefix +
-                    f"You updated your bet from `{previous_bet}` to `{amount}` on **{team.capitalize()}**. "
+                    f"You updated your **{market_label}** bet from `{previous_bet}` to `{amount}` on **{format_option_label(team)}**. "
                     f"Your balance went from {current_balance} to {new_balance}."
                 )
             else:
                 await ctx.reply(
                     prefix +
-                    f"You bet `{amount}` on **{team.capitalize()}** for this match. "
+                    f"You bet `{amount}` on **{format_option_label(team)}** for **{market_label}**. "
                     f"Your balance went from {current_balance} to {new_balance}."
                 )
     @bet.error
@@ -1053,7 +1187,175 @@ def attach_commands(bot, deps):
             return
         original = getattr(error, "original", error)
         print(f"[bet_error] guild={getattr(ctx.guild, 'id', 'dm')} user={ctx.author.id} error={type(original).__name__}: {original}")
-        await ctx.reply("An unexpected error occurred while placing your bet. Usage: `!bet [amount] [radiant|dire]`.")
+        await ctx.reply("An unexpected error occurred while placing your bet. Usage: `!bet [market] [amount] [radiant|dire]`.")
+
+    @bot.command(name="bets")
+    async def bets(ctx):
+        if ctx.guild.id not in active_match_ids:
+            await ctx.reply("There is no active match in progress.")
+            return
+        match_id = active_match_ids.get(ctx.guild.id)
+        is_random = random_polling_flags.get(ctx.guild.id, False)
+        match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=is_random)
+        if match:
+            match_id = match.get("match_id", match_id)
+        await ctx.reply(embed=build_bets_embed(ctx.guild, match_id))
+
+    @bot.command(name="bettingrules")
+    async def bettingrules(ctx):
+        embed = discord.Embed(
+            title="Betting Rules",
+            description=f"Rules for **{ctx.guild.name}**",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(
+            name="Markets",
+            value=(
+                "`Match Winner`, `First Blood`, and `First to 10 Kills` are always available when a match is active.\n"
+                "When prop markets are enabled, `First Tower`, `First Roshan`, `Game Duration O/U 35:00`, and `Total Kills O/U 50` are also available.\n"
+                "Players in the active match may only bet on Match Winner, and only on their own team."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Integrity",
+            value=(
+                "Collusion, bribery, or intentional gameplay manipulation for betting outcomes is prohibited.\n"
+                "Admins/Inhouse Admins may void suspicious markets and refund affected bets."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Payouts",
+            value=(
+                "Classic mode pays `2.00x` gross payout on winning bets.\n"
+                "Prize Pool mode splits each market's prize pool proportionally among winning bettors.\n"
+                "If nobody bets on the Match Winner outcome, that prize pool carries over as jackpot.\n"
+                "Side/prop markets use smaller seeds and do not carry over.\n"
+                "`Over` means at least 35:00 for duration or at least 50 total kills."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Locks",
+            value=(
+                "Markets lock when the game starts, when scoring begins, or 60 seconds after all heroes are fetched."
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="Use !bets to view active markets and !betmode to view the current mode.")
+        await ctx.reply(embed=embed)
+
+    @bot.command(name="betmode")
+    @is_admin_or_has_role()
+    async def betmode(ctx, mode: str = None):
+        settings = get_betting_settings(ctx.guild.id)
+        if mode is None:
+            await ctx.reply(
+                f"Current betting mode: `{settings['mode']}` "
+                f"({ 'Prize Pool' if settings['mode'] == BETTING_MODE_POOL else 'Classic' }).\n"
+                "Use `!betmode classic` or `!betmode pool` to change future matches."
+            )
+            return
+        normalized = normalize_betting_mode_arg(mode)
+        if normalized is None:
+            await ctx.reply("Usage: `!betmode <classic|pool>`")
+            return
+        save_betting_mode_for_guild(ctx.guild.id, normalized, server_name=ctx.guild.name, set_by=ctx.author)
+        label = "Prize Pool" if normalized == BETTING_MODE_POOL else "Classic"
+        live_note = ""
+        if ctx.guild.id in active_match_ids:
+            live_note = "\nCurrent live matches keep the betting mode they started with."
+        await ctx.reply(f"Betting mode changed to **{label}** for future matches.{live_note}")
+
+    @betmode.error
+    async def betmode_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to change betting mode. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while changing betting mode.")
+
+    @bot.command(name="propmarkets", aliases=["propmarket"])
+    @is_admin_or_has_role()
+    async def propmarkets(ctx, mode: str = None):
+        settings = get_betting_settings(ctx.guild.id)
+        if mode is None:
+            status = "enabled" if settings["prop_markets_enabled"] else "disabled"
+            await ctx.reply(f"Prop markets are currently **{status}** for this server.")
+            return
+        enabled = parse_bool_toggle(mode)
+        if enabled is None:
+            await ctx.reply("Usage: `!propmarkets <on|off>`")
+            return
+        save_prop_markets_setting(ctx.guild.id, enabled, server_name=ctx.guild.name, set_by=ctx.author)
+        await ctx.reply(f"Prop markets are now **{'enabled' if enabled else 'disabled'}** for future markets.")
+
+    @propmarkets.error
+    async def propmarkets_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to change prop markets. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while changing prop market settings.")
+
+    @bot.command(name="voidmarket")
+    @is_admin_or_has_role()
+    async def voidmarket(ctx, market: str = None, *, reason: str = ""):
+        if market is None:
+            await ctx.reply("Usage: `!voidmarket <market_number|match|firstblood|first10|side|all> [reason]`")
+            return
+        if ctx.guild.id not in active_match_ids:
+            await ctx.reply("There is no active match with betting markets to void.")
+            return
+        match_id = active_match_ids.get(ctx.guild.id)
+        selector = str(market).lower().strip()
+        existing_market_ids = [
+            snapshot.get("id")
+            for snapshot in get_public_market_snapshots(ctx.guild.id, match_id)
+            if snapshot.get("id")
+        ]
+        if selector in ("all", "everything"):
+            market_ids = existing_market_ids
+        elif selector in ("side", "sides"):
+            market_ids = [market_id for market_id in existing_market_ids if market_id != MARKET_MATCH_WINNER]
+        elif selector in ("prop", "props"):
+            prop_ids = {MARKET_FIRST_TOWER, MARKET_FIRST_ROSHAN, MARKET_DURATION_35, MARKET_TOTAL_KILLS_50}
+            market_ids = [market_id for market_id in existing_market_ids if market_id in prop_ids]
+        else:
+            market_id = normalize_market_id(selector)
+            if not market_id:
+                await ctx.reply("Unknown market. Use `!bets` to see market numbers.")
+                return
+            market_ids = [market_id]
+        if not market_ids:
+            await ctx.reply("No matching markets are active for this match.")
+            return
+        try:
+            results = void_markets(
+                ctx.guild.id,
+                match_id,
+                market_ids,
+                reason=reason or "No reason provided",
+                voided_by=ctx.author,
+            )
+        except ValueError as exc:
+            await ctx.reply(str(exc))
+            return
+        lines = []
+        for result in results:
+            label = result.get("market_label", result.get("market_id", "Market"))
+            already = " already voided" if result.get("already_voided") else ""
+            lines.append(
+                f"**{label}**{already}: refunded `{format_fb(result.get('refunded_total'))}` "
+                f"across `{result.get('bet_count', 0)}` bets."
+            )
+        await ctx.reply("\n".join(lines))
+
+    @voidmarket.error
+    async def voidmarket_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to void markets. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while voiding the market.")
 
     @bot.command(name="balance", aliases=["money", "feederbucks"])
     async def balance(ctx, member: discord.Member = None):
@@ -1927,6 +2229,28 @@ def attach_commands(bot, deps):
                     f"\n**Captain Policy**:\n  • Value: `{pol}`{threshold_note}\n  • Set by: {pol_set_by}\n  • Timestamp: `{pol_time}`\n  • Full Doc: `{captain_data}`")
             else:
                 lines.append(f"\n**Captain Policy**: `{pol}`{threshold_note}\n Set by: {pol_set_by}\n Time: {pol_time}")
+            betting = get_betting_settings(guild_id)
+            betting_data = betting.get("full_doc", {}) or {}
+            betting_mode = betting.get("mode", BETTING_MODE_CLASSIC)
+            betting_label = "Prize Pool" if betting_mode == BETTING_MODE_POOL else "Classic"
+            prop_status = "Enabled" if betting.get("prop_markets_enabled") else "Disabled"
+            carryover = betting.get("carryover_jackpot", 0)
+            if verbose:
+                lines.append(
+                    f"\n**Betting Settings**:\n"
+                    f"  - Mode: `{betting_mode}` ({betting_label})\n"
+                    f"  - Prop Markets: `{prop_status}`\n"
+                    f"  - Carryover Jackpot: `{carryover}`\n"
+                    f"  - Set by: {betting.get('mode_set_by', 'Unknown')}\n"
+                    f"  - Timestamp: `{betting.get('mode_timestamp', 'Unknown')}`\n"
+                    f"  - Full Doc: `{betting_data}`"
+                )
+            else:
+                lines.append(
+                    f"\n**Betting Settings**: `{betting_label}`\n"
+                    f"Prop Markets: {prop_status}\n"
+                    f"Carryover Jackpot: `{carryover}`"
+                )
         else:
             lines.append("No Firestore data found for this guild.")
         await ctx.reply("\n".join(lines))
@@ -1965,7 +2289,7 @@ def attach_commands(bot, deps):
         doubled_user_ids = get_active_double_down_users(ctx.guild.id)
         mmr_changes = await adjust_mmr(bot, winner_ids, loser_ids, ctx.guild.id, doubled_user_ids=doubled_user_ids)
         clear_active_double_downs(ctx.guild.id)
-        bet_results = resolve_bets(ctx.guild.id, winning_team)
+        bet_results = resolve_bets(ctx.guild.id, winning_team, match_id=match_id, match_result=result)
         clear_guild_bets(ctx.guild.id)
         all_player_ids = winner_ids + loser_ids
         for discord_id in all_player_ids:
@@ -2401,7 +2725,9 @@ def attach_commands(bot, deps):
                     "**!livematch** - Recall and refresh the live match embed in the channel (30s cooldown).\n\n"
                    
                     "__**Betting / Store Commands**__\n"
-                    "**!bet `<amt>` `<radiant|dire>`** - Bet Feederbucks on the current inhouse match.\n"
+                    "**!bets** - View active betting markets, pools, and odds.\n"
+                    "**!bet `[market]` `<amt>` `<option>`** - Bet Feederbucks on an active market. Options are usually `radiant|dire`, or `over|under` for O/U prop markets.\n"
+                    "**!bettingrules** - View betting integrity and payout rules.\n"
                     "**!store** - View the store.\n"
                     "**!buy `<item_number>` `<amount>` `[any additional optional parameters]`** - Buy a store item by its number from `!store`.\n"
                     "**!dd_tokens `[@user]`** - View double down token balance.\n"
@@ -2437,6 +2763,11 @@ def attach_commands(bot, deps):
 
                     "__**Bot Settings**__\n"
                     "**!changeprefix `<new_prefix>`** - Change the bot command prefix for this server.\n"
+                    "**!betmode `<classic|pool>`** - Set the betting mode for future matches.\n"
+                    "**!propmarkets `<on|off>`** - Enable/disable future high-risk prop markets.\n"
+                    "**!voidmarket `<selector>` `[reason]`** - Void and refund suspicious betting markets.\n"
+                    "Selectors: `<market>` = one market by number/name from `!bets`; `side` = all non-Match-Winner markets; `prop` = only high-risk prop markets; `all` = every active market.\n"
+                    "Examples: `!voidmarket 2 suspicious first blood`, `!voidmarket prop suspected collusion`, `!voidmarket all data issue`.\n"
                     "**!modifycost `<item_index|item_name>` `<cost>`** - Override a store item cost for this server. Example: `!modifycost 2 60000`.\n"
                     "**!viewlogs** - View recent configuration logs for this server.\n"
                     "**!viewlogs --verbose** - View detailed logs with full Firestore data.\n\n"
