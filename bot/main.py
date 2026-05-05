@@ -158,6 +158,8 @@ from bot.state.runtime_state import (
     IMMORTAL_MAX_ROLLS,
     MAX_ROLLS,
     active_match_ids,
+    bets_embed_messages,
+    bets_refresh_tasks,
     captain_draft_state,
     display_name,
     immortal_draft_running,
@@ -924,6 +926,8 @@ deps = {
     "random_polling_flags": random_polling_flags,
     "match_tracking_start_times": match_tracking_start_times,
     "live_embed_messages": live_embed_messages,
+    "bets_embed_messages": bets_embed_messages,
+    "bets_refresh_tasks": bets_refresh_tasks,
     "match_wait_tasks": match_wait_tasks,
     "original_teams": original_teams,
     # lobby + helpers
