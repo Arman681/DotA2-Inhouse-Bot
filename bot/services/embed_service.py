@@ -1,5 +1,6 @@
 import discord
 
+from bot.services.betting_manager import BETTING_MODE_POOL, get_betting_summary
 from bot.services.guild_config_service import (
     get_captain_policy,
     load_inhouse_mode_for_guild,
@@ -21,6 +22,55 @@ bot = None
 hero_id_map = {}
 get_display_name = None
 assign_roles_with_preferences = None
+
+
+def _format_amount(amount):
+    try:
+        return f"{int(amount):,}"
+    except (TypeError, ValueError):
+        return "0"
+
+
+def _format_multiplier(value):
+    if value is None:
+        return "--x"
+    try:
+        return f"{float(value):.2f}x"
+    except (TypeError, ValueError):
+        return "--x"
+
+
+def _format_live_betting_summary(guild_id, match_id):
+    summary = get_betting_summary(guild_id, match_id)
+    if not summary:
+        return None
+    markets = summary.get("markets") or []
+    main_market = next((m for m in markets if m.get("id") == "match"), None)
+    open_count = sum(1 for m in markets if m.get("status") == "open")
+    locked_count = sum(1 for m in markets if m.get("status") == "locked")
+    lines = [
+        f"Mode: `{summary.get('mode_label', 'Classic')}`",
+        f"Markets: `{open_count}` open, `{locked_count}` locked",
+    ]
+    if main_market:
+        pools = main_market.get("pools") or {}
+        if summary.get("mode") == BETTING_MODE_POOL:
+            lines.extend([
+                f"Prize Pool: `{_format_amount(main_market.get('total_pool'))}`",
+                f"Seeded: `{_format_amount(main_market.get('seed'))}`",
+                (
+                    f"Radiant: `{_format_amount(pools.get('radiant'))}` "
+                    f"| `{_format_multiplier(main_market.get('radiant_multiplier'))}`"
+                ),
+                (
+                    f"Dire: `{_format_amount(pools.get('dire'))}` "
+                    f"| `{_format_multiplier(main_market.get('dire_multiplier'))}`"
+                ),
+            ])
+        else:
+            lines.append("Match Winner: `2.00x` classic payout")
+    lines.append("Use `!bets` for all markets.")
+    return "\n".join(lines)
 
 
 def configure_embed_service(*, bot_instance, hero_id_map_cache, get_display_name_fn, assign_roles_with_preferences_fn):
@@ -199,4 +249,7 @@ async def format_live_match_embed(match, guild):
     embed.add_field(name="**Radiant**", value="\n".join(radiant_players), inline=True)
     embed.add_field(name="**Dire**", value="\n".join(dire_players), inline=True)
     embed.add_field(name="Info", value=f"League ID: `{league_id}`\nMatch ID: `{match_id}`", inline=False)
+    betting_summary = _format_live_betting_summary(guild.id, match_id)
+    if betting_summary:
+        embed.add_field(name="Betting", value=betting_summary, inline=False)
     return embed

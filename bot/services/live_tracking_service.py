@@ -4,6 +4,7 @@ import random
 
 import discord
 
+from bot.services.betting_manager import ensure_match_betting_state, process_live_betting_markets
 from bot.state.runtime_state import (
     _last_active_match_id,
     _last_fetch_stats,
@@ -138,6 +139,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
             if not match:
                 print(f"[poll_live_match] Match {match_id} no longer reported as live. Stopping Steam polling.")
                 break
+            process_live_betting_markets(guild.id, match_id, match)
             embed = await format_live_match_embed(match, guild)
             if channel:
                 prev_msg = live_embed_messages.get(guild.id)
@@ -183,7 +185,7 @@ async def poll_live_match(match_id, guild, random_mode=False):
     winner_ids = map_steam_ids_to_discord_ids(result["radiantplayers"] if result["radiant_win"] else result["direplayers"])
     loser_ids = map_steam_ids_to_discord_ids(result["direplayers"] if result["radiant_win"] else result["radiantplayers"])
     player_stats = build_ledger_player_stats(guild, result.get("player_stats", []))
-    bet_results = resolve_bets(guild.id, winning_team)
+    bet_results = resolve_bets(guild.id, winning_team, match_id=match_id, match_result=result)
     mmr_changes = []
     if not random_mode:
         try:
@@ -448,6 +450,8 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
                 print(f"[fetch_live_match_for_guild] Picked new match_id {sel_id} for guild {guild_id}")
             _last_selected_match_id[guild_id] = sel_id
         selected_match["guild_id"] = guild_id
+        ensure_match_betting_state(guild_id, selected_match["match_id"], random_mode=random_mode)
+        process_live_betting_markets(guild_id, selected_match["match_id"], selected_match)
         return selected_match
     except Exception as e:
         print(f"[fetch_live_match_for_guild] Steam API error: {e}")
