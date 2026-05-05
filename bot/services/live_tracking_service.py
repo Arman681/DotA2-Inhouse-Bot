@@ -10,6 +10,7 @@ from bot.state.runtime_state import (
     _last_fetch_stats,
     _last_selected_match_id,
     active_match_ids,
+    bets_refresh_tasks,
     live_channel_ids,
     live_embed_messages,
     lobby_players,
@@ -109,6 +110,9 @@ def clear_match_tracking_state(guild_id: int):
     random_polling_flags.pop(guild_id, None)
     match_tracking_start_times.pop(guild_id, None)
     live_embed_messages.pop(guild_id, None)
+    bets_task = bets_refresh_tasks.pop(guild_id, None)
+    if bets_task and not bets_task.done():
+        bets_task.cancel()
     _last_fetch_stats.pop(guild_id, None)
     _last_active_match_id.pop(guild_id, None)
     _last_selected_match_id.pop(guild_id, None)
