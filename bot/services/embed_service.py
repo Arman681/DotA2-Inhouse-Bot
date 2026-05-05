@@ -51,23 +51,24 @@ def _scoreboard_team_score(scoreboard, team):
     return sum(int(player.get("kills", 0) or 0) for player in team_data.get("players", []) or [])
 
 
-def _format_live_betting_summary(guild_id, match_id):
+def _format_live_betting_columns(guild_id, match_id):
     summary = get_betting_summary(guild_id, match_id)
     if not summary:
-        return None
+        return None, None
     markets = summary.get("markets") or []
     main_market = next((m for m in markets if m.get("id") == "match"), None)
     open_count = sum(1 for m in markets if m.get("status") == "open")
     locked_count = sum(1 for m in markets if m.get("status") == "locked")
-    lines = [
+    left_lines = [
         f"Mode: `{summary.get('mode_label', 'Classic')}`",
         f"Markets: `{open_count}` open, `{locked_count}` locked",
     ]
+    right_lines = []
     if main_market:
         pools = main_market.get("pools") or {}
         if summary.get("mode") == BETTING_MODE_POOL:
-            lines.extend([
-                f"Prize Pool: `{_format_amount(main_market.get('total_pool'))}`",
+            left_lines.append(f"Prize Pool: `{_format_amount(main_market.get('total_pool'))}`")
+            right_lines.extend([
                 f"Seeded: `{_format_amount(main_market.get('seed'))}`",
                 (
                     f"Radiant: `{_format_amount(pools.get('radiant'))}` "
@@ -79,9 +80,12 @@ def _format_live_betting_summary(guild_id, match_id):
                 ),
             ])
         else:
-            lines.append("Match Winner: `2.00x` classic payout")
-    lines.append("Use `!bets` for all markets.")
-    return "\n".join(lines)
+            left_lines.append("Match Winner: `2.00x` classic payout")
+            right_lines.extend([
+                f"Radiant: `{_format_amount(pools.get('radiant'))}`",
+                f"Dire: `{_format_amount(pools.get('dire'))}`",
+            ])
+    return "\n".join(left_lines), "\n".join(right_lines) if right_lines else "\u200b"
 
 
 def configure_embed_service(*, bot_instance, hero_id_map_cache, get_display_name_fn, assign_roles_with_preferences_fn):
@@ -259,8 +263,9 @@ async def format_live_match_embed(match, guild):
         dire_players.append("-")
     embed.add_field(name="**Radiant**", value="\n".join(radiant_players), inline=True)
     embed.add_field(name="**Dire**", value="\n".join(dire_players), inline=True)
-    embed.add_field(name="Info", value=f"League ID: `{league_id}`\nMatch ID: `{match_id}`", inline=False)
-    betting_summary = _format_live_betting_summary(guild.id, match_id)
-    if betting_summary:
-        embed.add_field(name="Betting", value=betting_summary, inline=False)
+    betting_left, betting_right = _format_live_betting_columns(guild.id, match_id)
+    if betting_left:
+        embed.add_field(name="Betting", value=betting_left, inline=True)
+        embed.add_field(name="\u200b", value=betting_right, inline=True)
+    embed.add_field(name="Match Info", value=f"League ID: `{league_id}`\nMatch ID: `{match_id}`", inline=False)
     return embed
