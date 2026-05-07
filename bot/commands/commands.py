@@ -613,6 +613,13 @@ def attach_commands(bot, deps):
             payload["balance_before"] = int(balance_after) - int(amount or 0)
         return payload
 
+    def is_mvp_feederbucks_award(award):
+        if not isinstance(award, dict):
+            return False
+        award_id = str(award.get("award_id") or "").strip().lower()
+        reason = str(award.get("reason") or "").strip().lower()
+        return award_id == "mvp_highest_imp" or reason == "mvp bonus"
+
     def build_ledger_player_stats(guild, raw_player_stats):
         results = []
         for stat in raw_player_stats or []:
@@ -793,9 +800,13 @@ def attach_commands(bot, deps):
                 value="No bets were recorded for this match.",
                 inline=False,
             )
-        if feederbucks_awards:
+        display_feederbucks_awards = [
+            award for award in feederbucks_awards
+            if is_mvp_feederbucks_award(award)
+        ]
+        if display_feederbucks_awards:
             award_lines = []
-            for award in feederbucks_awards:
+            for award in display_feederbucks_awards:
                 user_id = str(award.get("user_id", ""))
                 member = guild.get_member(int(user_id)) if user_id.isdigit() else None
                 name = member.display_name if member else award.get("nickname") or f"User {user_id}"
