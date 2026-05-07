@@ -2872,7 +2872,8 @@ def attach_commands(bot, deps):
                     "**!alert** - Mention all 10 players when the lobby is full.\n\n"
 
                     "__**Lobby Configuration**__\n"
-                    "**!lobby `<mode>`** - Set the inhouse mode for this server.\n"
+                    "**!lobby `<regular|immortal>`** - Set the inhouse mode for this server.\n"
+                    "Modes: `regular` = balanced shuffle; `immortal` = immortal draft.\n"
                     "**!setpassword `<new_password>`** - Change the inhouse lobby password.\n"
                     "**!setlobbychannel** - Set current channel for lobby embeds and reset posts.\n"
                     "**!toggle_roles `<on|off>`** - Enable/disable preferred role usage in team balancing.\n"
