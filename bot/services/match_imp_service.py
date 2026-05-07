@@ -231,7 +231,6 @@ async def _announce_mvp(guild_id, match_id, channel_id, winning_team, player_sta
         return
 
     mention = f"<@{mvp['user_id']}>" if str(mvp.get("user_id") or "").isdigit() else mvp["nickname"]
-    winning_text = (winning_team or "unknown").title()
     position_text = mvp.get("position") or "unknown position"
     awarded = any(
         str(stat.get("user_id") or "") == str(mvp.get("user_id") or "")
@@ -240,7 +239,7 @@ async def _announce_mvp(guild_id, match_id, channel_id, winning_team, player_sta
     )
     award_text = f" and **+{MVP_FEEDERBUCKS_AWARD} Feederbucks**" if awarded else ""
     await channel.send(
-        f"Match `{match_id}` update: **{winning_text}** won.\n"
+        f"Match `{match_id}` update:\n"
         f"MVP: {mention} with **IMP {mvp['imp']}** ({position_text}){award_text}."
     )
 
