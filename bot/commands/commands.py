@@ -64,7 +64,9 @@ def attach_commands(bot, deps):
     normalize_store_item_name       = deps["normalize_store_item_name"]
     get_store_cost                  = deps["get_store_cost"]
     save_store_cost_override        = deps["save_store_cost_override"]
+    purchase_match_mute             = deps["purchase_match_mute"]
     purchase_store_role             = deps["purchase_store_role"]
+    unmute_match_store_mutes        = deps["unmute_match_store_mutes"]
     log_store_purchase              = deps["log_store_purchase"]
     reset_vip_feeder_role           = deps["reset_vip_feeder_role"]
     reset_custom_store_roles        = deps["reset_custom_store_roles"]
@@ -162,6 +164,7 @@ def attach_commands(bot, deps):
 
     STORE_ITEM_ORDER = [
         "dd_tokens",
+        "match_mute_feeder",
         "role_vip_feeder",
         "role_custom_role",
     ]
@@ -170,6 +173,19 @@ def attach_commands(bot, deps):
         if 1 <= item_index <= len(STORE_ITEM_ORDER):
             return STORE_ITEM_ORDER[item_index - 1]
         return None
+
+    def get_live_match_player_discord_ids(match):
+        player_ids = set()
+        for player in match.get("players", []) or []:
+            if str(player.get("team")) not in {"0", "1"}:
+                continue
+            steam_id = player.get("account_id") or player.get("steam_id")
+            if steam_id is None:
+                continue
+            discord_id = get_discord_id_from_steam_id(str(steam_id))
+            if discord_id:
+                player_ids.add(str(discord_id))
+        return player_ids
 
     def format_fb(amount):
         try:
@@ -1335,8 +1351,8 @@ def attach_commands(bot, deps):
             value=(
                 "Classic mode pays `2.00x` gross payout on winning bets.\n"
                 "Prize Pool mode splits each market's prize pool proportionally among winning bettors.\n"
-                "If nobody bets on the Match Winner outcome, that prize pool carries over as jackpot.\n"
-                "Side/prop markets use smaller seeds and do not carry over.\n"
+                "If Match Winner has no winning wagers, the existing jackpot plus losing wagers carry over.\n"
+                "House seeds and side/prop markets never carry over; random-polled matches neither use nor create carryover.\n"
                 "`Over` means at least 35:00 for duration or at least 50 total kills."
             ),
             inline=False,
@@ -1479,6 +1495,8 @@ def attach_commands(bot, deps):
             description = f"`{item_cost}` Feederbucks"
             if item_key == "dd_tokens":
                 description += " for one Double-Down Token"
+            elif item_key == "match_mute_feeder":
+                description += " to server-mute a current inhouse match player until the match ends"
             elif item_key == "role_vip_feeder":
                 description += " for the VIP Feeder role that expires in 7 days"
             elif item_key == "role_custom_role":
@@ -1493,10 +1511,11 @@ def attach_commands(bot, deps):
         embed.add_field(
             name="How To Buy",
             value=(
-                "`!buy <item_number> <amount> [any additional optional parameters]`\n"
+                "`!buy <item_number> ...`\n"
                 "Example: `!buy 1 1`\n"
-                "Example: `!buy 2 1`\n"
-                "Example: `!buy 3 1 My Custom Role`"
+                "Example: `!buy 2 @user`\n"
+                "Example: `!buy 3 1`\n"
+                "Example: `!buy 4 1 My Custom Role`"
             ),
             inline=False
         )
@@ -1506,15 +1525,16 @@ def attach_commands(bot, deps):
     async def buy(ctx, *, raw_args: str = None):
         if raw_args is None:
             await ctx.reply(
-                "Usage: `!buy <item_number> <amount> [any additional optional parameters]`\n"
+                "Usage: `!buy <item_number> ...`\n"
                 "Example: `!buy 1 1`\n"
-                "Example: `!buy 2 1`\n"
-                "Example: `!buy 3 1 My Custom Role`"
+                "Example: `!buy 2 @user`\n"
+                "Example: `!buy 3 1`\n"
+                "Example: `!buy 4 1 My Custom Role`"
             )
             return
         tokens, _ = parse_store_tokens(raw_args)
         if not tokens:
-            await ctx.reply("Usage: `!buy <item_number> <amount> [any additional optional parameters]`")
+            await ctx.reply("Usage: `!buy <item_number> ...`")
             return
         try:
             item_index = int(tokens[0])
@@ -1531,6 +1551,80 @@ def attach_commands(bot, deps):
         item_info = get_store_item_info(item_key)
         item_cost = get_store_cost(guild_id, item_key)
         current_balance = get_balance(guild_id, user_id, nickname=nickname)
+
+        if item_key == "match_mute_feeder":
+            usage = "Usage: `!buy 2 @user`"
+            if len(tokens) != 2:
+                await ctx.reply(usage)
+                return
+            target_member = ctx.message.mentions[0] if len(ctx.message.mentions) == 1 else None
+            if target_member is None:
+                target_match = re.fullmatch(r"<@!?(\d+)>|(\d+)", tokens[1])
+                if target_match:
+                    target_id = target_match.group(1) or target_match.group(2)
+                    target_member = ctx.guild.get_member(int(target_id))
+            if target_member is None:
+                await ctx.reply(f"{usage}\nPlease mention a server member to mute.")
+                return
+
+            guild_id_int = ctx.guild.id
+            polling_task = polling_tasks.get(guild_id_int)
+            if guild_id_int not in active_match_ids or polling_task is None or polling_task.done():
+                await ctx.reply("`Mute a Feeder` can only be used during an actively polled inhouse match.")
+                return
+            if random_polling_flags.get(guild_id_int, False):
+                await ctx.reply("`Mute a Feeder` cannot be used during `!randompoll` matches.")
+                return
+
+            match_id = active_match_ids.get(guild_id_int)
+            match = await fetch_live_match_for_guild(guild_id_int, random_mode=False)
+            if not match or str(match.get("match_id")) != str(match_id):
+                await ctx.reply("I couldn't verify the current inhouse match on Steam right now.")
+                return
+            if str(target_member.id) not in get_live_match_player_discord_ids(match):
+                await ctx.reply(f"{target_member.display_name} is not a player in the current inhouse match.")
+                return
+
+            total_cost = item_cost
+            if current_balance < total_cost:
+                await ctx.reply(
+                    f"You do not have enough Feederbucks.\n"
+                    f"Cost: `{total_cost}` Feederbucks\n"
+                    f"Your balance: `{current_balance}` Feederbucks"
+                )
+                return
+            success, result = await purchase_match_mute(ctx.author, target_member, match_id, total_cost)
+            if not success:
+                await ctx.reply(result)
+                return
+            update_balance(guild_id, user_id, -total_cost, nickname=nickname)
+            log_store_purchase(
+                guild_id,
+                user_id,
+                item_key,
+                total_cost,
+                details={
+                    "nickname": nickname,
+                    "match_id": str(match_id),
+                    "target_user_id": str(target_member.id),
+                    "target_name": target_member.display_name,
+                },
+            )
+            new_balance = get_balance(guild_id, user_id, nickname=nickname)
+            announcement = (
+                f"{ctx.author.mention} purchased **Mute a Feeder** for `{total_cost}` Feederbucks "
+                f"and has muted {target_member.mention} until match `{match_id}` ends."
+                if result.get("muted_by_store")
+                else (
+                    f"{ctx.author.mention} purchased **Mute a Feeder** for `{total_cost}` Feederbucks "
+                    f"and will mute {target_member.mention} when they join voice during match `{match_id}`."
+                )
+            )
+            await ctx.reply(
+                f"{announcement}\n"
+                f"New balance: `{new_balance}` Feederbucks"
+            )
+            return
 
         if item_key == "dd_tokens":
             amount = 1
@@ -1626,7 +1720,7 @@ def attach_commands(bot, deps):
     async def buy_error(ctx, error):
         if isinstance(error, commands.BadArgument):
             await ctx.reply(
-                "Usage: `!buy <item_number> <amount> [any additional optional parameters]`"
+                "Usage: `!buy <item_number> ...`"
             )
         else:
             await ctx.reply("An unexpected error occurred while buying from the store.")
@@ -1665,7 +1759,7 @@ def attach_commands(bot, deps):
             item_key = normalize_store_item_name(item_name)
         if item_key is None:
             await ctx.reply(
-                "Unknown store item. Try a store number from `!store`, `Double-Down Tokens`, `VIP Feeder`, or `Custom Role`."
+                "Unknown store item. Try a store number from `!store`, `Double-Down Tokens`, `Mute a Feeder`, `VIP Feeder`, or `Custom Role`."
             )
             return
         save_store_cost_override(
@@ -2521,6 +2615,13 @@ def attach_commands(bot, deps):
     @is_admin_or_has_role()
     async def stop_polling(ctx):
         guild_id = ctx.guild.id
+        match_id = active_match_ids.get(guild_id)
+        if match_id and not random_polling_flags.get(guild_id, False):
+            await unmute_match_store_mutes(
+                ctx.guild,
+                match_id,
+                reason=f"Mute a Feeder ended because polling was stopped for match {match_id}.",
+            )
         # Cancel polling task
         if guild_id in polling_tasks and not polling_tasks[guild_id].done():
             polling_tasks[guild_id].cancel()
