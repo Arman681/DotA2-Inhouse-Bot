@@ -5,6 +5,7 @@ import random
 import discord
 
 from bot.services.betting_manager import ensure_match_betting_state, process_live_betting_markets
+from bot.services.store_service import unmute_match_store_mutes
 from bot.state.runtime_state import (
     _last_active_match_id,
     _last_fetch_stats,
@@ -174,6 +175,15 @@ async def poll_live_match(match_id, guild, random_mode=False):
                     live_embed_messages[guild.id] = new_msg
         except Exception as e:
             print(f"[poll_live_match] Error for guild {str(guild.id)}: {e}")
+    if not random_mode:
+        try:
+            await unmute_match_store_mutes(
+                guild,
+                match_id,
+                reason=f"Mute a Feeder ended because match {match_id} is no longer live on Steam.",
+            )
+        except Exception as e:
+            print(f"[poll_live_match] Failed to release match mute(s) for match {match_id}: {e}")
     max_retries = 10
     retry_delay = 30
     result = None
