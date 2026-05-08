@@ -37,6 +37,7 @@ IMMORTAL_MAX_ROLLS = 3
 MMR_ROLE_OVERRULE_THRESHOLD = 1500
 ROLE_FIT_WEIGHT = 10
 STORE_ITEM_DD_TOKENS = "dd_tokens"
+STORE_ITEM_MUTE_FEEDER = "match_mute_feeder"
 STORE_ITEM_VIP_FEEDER = "role_vip_feeder"
 STORE_ITEM_CUSTOM_ROLE = "role_custom_role"
 STORE_ROLE_DURATION_DAYS = 7
@@ -47,6 +48,9 @@ STORE_ITEM_ALIASES = {
     STORE_ITEM_DD_TOKENS: {
         "dd_tokens", "ddtoken", "ddtokens", "double down token", "double down tokens"
     },
+    STORE_ITEM_MUTE_FEEDER: {
+        "mute a feeder", "match mute feeder", "match_mute_feeder", "mute feeder"
+    },
     STORE_ITEM_VIP_FEEDER: {
         "role: vip feeder", "vip feeder", "role_vip_feeder"
     },
@@ -54,3 +58,5 @@ STORE_ITEM_ALIASES = {
         "role: custom role", "custom role", "role_custom_role"
     },
 }
+match_mute_purchases = {}
+match_muted_users = {}
