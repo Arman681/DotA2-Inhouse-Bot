@@ -9,10 +9,13 @@ from bot.state.runtime_state import (
     STORE_ITEM_ALIASES,
     STORE_ITEM_CUSTOM_ROLE,
     STORE_ITEM_DD_TOKENS,
+    STORE_ITEM_MUTE_FEEDER,
     STORE_ITEM_VIP_FEEDER,
     STORE_ROLE_DURATION_DAYS,
     VIP_FEEDER_ROLE_COLOR,
     VIP_FEEDER_ROLE_NAME,
+    match_mute_purchases,
+    match_muted_users,
 )
 
 
@@ -34,6 +37,13 @@ def get_store_catalog():
             "key": STORE_ITEM_DD_TOKENS,
             "display_name": "Double-Down Tokens",
             "default_cost": DD_TOKEN_COST,
+            "duration_days": None,
+            "role_name": None,
+        },
+        STORE_ITEM_MUTE_FEEDER: {
+            "key": STORE_ITEM_MUTE_FEEDER,
+            "display_name": "Mute a Feeder",
+            "default_cost": 30000,
             "duration_days": None,
             "role_name": None,
         },
@@ -312,6 +322,260 @@ def log_store_purchase(guild_id, user_id, item_key, cost, details=None):
         item_info.get("display_name", item_key),
         details=details,
     )
+
+
+def _match_mute_entries_ref(guild_id):
+    return db.collection("store_match_mutes").document(str(guild_id)).collection("entries")
+
+
+def _match_mute_doc_id(match_id, buyer_id):
+    return f"{match_id}_{buyer_id}"
+
+
+def _match_mute_buyers(guild_id, match_id):
+    return match_mute_purchases.setdefault(int(guild_id), {}).setdefault(str(match_id), set())
+
+
+def _match_mute_targets(guild_id, match_id):
+    return match_muted_users.setdefault(int(guild_id), {}).setdefault(str(match_id), {})
+
+
+def get_match_mute_purchase(guild_id, match_id, buyer_id):
+    buyer_id = str(buyer_id)
+    if buyer_id in _match_mute_buyers(guild_id, match_id):
+        return {"active": True, "buyer_id": buyer_id, "match_id": str(match_id)}
+    snap = _match_mute_entries_ref(guild_id).document(_match_mute_doc_id(match_id, buyer_id)).get()
+    if not snap.exists:
+        return None
+    data = snap.to_dict() or {}
+    if data.get("active", False):
+        _match_mute_buyers(guild_id, match_id).add(buyer_id)
+        return data
+    return None
+
+
+def get_active_match_mute_for_target(guild_id, match_id, target_user_id):
+    target_user_id = str(target_user_id)
+    cached = _match_mute_targets(guild_id, match_id).get(target_user_id)
+    if cached:
+        return cached
+    for doc in _match_mute_entries_ref(guild_id).stream():
+        data = doc.to_dict() or {}
+        if not data.get("active", False):
+            continue
+        if str(data.get("match_id")) != str(match_id):
+            continue
+        if str(data.get("target_user_id")) == target_user_id:
+            _match_mute_targets(guild_id, match_id)[target_user_id] = data
+            return data
+    return None
+
+
+def _record_match_mute_purchase(guild, match_id, buyer, target, cost, *, muted_by_store=False):
+    purchased_at = datetime.now(timezone.utc)
+    payload = {
+        "guild_id": str(guild.id),
+        "match_id": str(match_id),
+        "buyer_id": str(buyer.id),
+        "buyer_name": buyer.display_name,
+        "target_user_id": str(target.id),
+        "target_name": target.display_name,
+        "item_key": STORE_ITEM_MUTE_FEEDER,
+        "item_name": get_store_item_info(STORE_ITEM_MUTE_FEEDER)["display_name"],
+        "cost": int(cost or 0),
+        "active": True,
+        "status": "active",
+        "muted_by_store": bool(muted_by_store),
+        "pending_voice_join": not bool(muted_by_store),
+        "purchased_at": firestore.SERVER_TIMESTAMP,
+        "purchased_at_utc": purchased_at,
+    }
+    if muted_by_store:
+        payload["applied_at"] = firestore.SERVER_TIMESTAMP
+        payload["applied_at_utc"] = purchased_at
+    doc_id = _match_mute_doc_id(match_id, buyer.id)
+    _match_mute_entries_ref(guild.id).document(doc_id).set(payload, merge=True)
+    _match_mute_buyers(guild.id, match_id).add(str(buyer.id))
+    _match_mute_targets(guild.id, match_id)[str(target.id)] = payload
+    return payload
+
+
+async def purchase_match_mute(buyer, target, match_id, cost):
+    guild = buyer.guild
+    if buyer.id == target.id:
+        return False, "You cannot use `Mute a Feeder` on yourself."
+    if target.bot:
+        return False, "You cannot use `Mute a Feeder` on a bot."
+    if get_match_mute_purchase(guild.id, match_id, buyer.id):
+        return False, "You already bought `Mute a Feeder` for this match."
+    active_target_mute = get_active_match_mute_for_target(guild.id, match_id, target.id)
+    if active_target_mute:
+        original_buyer_id = str(active_target_mute.get("buyer_id") or "")
+        original_buyer = f"<@{original_buyer_id}>" if original_buyer_id.isdigit() else active_target_mute.get("buyer_name", "another user")
+        return False, f"{target.display_name} has already been muted by {original_buyer}. Please select another player."
+
+    bot_member = guild.me or (guild.get_member(bot.user.id) if bot and bot.user else None)
+    if bot_member is None or not bot_member.guild_permissions.mute_members:
+        return False, "I need the `Mute Members` permission to use `Mute a Feeder`."
+
+    target_in_voice = target.voice is not None and target.voice.channel is not None
+    if not target_in_voice:
+        return True, _record_match_mute_purchase(
+            guild,
+            match_id,
+            buyer,
+            target,
+            cost,
+            muted_by_store=False,
+        )
+
+    if target.voice.mute:
+        return False, f"{target.display_name} is already server-muted."
+
+    try:
+        await target.edit(
+            mute=True,
+            reason=f"Mute a Feeder purchased by {buyer} for match {match_id}.",
+        )
+    except discord.Forbidden:
+        return False, "I couldn't mute that user. Please make sure I have `Mute Members` and enough Discord permissions."
+    except Exception as e:
+        return False, f"I couldn't mute that user: `{e}`"
+
+    try:
+        payload = _record_match_mute_purchase(
+            guild,
+            match_id,
+            buyer,
+            target,
+            cost,
+            muted_by_store=True,
+        )
+    except Exception as e:
+        try:
+            await target.edit(mute=False, reason="Revert failed Mute a Feeder purchase record.")
+        except Exception:
+            pass
+        return False, f"I muted them, but couldn't record the purchase safely: `{e}`"
+    return True, payload
+
+
+async def apply_pending_match_mute(member, match_id):
+    if member.bot or member.voice is None or member.voice.channel is None:
+        return 0
+    guild = member.guild
+    bot_member = guild.me or (guild.get_member(bot.user.id) if bot and bot.user else None)
+    if bot_member is None or not bot_member.guild_permissions.mute_members:
+        return 0
+
+    applied = 0
+    for doc in _match_mute_entries_ref(guild.id).stream():
+        data = doc.to_dict() or {}
+        if not data.get("active", False):
+            continue
+        if str(data.get("match_id")) != str(match_id):
+            continue
+        if str(data.get("target_user_id")) != str(member.id):
+            continue
+        if bool(data.get("muted_by_store", False)):
+            continue
+        if member.voice is None or member.voice.channel is None or member.voice.mute:
+            continue
+        try:
+            await member.edit(
+                mute=True,
+                reason=f"Apply pending Mute a Feeder purchase for match {match_id}.",
+            )
+        except discord.Forbidden:
+            print(f"[store] Missing permissions to apply pending match mute to {member.id} in guild {guild.id}")
+            continue
+        except Exception as e:
+            print(f"[store] Failed to apply pending match mute to {member.id} in guild {guild.id}: {e}")
+            continue
+        update = {
+            "muted_by_store": True,
+            "pending_voice_join": False,
+            "applied_at": firestore.SERVER_TIMESTAMP,
+            "applied_at_utc": datetime.now(timezone.utc),
+            "status": "active",
+        }
+        _match_mute_entries_ref(guild.id).document(doc.id).set(update, merge=True)
+        data.update(update)
+        _match_mute_targets(guild.id, match_id)[str(member.id)] = data
+        applied += 1
+    return applied
+
+
+async def _release_match_mute_entry(guild, entry_id, data, reason):
+    target_user_id = str(data.get("target_user_id") or "")
+    member = guild.get_member(int(target_user_id)) if target_user_id.isdigit() else None
+    unmuted = False
+    should_unmute = bool(data.get("muted_by_store", True))
+    if should_unmute and member is not None and member.voice is not None and member.voice.mute:
+        try:
+            await member.edit(mute=False, reason=reason)
+            unmuted = True
+        except discord.Forbidden:
+            print(f"[store] Missing permissions to unmute store-muted user {target_user_id} in guild {guild.id}")
+            return False
+        except Exception as e:
+            print(f"[store] Failed to unmute store-muted user {target_user_id} in guild {guild.id}: {e}")
+            return False
+
+    _match_mute_entries_ref(guild.id).document(entry_id).set(
+        {
+            "active": False,
+            "status": "released",
+            "released_at": firestore.SERVER_TIMESTAMP,
+            "released_at_utc": datetime.now(timezone.utc),
+            "release_reason": reason,
+            "unmuted": unmuted,
+        },
+        merge=True,
+    )
+    return True
+
+
+async def unmute_match_store_mutes(guild, match_id, *, reason=None):
+    reason = reason or f"Mute a Feeder ended for match {match_id}."
+    released = 0
+    for doc in _match_mute_entries_ref(guild.id).stream():
+        data = doc.to_dict() or {}
+        if not data.get("active", False):
+            continue
+        if str(data.get("match_id")) != str(match_id):
+            continue
+        if await _release_match_mute_entry(guild, doc.id, data, reason):
+            released += 1
+
+    match_mute_purchases.get(int(guild.id), {}).pop(str(match_id), None)
+    match_muted_users.get(int(guild.id), {}).pop(str(match_id), None)
+    if released:
+        print(f"[store] Released {released} Mute a Feeder mute(s) for guild={guild.id} match={match_id}")
+    return released
+
+
+async def cleanup_active_match_mutes():
+    total_released = 0
+    for guild in bot.guilds:
+        for doc in _match_mute_entries_ref(guild.id).stream():
+            data = doc.to_dict() or {}
+            if not data.get("active", False):
+                continue
+            match_id = data.get("match_id")
+            if await _release_match_mute_entry(
+                guild,
+                doc.id,
+                data,
+                "Clearing stale Mute a Feeder mute on bot startup.",
+            ):
+                total_released += 1
+                if match_id is not None:
+                    match_mute_purchases.get(int(guild.id), {}).pop(str(match_id), None)
+                    match_muted_users.get(int(guild.id), {}).pop(str(match_id), None)
+    if total_released:
+        print(f"[store] Released {total_released} stale Mute a Feeder mute(s).")
+    return total_released
 
 
 async def promote_store_role_display(guild, role):
