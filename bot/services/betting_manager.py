@@ -412,7 +412,11 @@ def ensure_match_betting_state(guild_id, match_id, random_mode=False):
 
     settings = get_betting_settings(guild_id)
     mode = settings["mode"]
-    carryover_seed = settings["carryover_jackpot"] if mode == BETTING_MODE_POOL else 0
+    carryover_seed = (
+        settings["carryover_jackpot"]
+        if mode == BETTING_MODE_POOL and not random_mode
+        else 0
+    )
     enabled_market_ids = get_enabled_market_ids(settings["prop_markets_enabled"])
     markets = {
         market_id: _initial_market_state(
@@ -1039,7 +1043,7 @@ def _result_entry(market, bet, *, won, net_delta, gross_payout, balance_after, n
     return result
 
 
-def _resolve_market_payouts(guild_id, market, betting_mode):
+def _resolve_market_payouts(guild_id, market, betting_mode, *, allow_carryover=True):
     winner = str(market.get("winner") or "").lower()
     bets = _market_bets(market)
     options = get_market_options(market)
@@ -1064,11 +1068,18 @@ def _resolve_market_payouts(guild_id, market, betting_mode):
     pools = get_market_pools(market)
     winning_pool = pools.get(winner, 0)
     total_pool = get_market_total_pool(market, betting_mode)
+    eligible_carryover_pool = max(0, total_pool - _safe_int(market.get("base_seed"), 0))
     carryover_added = 0
 
-    if betting_mode == BETTING_MODE_POOL and market.get("id") == MARKET_MATCH_WINNER and winning_pool <= 0:
-        carryover_added = total_pool
-        add_carryover_jackpot(guild_id, total_pool)
+    if (
+        allow_carryover
+        and betting_mode == BETTING_MODE_POOL
+        and market.get("id") == MARKET_MATCH_WINNER
+        and winning_pool <= 0
+        and eligible_carryover_pool > 0
+    ):
+        carryover_added = eligible_carryover_pool
+        add_carryover_jackpot(guild_id, eligible_carryover_pool)
 
     for user_id, bet in bets.items():
         amount = _safe_int(bet.get("amount"), 0)
@@ -1120,6 +1131,7 @@ def _resolve_market_bets(guild_id, match_id, winning_team, market_winners=None, 
         return []
     ref = _match_betting_ref(guild_id, match_id)
     betting_mode = state.get("betting_mode", BETTING_MODE_CLASSIC)
+    random_mode = bool(state.get("random_mode", False))
     markets = deepcopy(state.get("markets") or {})
     market_winners = {
         **_final_market_winners_from_state(state, match_result=match_result),
@@ -1169,6 +1181,7 @@ def _resolve_market_bets(guild_id, match_id, winning_team, market_winners=None, 
             guild_id,
             market,
             betting_mode,
+            allow_carryover=not random_mode,
         )
         all_results.extend(results)
         total_carryover_added += carryover_added
