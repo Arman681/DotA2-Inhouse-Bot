@@ -51,6 +51,8 @@ from bot.services.live_tracking_service import (
     wait_for_match_then_start_polling,
 )
 from bot.services.store_service import (
+    apply_pending_match_mute,
+    cleanup_active_match_mutes,
     cleanup_expired_store_roles,
     configure_store_service,
     ensure_vip_feeder_role,
@@ -58,10 +60,12 @@ from bot.services.store_service import (
     get_store_item_info,
     log_store_purchase,
     normalize_store_item_name,
+    purchase_match_mute,
     purchase_store_role,
     reset_custom_store_roles,
     reset_vip_feeder_role,
     save_store_cost_override,
+    unmute_match_store_mutes,
 )
 from bot.services.lobby_service import (
     assign_roles_with_preferences,
@@ -509,6 +513,7 @@ async def on_ready():
     for guild in bot.guilds:
         await ensure_vip_feeder_role(guild)
     await cleanup_expired_store_roles()
+    await cleanup_active_match_mutes()
     # Start the periodic MMR refresh task **after** restores finish
     if not refresh_all_mmrs.is_running():
         refresh_all_mmrs.start()
@@ -523,6 +528,20 @@ async def on_ready():
     print("[on_ready] Shared aiohttp session is ready")
     await recalculate_avg_imp_for_all_guilds()
     await schedule_due_imp_enrichments()
+
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    if member.bot or after.channel is None:
+        return
+    guild_id = member.guild.id
+    if random_polling_flags.get(guild_id, False):
+        return
+    match_id = active_match_ids.get(guild_id)
+    polling_task = polling_tasks.get(guild_id)
+    if not match_id or polling_task is None or polling_task.done():
+        return
+    await apply_pending_match_mute(member, match_id)
 
 # Listens for any messages containing "dota" and replies with a generic response.
 """@bot.event
@@ -963,7 +982,9 @@ deps = {
     "normalize_store_item_name": normalize_store_item_name,
     "get_store_cost": get_store_cost,
     "save_store_cost_override": save_store_cost_override,
+    "purchase_match_mute": purchase_match_mute,
     "purchase_store_role": purchase_store_role,
+    "unmute_match_store_mutes": unmute_match_store_mutes,
     "log_store_purchase": log_store_purchase,
     "reset_vip_feeder_role": reset_vip_feeder_role,
     "reset_custom_store_roles": reset_custom_store_roles,
