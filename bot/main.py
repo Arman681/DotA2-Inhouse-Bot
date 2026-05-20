@@ -23,7 +23,9 @@ import bot.storage.firebase_setup  # ensures Firebase is initialized before anyt
 from bot.commands.commands import attach_commands
 from bot.services.guild_config_service import (
     configure_guild_config,
+    delete_separated_pair,
     get_captain_policy,
+    get_separated_pairs,
     load_guild_prefix,
     load_inhouse_mode_for_guild,
     load_lobby_message_id,
@@ -39,6 +41,7 @@ from bot.services.guild_config_service import (
     save_lobby_players,
     save_player_config,
     save_preferred_roles_setting,
+    save_separated_pair,
     set_captain_policy,
 )
 from bot.services.live_tracking_service import (
@@ -635,15 +638,15 @@ async def on_raw_reaction_add(payload):
                 team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id], guild_id)
                 if not team_rolls[guild_id]:
                     await channel.send(
-                        "Cannot form teams with the current MMR threshold (≤100). "
-                        "Either set missing MMRs (`!cfg <steam_id>`) or let me try a relaxed threshold…"
+                        "Cannot form teams with the current MMR/separation constraints. "
+                        "Either set missing MMRs (`!cfg <steam_id>`) or let me try a relaxed threshold..."
                     )
                     # optional automatic fallback (see #2 below)
                     team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(
                         lobby_players[guild_id], guild_id, max_mmr_diff=400  # try 400 first
                     )
                 if not team_rolls[guild_id]:
-                    await channel.send("Still no valid combos. Please set MMRs or disable the strict threshold.")
+                    await channel.send("Still no valid combos. Please set MMRs, adjust separated pairs, or disable the strict threshold.")
                     return
                 valid_team_combos[guild_id] = valid_combo_count
                 team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][0]
@@ -1006,6 +1009,9 @@ deps = {
     "schedule_match_imp_enrichment": schedule_match_imp_enrichment,
     "get_top_avg_imp_players": get_top_avg_imp_players,
     "save_preferred_roles_setting": save_preferred_roles_setting,
+    "save_separated_pair": save_separated_pair,
+    "delete_separated_pair": delete_separated_pair,
+    "get_separated_pairs": get_separated_pairs,
 }
 set_cancel_callback(handle_immortal_draft_cancel)
 attach_commands(bot, deps)
