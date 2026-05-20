@@ -144,6 +144,88 @@ def load_preferred_roles_setting(guild_id):
     return True
 
 
+def _separated_doc_ref(guild_id):
+    return db.collection("separated").document(str(guild_id))
+
+
+def _separated_pair_key(user_id_a, user_id_b):
+    ids = sorted([str(user_id_a), str(user_id_b)])
+    return f"{ids[0]}_{ids[1]}"
+
+
+def save_separated_pair(guild_id, user_id_a, user_id_b, *, guild_name=None, set_by=None, names=None):
+    key = _separated_pair_key(user_id_a, user_id_b)
+    doc_ref = _separated_doc_ref(guild_id)
+    doc = doc_ref.get()
+    existing_pairs = {}
+    if doc.exists:
+        existing_pairs = (doc.to_dict() or {}).get("pairs", {}) or {}
+    if key in existing_pairs:
+        return False, existing_pairs[key]
+
+    ids = sorted([str(user_id_a), str(user_id_b)])
+    entry = {
+        "user_ids": ids,
+        "names": {str(uid): str(name) for uid, name in (names or {}).items()},
+        "created_by": str(set_by) if set_by is not None else "Unknown",
+        "created_at": firestore.SERVER_TIMESTAMP,
+    }
+    updated_pairs = dict(existing_pairs)
+    updated_pairs[key] = entry
+    payload = {
+        "guild_id": str(guild_id),
+        "guild_name": guild_name,
+        "updated_at": firestore.SERVER_TIMESTAMP,
+        "pairs": updated_pairs,
+    }
+    doc_ref.set(payload, merge=True)
+    return True, entry
+
+
+def delete_separated_pair(guild_id, user_id_a, user_id_b):
+    key = _separated_pair_key(user_id_a, user_id_b)
+    doc_ref = _separated_doc_ref(guild_id)
+    doc = doc_ref.get()
+    if not doc.exists:
+        return False, None
+    data = doc.to_dict() or {}
+    existing_pairs = data.get("pairs", {}) or {}
+    if key not in existing_pairs:
+        return False, None
+
+    removed = existing_pairs.pop(key)
+    doc_ref.set(
+        {
+            "updated_at": firestore.SERVER_TIMESTAMP,
+            "pairs": existing_pairs,
+        },
+        merge=True,
+    )
+    return True, removed
+
+
+def get_separated_pairs(guild_id):
+    doc = _separated_doc_ref(guild_id).get()
+    if not doc.exists:
+        return []
+    pairs = (doc.to_dict() or {}).get("pairs", {}) or {}
+    results = []
+    for key, entry in pairs.items():
+        if not isinstance(entry, dict):
+            continue
+        user_ids = [str(uid) for uid in entry.get("user_ids", []) if uid is not None]
+        if len(user_ids) != 2:
+            continue
+        results.append({
+            "key": key,
+            "user_ids": sorted(user_ids),
+            "names": entry.get("names", {}) or {},
+            "created_at": entry.get("created_at"),
+            "created_by": entry.get("created_by"),
+        })
+    return results
+
+
 def get_captain_policy(guild_id: int) -> tuple[str, int | None]:
     if guild_id in captain_policy_by_guild:
         return captain_policy_by_guild[guild_id], captain_policy_threshold_by_guild.get(guild_id)
