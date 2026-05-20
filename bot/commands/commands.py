@@ -110,6 +110,9 @@ def attach_commands(bot, deps):
     load_inhouse_mode_for_guild  = deps["load_inhouse_mode_for_guild"]
     save_inhouse_mode_for_guild  = deps["save_inhouse_mode_for_guild"]
     save_preferred_roles_setting = deps["save_preferred_roles_setting"]
+    save_separated_pair          = deps["save_separated_pair"]
+    delete_separated_pair        = deps["delete_separated_pair"]
+    get_separated_pairs          = deps["get_separated_pairs"]
     refresh_lobby_member_mmr     = deps["refresh_lobby_member_mmr"]
     start_immortal_draft         = deps["start_immortal_draft"]
     get_captain_policy           = deps["get_captain_policy"]
@@ -1908,6 +1911,155 @@ def attach_commands(bot, deps):
             await ctx.reply("An unexpected error occurred while fetching preferred roles.")
             raise error
 
+    def parse_discord_user_id(value: str):
+        token = str(value or "").strip()
+        mention = re.fullmatch(r"<@!?(\d+)>", token)
+        if mention:
+            return int(mention.group(1))
+        if token.isdigit():
+            return int(token)
+        return None
+
+    async def resolve_guild_member(ctx, value: str):
+        user_id = parse_discord_user_id(value)
+        if user_id is None:
+            return None
+        member = ctx.guild.get_member(user_id)
+        if member is not None:
+            return member
+        try:
+            return await ctx.guild.fetch_member(user_id)
+        except discord.NotFound:
+            return None
+        except discord.HTTPException:
+            return None
+
+    @bot.command(name="separate")
+    @is_admin_or_has_role()
+    async def separate_players(ctx, *args):
+        if len(args) != 2:
+            await ctx.reply("Usage: `!separate @player1 @player2` or `!separate <discord_id_1> <discord_id_2>`")
+            return
+        first_member = await resolve_guild_member(ctx, args[0])
+        second_member = await resolve_guild_member(ctx, args[1])
+        if first_member is None or second_member is None:
+            await ctx.reply("I could not find both users in this server. Use @mentions or Discord IDs.")
+            return
+        if first_member.id == second_member.id:
+            await ctx.reply("Please choose two different players to separate.")
+            return
+        created, _entry = save_separated_pair(
+            ctx.guild.id,
+            first_member.id,
+            second_member.id,
+            guild_name=ctx.guild.name,
+            set_by=ctx.author.id,
+            names={
+                str(first_member.id): first_member.display_name,
+                str(second_member.id): second_member.display_name,
+            },
+        )
+        if created:
+            message = lobby_message.get(ctx.guild.id)
+            await full_post_rocket_reset(ctx.guild.id, message)
+            if message:
+                await update_lobby_embed(ctx.guild)
+            await ctx.reply(
+                f"Separated **{first_member.display_name}** and **{second_member.display_name}** for regular inhouse team generation."
+            )
+        else:
+            await ctx.reply(
+                f"**{first_member.display_name}** and **{second_member.display_name}** are already on the separated list."
+            )
+    @separate_players.error
+    async def separate_players_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while saving the separated players.")
+
+    @bot.command(name="unseparate")
+    @is_admin_or_has_role()
+    async def unseparate_players(ctx, *args):
+        if len(args) != 2:
+            await ctx.reply("Usage: `!unseparate @player1 @player2` or `!unseparate <discord_id_1> <discord_id_2>`")
+            return
+        first_member = await resolve_guild_member(ctx, args[0])
+        second_member = await resolve_guild_member(ctx, args[1])
+        if first_member is None or second_member is None:
+            await ctx.reply("I could not find both users in this server. Use @mentions or Discord IDs.")
+            return
+        if first_member.id == second_member.id:
+            await ctx.reply("Please choose two different players to unseparate.")
+            return
+        removed, _entry = delete_separated_pair(
+            ctx.guild.id,
+            first_member.id,
+            second_member.id,
+        )
+        if removed:
+            message = lobby_message.get(ctx.guild.id)
+            await full_post_rocket_reset(ctx.guild.id, message)
+            if message:
+                await update_lobby_embed(ctx.guild)
+            await ctx.reply(
+                f"Removed **{first_member.display_name}** and **{second_member.display_name}** from the separated list."
+            )
+        else:
+            await ctx.reply(
+                f"**{first_member.display_name}** and **{second_member.display_name}** are not on the separated list."
+            )
+    @unseparate_players.error
+    async def unseparate_players_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while removing the separated players.")
+
+    @bot.command(name="separated")
+    @is_admin_or_has_role()
+    async def separated_players(ctx):
+        pairs = get_separated_pairs(ctx.guild.id)
+        embed = discord.Embed(
+            title="Separated Players",
+            description=f"Regular inhouse separation list for **{ctx.guild.name}**",
+            color=discord.Color.blurple(),
+        )
+        if not pairs:
+            embed.add_field(
+                name="Pairs",
+                value="No separated player pairs have been configured.",
+                inline=False,
+            )
+            await ctx.reply(embed=embed)
+            return
+
+        def display_name_for(user_id, pair):
+            member = ctx.guild.get_member(int(user_id)) if str(user_id).isdigit() else None
+            if member:
+                return member.display_name
+            return str((pair.get("names") or {}).get(str(user_id)) or "Unknown member")
+
+        lines = []
+        for index, pair in enumerate(pairs, start=1):
+            first_id, second_id = pair["user_ids"]
+            first_name = display_name_for(first_id, pair)
+            second_name = display_name_for(second_id, pair)
+            lines.append(f"{index}. **{first_name}** <-> **{second_name}**")
+        embed.add_field(
+            name="Pairs",
+            value=truncate_embed_field("\n".join(lines)),
+            inline=False,
+        )
+        embed.set_footer(text=f"{len(pairs)} separated pair(s)")
+        await ctx.reply(embed=embed)
+    @separated_players.error
+    async def separated_players_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while loading separated players.")
+
     # ========================== Lobby Management Commands =========================
 
     @bot.command(name="add")
@@ -2970,6 +3122,9 @@ def attach_commands(bot, deps):
                     "**!cfg `<steam_id>` `[@user]` `[--force]`** - Link a player's Steam ID and fetch their MMR.\n"
                     "**!setmmr `<mmr>` `<@user>`** - Manually set a user's MMR.\n"
                     "**!setpreferredroles `<1 2 3 4 5>` `<@user>`** - Set preferred roles for another user.\n"
+                    "**!separate `<@user|discord_id>` `<@user|discord_id>`** - Keep two players apart in regular team generation.\n"
+                    "**!unseparate `<@user|discord_id>` `<@user|discord_id>`** - Remove a separated player pair.\n"
+                    "**!separated** - View the separated player pairs for this server.\n"
                     "**!alert** - Mention all 10 players when the lobby is full.\n\n"
 
                     "__**Lobby Configuration**__\n"
