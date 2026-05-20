@@ -4,7 +4,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import discord
 
-from bot.services.guild_config_service import load_preferred_roles_setting, save_lobby_players
+from bot.services.guild_config_service import (
+    get_separated_pairs,
+    load_preferred_roles_setting,
+    save_lobby_players,
+)
 from bot.services.immortal_draft import Candidate, ImmortalDraftSession
 from bot.state.runtime_state import (
     MMR_ROLE_OVERRULE_THRESHOLD,
@@ -304,16 +308,31 @@ def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
         preferred = data.get("preferred_roles", [1, 2, 3, 4, 5]) if (data and isinstance(data.get("preferred_roles"), list)) else [1, 2, 3, 4, 5]
         preference_map[uid_str] = preferred
     use_roles = load_preferred_roles_setting(guild_id)
+    active_player_ids = {str(uid) for uid, _, _ in players}
+    separated_pairs = [
+        tuple(pair["user_ids"])
+        for pair in get_separated_pairs(guild_id)
+        if all(str(uid) in active_player_ids for uid in pair.get("user_ids", []))
+    ]
     combos_to_score = []
     for team1 in itertools.combinations(players, 5):
         team2 = tuple(p for p in players if p not in set(team1))
+        team1_ids = {str(p[0]) for p in team1}
+        team2_ids = {str(p[0]) for p in team2}
+        if any(pair[0] in team1_ids and pair[1] in team1_ids for pair in separated_pairs):
+            continue
+        if any(pair[0] in team2_ids and pair[1] in team2_ids for pair in separated_pairs):
+            continue
         mmr1 = sum(p[2] for p in team1) / 5
         mmr2 = sum(p[2] for p in team2) / 5
         mmr_diff = abs(mmr1 - mmr2)
         if mmr_diff > max_mmr_diff:
             continue
         combos_to_score.append((team1, team2, mmr_diff))
-    print(f"[calculate_balanced_teams] Found {len(combos_to_score)} valid team combinations (MMR diff <= {max_mmr_diff})")
+    print(
+        f"[calculate_balanced_teams] Found {len(combos_to_score)} valid team combinations "
+        f"(MMR diff <= {max_mmr_diff}, active separated pairs={len(separated_pairs)})"
+    )
     if not combos_to_score:
         team_rolls[guild_id] = []
         return [], 0
