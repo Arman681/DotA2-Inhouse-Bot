@@ -1,6 +1,12 @@
 import os
 import requests
 
+from bot.services.stratz_guard import (
+    format_stratz_block,
+    note_stratz_response,
+    reserve_stratz_request_sync,
+)
+
 STRATZ_TOKEN = os.getenv("STRATZ_TOKEN")
 
 
@@ -150,6 +156,10 @@ def fetch_match_result(match_id):
             }}
             """
         }
+        blocked, block_reason, blocked_until = reserve_stratz_request_sync()
+        if blocked:
+            print(f"[STRATZ] Skipping match result for {match_id}: {format_stratz_block(block_reason, blocked_until)}")
+            return None
         resp = requests.post(url, json=query, headers=headers, timeout=8)
         print("[STRATZ] code:", resp.status_code)
         if resp.status_code == 200:
@@ -158,6 +168,8 @@ def fetch_match_result(match_id):
                 print("[match-result] source=STRATZ")
                 return _build_stratz_result(match_data)
             print("[STRATZ] 200 but no data -> not indexed yet")
+            return None
+        if note_stratz_response(resp.status_code, resp.text, headers=resp.headers, endpoint="fetch_match_result"):
             return None
         if resp.status_code == 429:
             print("[STRATZ] 429 rate-limited -> defer to outer retry")
@@ -213,9 +225,14 @@ def fetch_match_imp_data(match_id):
             """,
             "variables": {"matchId": int(match_id)},
         }
+        blocked, block_reason, blocked_until = reserve_stratz_request_sync()
+        if blocked:
+            print(f"[STRATZ IMP] Skipping match {match_id}: {format_stratz_block(block_reason, blocked_until)}")
+            return None
         resp = requests.post(url, json=query, headers=headers, timeout=8)
         print("[STRATZ IMP] code:", resp.status_code)
         if resp.status_code != 200:
+            note_stratz_response(resp.status_code, resp.text, headers=resp.headers, endpoint="fetch_match_imp_data")
             return None
         match_data = resp.json().get("data", {}).get("match")
         if not match_data:
