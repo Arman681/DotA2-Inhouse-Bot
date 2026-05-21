@@ -50,14 +50,14 @@ def get_store_catalog():
         STORE_ITEM_VIP_FEEDER: {
             "key": STORE_ITEM_VIP_FEEDER,
             "display_name": "VIP Feeder",
-            "default_cost": 20000,
+            "default_cost": 10000,
             "duration_days": STORE_ROLE_DURATION_DAYS,
             "role_name": VIP_FEEDER_ROLE_NAME,
         },
         STORE_ITEM_CUSTOM_ROLE: {
             "key": STORE_ITEM_CUSTOM_ROLE,
             "display_name": "Custom Role",
-            "default_cost": 30000,
+            "default_cost": 10000,
             "duration_days": STORE_ROLE_DURATION_DAYS,
             "role_name": None,
         },
