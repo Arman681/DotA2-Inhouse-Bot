@@ -291,9 +291,13 @@ def attach_commands(bot, deps):
             ),
             color=discord.Color.gold(),
         )
+        footer_options = []
         for market in summary.get("markets") or []:
             pools = market.get("pools") or {}
             options = market.get("options") or ["radiant", "dire"]
+            for option in options:
+                if option not in footer_options:
+                    footer_options.append(option)
             multipliers = market.get("option_multipliers") or {}
             status = market_status_label(market.get("status"))
             winner = market.get("winner")
@@ -321,7 +325,8 @@ def attach_commands(bot, deps):
                 value="\n".join(lines),
                 inline=False,
             )
-        embed.set_footer(text="Bet with !bet <market_number> <option> <amount>")
+        footer_option_text = "|".join(footer_options or ["radiant", "dire"])
+        embed.set_footer(text=f"Bet with !bet <market_number> <{footer_option_text}> <amount>")
         return embed
 
     def betting_markets_have_open_status(guild_id, match_id):

@@ -24,6 +24,7 @@ MARKET_FIRST_TOWER = "firsttower"
 MARKET_FIRST_ROSHAN = "firstroshan"
 MARKET_DURATION_35 = "duration35"
 MARKET_TOTAL_KILLS_50 = "totalkills50"
+FIRST_BLOOD_AMBIGUOUS = "ambiguous_first_blood_trade"
 FIRST_TOWER_AMBIGUOUS = "ambiguous_tower_trade"
 
 BASE_MARKET_ORDER = [MARKET_MATCH_WINNER, MARKET_FIRST_BLOOD, MARKET_FIRST_TO_10]
@@ -721,7 +722,7 @@ def _extract_team_stat(scoreboard, team, keys):
     return None
 
 
-def _detect_first_blood_winner(match):
+def _detect_first_blood_winner(match, state):
     scoreboard = _scoreboard_from_match(match)
     radiant_kills, dire_kills = get_live_kill_scores(match)
     total_kills = radiant_kills + dire_kills
@@ -732,6 +733,16 @@ def _detect_first_blood_winner(match):
                 return team
     if total_kills <= 0:
         return None
+    previous = state.get("live_observations") or {}
+    prev_radiant = _safe_int(previous.get("radiant_kills"), None)
+    prev_dire = _safe_int(previous.get("dire_kills"), None)
+    if (
+        prev_radiant == 0
+        and prev_dire == 0
+        and radiant_kills > 0
+        and dire_kills > 0
+    ):
+        return FIRST_BLOOD_AMBIGUOUS
     if radiant_kills > 0 and dire_kills == 0:
         return "radiant"
     if dire_kills > 0 and radiant_kills == 0:
@@ -900,8 +911,17 @@ def process_live_betting_markets(guild_id, match_id, match):
 
     first_blood = markets.get(MARKET_FIRST_BLOOD)
     if first_blood and first_blood.get("status") in {"open", "locked"} and not first_blood.get("winner"):
-        winner = _detect_first_blood_winner(match)
-        if winner:
+        winner = _detect_first_blood_winner(match, data)
+        if winner == FIRST_BLOOD_AMBIGUOUS:
+            _void_market_state(
+                guild_id,
+                first_blood,
+                reason="Both teams got kills between Steam API polls.",
+                voided_by="system",
+            )
+            markets[MARKET_FIRST_BLOOD] = first_blood
+            changed = True
+        elif winner:
             first_blood["status"] = "resolved"
             first_blood["winner"] = winner
             first_blood["resolved_at"] = now
