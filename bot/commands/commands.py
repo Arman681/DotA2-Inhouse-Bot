@@ -53,6 +53,8 @@ def attach_commands(bot, deps):
     save_prop_markets_setting       = deps["save_prop_markets_setting"]
     void_market                     = deps["void_market"]
     void_markets                    = deps["void_markets"]
+    void_user_bet                   = deps["void_user_bet"]
+    void_user_bets                  = deps["void_user_bets"]
     DD_TOKEN_COST                   = deps["DD_TOKEN_COST"]
     get_dd_token_balance            = deps["get_dd_token_balance"]
     update_dd_token_balance         = deps["update_dd_token_balance"]
@@ -330,6 +332,17 @@ def attach_commands(bot, deps):
             str(market.get("status", "")).lower() == "open"
             for market in summary.get("markets") or []
         )
+
+    async def refresh_existing_bets_embed(guild, match_id):
+        message = bets_embed_messages.get(guild.id)
+        if not message:
+            return
+        try:
+            await message.edit(embed=build_bets_embed(guild, match_id))
+        except discord.NotFound:
+            bets_embed_messages.pop(guild.id, None)
+        except Exception as e:
+            print(f"[bets_refresh] Failed to refresh bets embed for guild={guild.id} match={match_id}: {e}")
 
     async def refresh_bets_embed_until_locked(guild, match_id, message):
         guild_id = guild.id
@@ -1344,7 +1357,7 @@ def attach_commands(bot, deps):
             name="Integrity",
             value=(
                 "Collusion, bribery, or intentional gameplay manipulation for betting outcomes is prohibited.\n"
-                "Admins/Inhouse Admins may void suspicious markets and refund affected bets.\n"
+                "Admins/Inhouse Admins may void suspicious markets or individual user bets and refund affected bets.\n"
                 "First Tower is voided/refunded if both teams lose a tower between Steam API polls."
             ),
             inline=False,
@@ -1480,6 +1493,85 @@ def attach_commands(bot, deps):
             await ctx.reply("You do not have permission to void markets. You must be a server admin or have the 'Inhouse Admin' role.")
         else:
             await ctx.reply("An unexpected error occurred while voiding the market.")
+
+    @bot.command(name="voidbet", aliases=["voidbets"])
+    @is_admin_or_has_role()
+    async def voidbet(ctx, member: discord.Member = None, market: str = None, *, reason: str = ""):
+        usage = "Usage: `!voidbet <@user> <market_number|market_name|all> [reason]`"
+        if member is None or market is None:
+            await ctx.reply(usage)
+            return
+        if ctx.guild.id not in active_match_ids:
+            await ctx.reply("There is no active match with betting markets to void.")
+            return
+        match_id = active_match_ids.get(ctx.guild.id)
+        selector = str(market).lower().strip()
+        if selector in ("all", "everything"):
+            market_ids = None
+        else:
+            market_id = normalize_market_id(selector)
+            if not market_id:
+                await ctx.reply("Unknown market. Use `!bets` to see market numbers.")
+                return
+            market_ids = [market_id]
+
+        try:
+            if market_ids is None:
+                results = void_user_bets(
+                    ctx.guild.id,
+                    match_id,
+                    member.id,
+                    reason=reason or "No reason provided",
+                    voided_by=ctx.author,
+                )
+            else:
+                result = void_user_bet(
+                    ctx.guild.id,
+                    match_id,
+                    market_ids[0],
+                    member.id,
+                    reason=reason or "No reason provided",
+                    voided_by=ctx.author,
+                )
+                results = [result] if result else []
+        except ValueError as exc:
+            await ctx.reply(str(exc))
+            return
+
+        voided_results = [result for result in results if result and result.get("voided_now")]
+        already_voided = [result for result in results if result and result.get("already_voided")]
+        if not voided_results and not already_voided:
+            await ctx.reply(f"No current bets found for {member.display_name} in the selected market(s).")
+            return
+
+        lines = []
+        refunded_total = sum(int(result.get("refunded_total", 0) or 0) for result in voided_results)
+        for result in voided_results:
+            team = format_option_label(result.get("team"))
+            lines.append(
+                f"**{result.get('market_label', 'Market')}**: voided `{format_fb(result.get('amount'))}` "
+                f"on `{team}` and refunded `{format_fb(result.get('refunded_total'))}`."
+            )
+        for result in already_voided:
+            lines.append(f"**{result.get('market_label', 'Market')}** was already voided for this user.")
+
+        new_balance = get_balance(ctx.guild.id, member.id, nickname=member.display_name)
+        await refresh_existing_bets_embed(ctx.guild, match_id)
+        await ctx.reply(
+            f"Voided bet(s) for {member.mention}.\n"
+            + "\n".join(lines)
+            + f"\nTotal refunded: `{format_fb(refunded_total)}` Feederbucks."
+            + f"\nCurrent balance: `{format_fb(new_balance)}` Feederbucks."
+        )
+
+    @voidbet.error
+    async def voidbet_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to void bets. You must be a server admin or have the 'Inhouse Admin' role.")
+        elif isinstance(error, commands.MemberNotFound):
+            await ctx.reply("I couldn't find that server member. Usage: `!voidbet <@user> <market|all> [reason]`")
+        else:
+            await ctx.reply("An unexpected error occurred while voiding the bet.")
 
     @bot.command(name="balance", aliases=["money", "feederbucks"])
     async def balance(ctx, member: discord.Member = None):
@@ -3142,6 +3234,7 @@ def attach_commands(bot, deps):
                     "**!voidmarket `<selector>` `[reason]`** - Void and refund suspicious betting markets.\n"
                     "Selectors: `<market>` = one market by number/name from `!bets`; `side` = all non-Match-Winner markets; `prop` = only high-risk prop markets; `all` = every active market.\n"
                     "Examples: `!voidmarket 2 suspicious first blood`, `!voidmarket prop suspected collusion`, `!voidmarket all data issue`.\n"
+                    "**!voidbet `<@user>` `<market|all>` `[reason]`** - Void and refund one user's current bet in a market, or all current bets from that user.\n"
                     "**!modifycost `<item_index|item_name>` `<cost>`** - Override a store item cost for this server. Example: `!modifycost 2 60000`.\n"
                     "**!viewlogs** - View recent configuration logs for this server.\n"
                     "**!viewlogs --verbose** - View detailed logs with full Firestore data.\n\n"

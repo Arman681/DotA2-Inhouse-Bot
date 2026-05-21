@@ -460,9 +460,17 @@ def get_match_betting_state(guild_id, match_id):
     return snap.to_dict() if snap.exists else None
 
 
-def _market_bets(market):
+def _market_bets(market, *, include_voided=False):
     bets = market.get("bets") or {}
-    return bets if isinstance(bets, dict) else {}
+    if not isinstance(bets, dict):
+        return {}
+    if include_voided:
+        return bets
+    return {
+        user_id: bet
+        for user_id, bet in bets.items()
+        if isinstance(bet, dict) and not bool(bet.get("voided", False))
+    }
 
 
 def get_market_pools(market):
@@ -819,25 +827,33 @@ def _void_market_state(guild_id, market, reason=None, voided_by=None):
         return {
             "market_id": market.get("id"),
             "market_label": market.get("label", market.get("id", "Market")),
-            "bet_count": len(_market_bets(market)),
+            "bet_count": len(_market_bets(market, include_voided=True)),
             "refunded_total": _safe_int(market.get("refunded_total"), 0),
             "already_voided": True,
         }
 
     refunded_total = 0
     net_adjustment = 0
-    bets = _market_bets(market)
+    bet_count = 0
+    bets = _market_bets(market, include_voided=True)
     for user_id, bet in bets.items():
+        if not isinstance(bet, dict) or bool(bet.get("voided", False)):
+            continue
         amount = _safe_int(bet.get("amount"), 0)
         gross_payout = _safe_int(bet.get("gross_payout"), 0) if market.get("paid") else 0
         refund_delta = amount - gross_payout
         nickname = bet.get("nickname")
         before = int(get_balance(guild_id, user_id, nickname) or 0)
         after = update_balance(guild_id, user_id, refund_delta, nickname)
+        bet_count += 1
         refunded_total += amount
         net_adjustment += refund_delta
         bet["voided"] = True
+        bet["void_reason"] = reason or "No reason provided"
+        bet["voided_by"] = str(voided_by) if voided_by else "Unknown"
+        bet["voided_at"] = _now_utc()
         bet["refund_delta"] = refund_delta
+        bet["refunded_amount"] = amount
         bet["balance_before_refund"] = before
         bet["balance_after_refund"] = after
 
@@ -854,7 +870,7 @@ def _void_market_state(guild_id, market, reason=None, voided_by=None):
     return {
         "market_id": market.get("id"),
         "market_label": market.get("label", market.get("id", "Market")),
-        "bet_count": len(bets),
+        "bet_count": bet_count,
         "refunded_total": refunded_total,
         "net_adjustment": net_adjustment,
         "already_voided": False,
@@ -975,7 +991,7 @@ def place_market_bet(user_id, team, amount, delta, guild_id, match_id, market_id
         raise ValueError("Market not found")
     if team not in get_market_options(market):
         raise ValueError("Invalid option for this market")
-    bets = _market_bets(market)
+    bets = _market_bets(market, include_voided=True)
 
     user_id = str(user_id)
     amount = _safe_int(amount, 0)
@@ -984,6 +1000,8 @@ def place_market_bet(user_id, team, amount, delta, guild_id, match_id, market_id
         raise ValueError("Bet amount must be positive")
 
     existing = bets.get(user_id) or {}
+    if isinstance(existing, dict) and existing.get("voided"):
+        existing = {}
     balance_before_delta = int(get_balance(guild_id, user_id, nickname) or 0)
     balance_after_delta = balance_before_delta - wager_delta
     update_balance(guild_id, user_id, -wager_delta, nickname)
@@ -1046,6 +1064,7 @@ def _result_entry(market, bet, *, won, net_delta, gross_payout, balance_after, n
 def _resolve_market_payouts(guild_id, market, betting_mode, *, allow_carryover=True):
     winner = str(market.get("winner") or "").lower()
     bets = _market_bets(market)
+    all_bets = _market_bets(market, include_voided=True)
     options = get_market_options(market)
     results = []
     if winner not in options:
@@ -1114,7 +1133,7 @@ def _resolve_market_payouts(guild_id, market, betting_mode, *, allow_carryover=T
             balance_after=balance_after,
         ))
 
-    market["bets"] = bets
+    market["bets"] = all_bets
     market["pools"] = pools
     market["total_pool"] = total_pool
     market["winning_pool"] = winning_pool
@@ -1287,7 +1306,7 @@ def void_market(guild_id, match_id, market_id, reason=None, voided_by=None):
         return {
             "market_id": market_id,
             "market_label": market.get("label", market_id),
-            "bet_count": len(_market_bets(market)),
+            "bet_count": len(_market_bets(market, include_voided=True)),
             "refunded_total": _safe_int(market.get("refunded_total"), 0),
             "already_voided": True,
         }
@@ -1296,6 +1315,138 @@ def void_market(guild_id, match_id, market_id, reason=None, voided_by=None):
     markets[market_id] = market
     ref.set({"markets": markets, "updated_at": _now_utc()}, merge=True)
     return result
+
+
+def _void_user_bet_state(guild_id, market, user_id, reason=None, voided_by=None):
+    user_id = str(user_id)
+    bets = _market_bets(market, include_voided=True)
+    bet = bets.get(user_id)
+    market_id = market.get("id")
+    market_label = market.get("label", market_id or "Market")
+    base_result = {
+        "market_id": market_id,
+        "market_label": market_label,
+        "user_id": user_id,
+    }
+    if not isinstance(bet, dict):
+        return {
+            **base_result,
+            "bet_found": False,
+            "voided_now": False,
+            "already_voided": False,
+            "refunded_total": 0,
+            "net_adjustment": 0,
+        }
+    amount = _safe_int(bet.get("amount"), 0)
+    if bet.get("voided"):
+        return {
+            **base_result,
+            "bet_found": True,
+            "voided_now": False,
+            "already_voided": True,
+            "team": bet.get("team"),
+            "amount": amount,
+            "refunded_total": _safe_int(bet.get("refunded_amount"), amount),
+            "net_adjustment": _safe_int(bet.get("refund_delta"), 0),
+        }
+
+    nickname = bet.get("nickname")
+    gross_payout = _safe_int(bet.get("gross_payout"), 0) if market.get("paid") else 0
+    refund_delta = amount - gross_payout
+    before = int(get_balance(guild_id, user_id, nickname) or 0)
+    after = update_balance(guild_id, user_id, refund_delta, nickname)
+    bet["voided"] = True
+    bet["void_reason"] = reason or "No reason provided"
+    bet["voided_by"] = str(voided_by) if voided_by else "Unknown"
+    bet["voided_at"] = _now_utc()
+    bet["refund_delta"] = refund_delta
+    bet["refunded_amount"] = amount
+    bet["balance_before_refund"] = before
+    bet["balance_after_refund"] = after
+    bets[user_id] = bet
+    market["bets"] = bets
+    market["pools"] = get_market_pools(market)
+    market["updated_at"] = _now_utc()
+    return {
+        **base_result,
+        "bet_found": True,
+        "voided_now": True,
+        "already_voided": False,
+        "team": bet.get("team"),
+        "amount": amount,
+        "refunded_total": amount,
+        "net_adjustment": refund_delta,
+        "balance_before_refund": before,
+        "balance_after_refund": after,
+    }
+
+
+def _ordered_market_ids(markets):
+    ordered = [market_id for market_id in MARKET_ORDER if market_id in markets]
+    ordered.extend(market_id for market_id in markets.keys() if market_id not in ordered)
+    return ordered
+
+
+def void_user_bets(guild_id, match_id, user_id, market_ids=None, reason=None, voided_by=None):
+    state = get_match_betting_state(guild_id, match_id)
+    if not state:
+        raise ValueError("No betting state found for this match")
+    ref = _match_betting_ref(guild_id, match_id)
+    markets = deepcopy(state.get("markets") or {})
+    if market_ids is None:
+        target_market_ids = _ordered_market_ids(markets)
+    else:
+        target_market_ids = []
+        for raw_market_id in market_ids:
+            market_id = normalize_market_id(raw_market_id)
+            if market_id not in MARKET_DEFINITIONS:
+                raise ValueError("Invalid market")
+            if market_id not in target_market_ids:
+                target_market_ids.append(market_id)
+
+    results = []
+    changed = False
+    for market_id in target_market_ids:
+        market = markets.get(market_id)
+        if not market:
+            results.append({
+                "market_id": market_id,
+                "market_label": MARKET_DEFINITIONS.get(market_id, {}).get("label", market_id),
+                "user_id": str(user_id),
+                "bet_found": False,
+                "voided_now": False,
+                "already_voided": False,
+                "refunded_total": 0,
+                "net_adjustment": 0,
+            })
+            continue
+        result = _void_user_bet_state(
+            guild_id,
+            market,
+            user_id,
+            reason=reason,
+            voided_by=voided_by,
+        )
+        if result.get("voided_now"):
+            changed = True
+            markets[market_id] = market
+        results.append(result)
+
+    if changed:
+        ref.set({"markets": markets, "updated_at": _now_utc()}, merge=True)
+    return results
+
+
+def void_user_bet(guild_id, match_id, market_id, user_id, reason=None, voided_by=None):
+    results = void_user_bets(
+        guild_id,
+        match_id,
+        user_id,
+        market_ids=[market_id],
+        reason=reason,
+        voided_by=voided_by,
+    )
+    return results[0] if results else None
 
 
 def void_markets(guild_id, match_id, market_ids, reason=None, voided_by=None):
