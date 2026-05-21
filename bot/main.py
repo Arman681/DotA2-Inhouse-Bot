@@ -14,6 +14,7 @@ warnings.filterwarnings(
     module="google.cloud.firestore_v1.base_collection"
 )
 import aiohttp, asyncio, os, json
+from datetime import datetime, timezone
 from typing import Optional
 import discord
 from discord.ext import commands, tasks
@@ -156,6 +157,13 @@ from bot.services.match_imp_service import (
     schedule_due_imp_enrichments,
     schedule_match_imp_enrichment,
 )
+from bot.services.stratz_guard import (
+    format_stratz_block,
+    get_stratz_block_state,
+    mark_mmr_refresh_completed,
+    mark_mmr_refresh_started,
+    should_skip_recent_mmr_refresh,
+)
 from bot.ui.manual_captain_select import (
     ManualCaptainSelectView,
     configure_manual_captain_select,
@@ -193,6 +201,8 @@ from bot.state.runtime_state import (
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 STRATZ_TOKEN = os.getenv("STRATZ_TOKEN")
+BOT_STARTED_AT = datetime.now(timezone.utc)
+MMR_REFRESH_BOOT_GRACE_SECONDS = int(os.getenv("MMR_REFRESH_BOOT_GRACE_SECONDS", "3600"))
 STEAM_API_KEY = os.getenv("STEAM_API_KEY")
 # Replace this with your actual Discord user ID
 GLOBAL_ADMIN_ID = 187959278949105664
@@ -385,10 +395,34 @@ async def get_display_name(account_id_32, guild):
 # Periodic background task that updates all players' MMR values from STRATZ in Firebase, and refreshes lobby embeds across all servers.
 @tasks.loop(hours=18)
 async def refresh_all_mmrs():
+    uptime_seconds = (datetime.now(timezone.utc) - BOT_STARTED_AT).total_seconds()
+    if uptime_seconds < MMR_REFRESH_BOOT_GRACE_SECONDS:
+        remaining = int(MMR_REFRESH_BOOT_GRACE_SECONDS - uptime_seconds)
+        print(f"[refresh_all_mmrs] Skipping during boot grace period ({remaining}s remaining).")
+        return
+
+    skip_recent, last_refresh_at = should_skip_recent_mmr_refresh()
+    if skip_recent:
+        print(f"[refresh_all_mmrs] Skipping; last MMR refresh started at {last_refresh_at.isoformat()} within the 4h window.")
+        return
+
+    blocked, block_reason, blocked_until = get_stratz_block_state()
+    if blocked:
+        print(f"[refresh_all_mmrs] Skipping; {format_stratz_block(block_reason, blocked_until)}.")
+        return
+
+    mark_mmr_refresh_started()
     print("Refreshing MMRs (Firebase)...")
     updates_log = []  # collected and printed once at the end
+    refreshed_players = 0
+    stopped_reason = None
     players_ref = db.collection("players").stream()
     for doc in players_ref:
+        blocked, block_reason, blocked_until = get_stratz_block_state()
+        if blocked:
+            stopped_reason = format_stratz_block(block_reason, blocked_until)
+            print(f"[refresh_all_mmrs] Stopping early; {stopped_reason}.")
+            break
         user_id = doc.id
         data = doc.to_dict()
         steam_id = data.get("steam_id")
@@ -401,6 +435,7 @@ async def refresh_all_mmrs():
         # Fetch (mmr, season_or_tier, source), where season_or_tier is STRATZ seasonRank or OpenDota rank_tier
         try:
             mmr, season_or_tier, source = await fetch_mmr(steam_id)
+            refreshed_players += 1
             # throttle between users
             await asyncio.sleep(0.3) # ensure stratz api call limit is not exceeded
         except Exception as e:
@@ -434,6 +469,11 @@ async def refresh_all_mmrs():
                 })
             except Exception as e:
                 print(f"[refresh_all_mmrs] Failed to update Firestore for {user_id}: {e}")
+    mark_mmr_refresh_completed(
+        refreshed_players=refreshed_players,
+        updated_players=len(updates_log),
+        stopped_reason=stopped_reason,
+    )
     # Refresh lobby embeds across all servers
     try:
         await update_all_lobbies()
@@ -452,6 +492,14 @@ async def refresh_all_mmrs():
     else:
         print("[MMR REFRESH] No changes detected.")
     print("Refreshed all MMRs and lobby embeds.")
+
+
+@refresh_all_mmrs.before_loop
+async def before_refresh_all_mmrs():
+    if MMR_REFRESH_BOOT_GRACE_SECONDS > 0:
+        print(f"[refresh_all_mmrs] Waiting {MMR_REFRESH_BOOT_GRACE_SECONDS}s boot grace before first refresh.")
+        await asyncio.sleep(MMR_REFRESH_BOOT_GRACE_SECONDS)
+
 
 @tasks.loop(hours=1)
 async def cleanup_expired_store_roles_task():
