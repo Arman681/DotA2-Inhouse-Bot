@@ -5,6 +5,11 @@ import random
 import discord
 
 from bot.services.betting_manager import ensure_match_betting_state, process_live_betting_markets
+from bot.services.stratz_guard import (
+    format_stratz_block,
+    note_stratz_response,
+    reserve_stratz_request,
+)
 from bot.services.store_service import unmute_match_store_mutes
 from bot.state.runtime_state import (
     _last_active_match_id,
@@ -356,6 +361,10 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
     }
     for attempt in range(max_retries):
         try:
+            blocked, block_reason, blocked_until = await reserve_stratz_request()
+            if blocked:
+                print(f"[fetch_mmr] Skipping STRATZ for steam_id={steam_id}: {format_stratz_block(block_reason, blocked_until)}")
+                return None, None, None
             async with get_http_session().post(url, json=query, headers=headers, timeout=8) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -374,6 +383,8 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
                         f"(attempt {attempt+1}/{max_retries}) "
                         f"for steam_id={steam_id}: {txt[:180]}"
                     )
+                    if note_stratz_response(response.status, txt, headers=response.headers, endpoint="fetch_mmr"):
+                        return None, None, None
                     if response.status in (403, 429, 500, 502, 503, 504):
                         continue
                     break
