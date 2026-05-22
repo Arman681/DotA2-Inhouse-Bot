@@ -17,6 +17,7 @@ ALLOWED_BETTING_MODES = {BETTING_MODE_CLASSIC, BETTING_MODE_POOL}
 DEFAULT_MAIN_POOL_SEED = 1000
 DEFAULT_SIDE_POOL_SEED = 250
 BETTING_LOCK_SECONDS_AFTER_HEROES = 60
+MATCH_WINNER_BETTING_GRACE_SECONDS = 120
 
 MARKET_MATCH_WINNER = "match"
 MARKET_FIRST_BLOOD = "firstblood"
@@ -646,26 +647,39 @@ def update_market_lock_state(guild_id, match_id, match):
 
     radiant_kills, dire_kills = get_live_kill_scores(match)
     duration = _scoreboard_duration(match)
-    lock_reason = None
+    side_market_lock_reason = None
+    match_winner_lock_reason = None
     random_mode = bool(data.get("random_mode", False))
     if not random_mode and duration > 0:
-        lock_reason = "game_started"
+        side_market_lock_reason = "game_started"
     elif not random_mode and radiant_kills + dire_kills > 0:
-        lock_reason = "score_changed"
+        side_market_lock_reason = "score_changed"
     elif bets_lock_at is not None and now >= bets_lock_at:
-        lock_reason = "hero_lock_timer"
+        side_market_lock_reason = "hero_lock_timer"
 
-    if lock_reason:
+    if not random_mode and duration >= MATCH_WINNER_BETTING_GRACE_SECONDS:
+        match_winner_lock_reason = "match_winner_grace_elapsed"
+    elif random_mode and bets_lock_at is not None and now >= bets_lock_at:
+        match_winner_lock_reason = "hero_lock_timer"
+
+    if side_market_lock_reason or match_winner_lock_reason:
         changed = False
-        for market in markets.values():
+        for market_id, market in markets.items():
             if market.get("status") == "open":
-                market["status"] = "locked"
-                changed = True
+                lock_reason = (
+                    match_winner_lock_reason
+                    if market_id == MARKET_MATCH_WINNER
+                    else side_market_lock_reason
+                )
+                if lock_reason:
+                    market["status"] = "locked"
+                    changed = True
         if changed:
             updates["markets"] = markets
-            updates["status"] = "locked"
-            updates["bets_locked_at"] = now
-            updates["lock_reason"] = lock_reason
+            if not any(market.get("status") == "open" for market in markets.values()):
+                updates["status"] = "locked"
+                updates["bets_locked_at"] = now
+                updates["lock_reason"] = match_winner_lock_reason or side_market_lock_reason
 
     if updates:
         updates["updated_at"] = now
