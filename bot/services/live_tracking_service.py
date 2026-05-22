@@ -56,7 +56,7 @@ log_match_ledger = None
 get_discord_id_from_steam_id = None
 schedule_match_imp_enrichment = None
 
-PARTICIPATION_FEEDERBUCKS_AWARD = 50
+PARTICIPATION_FEEDERBUCKS_AWARD = 100
 
 
 def configure_live_tracking(
@@ -309,17 +309,20 @@ async def poll_live_match(match_id, guild, random_mode=False):
             print(f"[poll_live_match] Failed to log random bet ledger entry for match {match_id}: {e}")
     else:
         print(f"[poll_live_match] Random match {match_id} had no bets. Skipping match_data logging.")
-    print(f"[poll_live_match] Awarded 50 Feederbucks to {len(all_player_ids)} participants in match {match_id}")
+    print(
+        f"[poll_live_match] Awarded {PARTICIPATION_FEEDERBUCKS_AWARD} Feederbucks "
+        f"to {len(all_player_ids)} participants in match {match_id}"
+    )
     try:
         if random_mode:
             await channel.send(
                 f"Match `{match_id}` has ended with a {winning_team} victory. Bets have been resolved.\n"
-                "All participants received **50 Feederbucks** for playing."
+                f"All participants received **{PARTICIPATION_FEEDERBUCKS_AWARD} Feederbucks** for playing."
             )
         else:
             await channel.send(
                 f"Match `{match_id}` has ended with a {winning_team} victory. Bets have been resolved and Inhouse-MMR updated.\n"
-                "All participants received **50 Feederbucks** for playing."
+                f"All participants received **{PARTICIPATION_FEEDERBUCKS_AWARD} Feederbucks** for playing."
             )
         print(f"[poll_live_match] Match summary sent to channel ID: {channel.id}")
     except Exception as e:
