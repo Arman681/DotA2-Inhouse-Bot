@@ -51,6 +51,7 @@ def attach_commands(bot, deps):
     is_market_open_for_betting      = deps["is_market_open_for_betting"]
     normalize_market_id             = deps["normalize_market_id"]
     save_betting_mode_for_guild     = deps["save_betting_mode_for_guild"]
+    process_live_betting_markets    = deps["process_live_betting_markets"]
     save_prop_markets_setting       = deps["save_prop_markets_setting"]
     void_market                     = deps["void_market"]
     void_markets                    = deps["void_markets"]
@@ -617,6 +618,7 @@ def attach_commands(bot, deps):
 
     LEDGER_PAGE_SIZE = 1
     LEDGER_MAX_PAGES = 5
+    PARTICIPATION_FEEDERBUCKS_AWARD = 100
 
     def format_ledger_timestamp(value):
         if hasattr(value, "to_datetime"):
@@ -1187,6 +1189,7 @@ def attach_commands(bot, deps):
             await ctx.reply("Could not retrieve live match info. Betting may be closed.")
             return
         match_id = match.get("match_id")
+        process_live_betting_markets(ctx.guild.id, match_id, match)
         market_snapshot = next(
             (m for m in get_public_market_snapshots(ctx.guild.id, match_id) if m.get("id") == market_id),
             None,
@@ -1387,7 +1390,8 @@ def attach_commands(bot, deps):
         embed.add_field(
             name="Locks",
             value=(
-                "Markets lock when the game starts, when scoring begins, or 60 seconds after all heroes are fetched."
+                "Side markets lock when the game starts, when scoring begins, or 60 seconds after all heroes are fetched.\n"
+                "Match Winner stays open until the game reaches 2:00."
             ),
             inline=False,
         )
@@ -2751,12 +2755,17 @@ def attach_commands(bot, deps):
             try:
                 member = ctx.guild.get_member(int(discord_id))
                 nickname = member.display_name if member else str(discord_id)
-                balance_after = update_balance(ctx.guild.id, discord_id, 50, nickname=nickname)
+                balance_after = update_balance(
+                    ctx.guild.id,
+                    discord_id,
+                    PARTICIPATION_FEEDERBUCKS_AWARD,
+                    nickname=nickname,
+                )
                 feederbucks_awards.append(build_feederbucks_award(
                     f"participation_{discord_id}",
                     discord_id,
                     nickname,
-                    50,
+                    PARTICIPATION_FEEDERBUCKS_AWARD,
                     "Participation",
                     balance_after=balance_after,
                 ))
@@ -2801,7 +2810,10 @@ def attach_commands(bot, deps):
             )
         except Exception as e:
             print(f"[submitmatch] Failed to schedule IMP enrichment for match {match_id}: {e}")
-        await ctx.reply(f"Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\nAll participants received **50 Feederbucks** for playing.")
+        await ctx.reply(
+            f"Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\n"
+            f"All participants received **{PARTICIPATION_FEEDERBUCKS_AWARD} Feederbucks** for playing."
+        )
     @submitmatch.error
     async def submitmatch_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
