@@ -103,6 +103,7 @@ from bot.services.mmr_manager import adjust_mmr, get_inhouse_mmr, get_top_player
 from bot.services.betting_manager import (
     BETTING_MODE_CLASSIC,
     BETTING_MODE_POOL,
+    MIN_BET_AMOUNT,
     MARKET_FIRST_BLOOD,
     MARKET_FIRST_TOWER,
     MARKET_FIRST_TO_10,
@@ -962,6 +963,7 @@ deps = {
     "clear_guild_bets": clear_guild_bets,
     "BETTING_MODE_CLASSIC": BETTING_MODE_CLASSIC,
     "BETTING_MODE_POOL": BETTING_MODE_POOL,
+    "MIN_BET_AMOUNT": MIN_BET_AMOUNT,
     "MARKET_MATCH_WINNER": MARKET_MATCH_WINNER,
     "MARKET_FIRST_BLOOD": MARKET_FIRST_BLOOD,
     "MARKET_FIRST_TO_10": MARKET_FIRST_TO_10,

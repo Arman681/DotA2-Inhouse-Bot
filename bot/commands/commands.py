@@ -36,6 +36,7 @@ def attach_commands(bot, deps):
     clear_guild_bets                = deps["clear_guild_bets"]
     BETTING_MODE_CLASSIC            = deps["BETTING_MODE_CLASSIC"]
     BETTING_MODE_POOL               = deps["BETTING_MODE_POOL"]
+    MIN_BET_AMOUNT                  = deps["MIN_BET_AMOUNT"]
     MARKET_MATCH_WINNER             = deps["MARKET_MATCH_WINNER"]
     MARKET_FIRST_BLOOD              = deps["MARKET_FIRST_BLOOD"]
     MARKET_FIRST_TO_10              = deps["MARKET_FIRST_TO_10"]
@@ -1158,7 +1159,6 @@ def attach_commands(bot, deps):
     @commands.cooldown(1, 5, commands.BucketType.user)  # 1 use / 5s per user
     @bot.command(name="bet")
     async def bet(ctx, *args):
-        DEFAULT_BET = 100
         try:
             market_id, amount, amount_is_all, team = parse_bet_args(args)
         except ValueError as exc:
@@ -1168,9 +1168,12 @@ def attach_commands(bot, deps):
             )
             return
         if amount is None:
-            amount = DEFAULT_BET
+            amount = MIN_BET_AMOUNT
         if not amount_is_all and amount <= 0:
             await ctx.reply("Bet amount must be greater than 0.")
+            return
+        if not amount_is_all and amount < MIN_BET_AMOUNT:
+            await ctx.reply(f"Minimum bet amount is `{MIN_BET_AMOUNT}` Feederbucks.")
             return
         user_id = str(ctx.author.id)
         nickname = ctx.author.nick if ctx.author.nick else ctx.author.display_name
@@ -1270,6 +1273,9 @@ def attach_commands(bot, deps):
                 await ctx.reply("You do not have any available Feederbucks left to add to this bet.")
                 return
             delta = amount - previous_bet
+        if amount < MIN_BET_AMOUNT:
+            await ctx.reply(f"Minimum bet amount is `{MIN_BET_AMOUNT}` Feederbucks.")
+            return
         if (current_balance + previous_bet) < amount:
             await ctx.reply("You don’t have enough balance.")
         else:

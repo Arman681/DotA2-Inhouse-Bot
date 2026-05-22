@@ -8,6 +8,7 @@ from firebase_admin import firestore
 db = firestore.client()
 
 DD_TOKEN_COST = 1000
+MIN_BET_AMOUNT = 100
 
 BETTING_MODE_CLASSIC = "classic"
 BETTING_MODE_POOL = "pool"
@@ -1018,6 +1019,8 @@ def place_market_bet(user_id, team, amount, delta, guild_id, match_id, market_id
     wager_delta = _safe_int(delta, 0)
     if amount <= 0 or wager_delta <= 0:
         raise ValueError("Bet amount must be positive")
+    if amount < MIN_BET_AMOUNT:
+        raise ValueError(f"Minimum bet amount is {MIN_BET_AMOUNT} Feederbucks")
 
     existing = bets.get(user_id) or {}
     if isinstance(existing, dict) and existing.get("voided"):
@@ -1045,15 +1048,20 @@ def place_market_bet(user_id, team, amount, delta, guild_id, match_id, market_id
 
 def place_bet(user_id, team, amount, delta, guild_id, nickname):
     entry_ref = db.collection("bets").document(str(guild_id)).collection("entries").document(str(user_id))
+    amount = _safe_int(amount, 0)
+    wager_delta = _safe_int(delta, 0)
+    if amount <= 0 or wager_delta <= 0:
+        raise ValueError("Bet amount must be positive")
+    if amount < MIN_BET_AMOUNT:
+        raise ValueError(f"Minimum bet amount is {MIN_BET_AMOUNT} Feederbucks")
     balance_before_bet = int(get_balance(guild_id, user_id, nickname) or 0)
-    wager_delta = int(delta or 0)
     balance_after_bet = balance_before_bet - wager_delta
-    update_balance(guild_id, user_id, -delta, nickname)
+    update_balance(guild_id, user_id, -wager_delta, nickname)
     entry_ref.set({
         "nickname": nickname,
         "user_id": str(user_id),
         "team": team,
-        "amount": int(amount or 0),
+        "amount": amount,
         "balance_before_bet": balance_before_bet,
         "balance_after_bet": balance_after_bet,
         "timestamp": firestore.SERVER_TIMESTAMP
