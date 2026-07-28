@@ -857,15 +857,36 @@ async def on_guild_join(guild):
     welcome_embed = discord.Embed(
         title="👋 Welcome to FeederBot!",
         description=(
-            "Thanks for inviting me to your server!\n\n"
-            "**To get started**, try using:\n"
-            "`!lobby` - to create an inhouse lobby\n"
-            "`!cfg <steam_id>` - to link your Steam ID\n"
-            "`!add @user` or `!add placeholder1 4500` - to add players\n"
-            "`!help` - for full command list\n\n"
-            "FeederBot keeps lobby info separate for each server. If you ever need help, run `!help`."
+            "Thanks for inviting me to your server.\n"
+            "An admin should run these setup commands first."
         ),
         color=discord.Color.green()
+    )
+    welcome_embed.add_field(
+        name="Server setup",
+        value=(
+            "`!setlobbychannel` - set where lobby embeds are posted\n"
+            "`!setlivechannel` - set where live match updates are posted\n"
+            "`!bindleague <league_id>` - bind your Dota 2 league id for live match tracking\n"
+            "`!lobby <regular|immortal>` - create a lobby and choose the inhouse mode"
+        ),
+        inline=False
+    )
+    welcome_embed.add_field(
+        name="Player setup",
+        value=(
+            "`!cfg <steam_id>` - link your Steam ID and fetch MMR\n"
+            "`!setpreferredroles <1 2 3 4 5>` - set role preferences for balancing"
+        ),
+        inline=False
+    )
+    welcome_embed.add_field(
+        name="More commands",
+        value=(
+            "`!help` - player commands\n"
+            "`!help admin` - admin setup and match tracking commands"
+        ),
+        inline=False
     )
     welcome_embed.set_footer(text="Enjoy your games!")
     # Try system channel
