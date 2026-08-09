@@ -18,6 +18,7 @@ def attach_commands(bot, deps):
     # Firestore + db
     db         = deps["db"]
     firestore  = deps["firestore"]
+    rsvp_manager = deps["rsvp_manager"]
 
     # Player + MMR helpers
     convert_to_steam32   = deps["convert_to_steam32"]
@@ -224,6 +225,30 @@ def attach_commands(bot, deps):
         if lowered in ("off", "disable", "disabled", "false", "no"):
             return False
         return None
+
+    def parse_start_rsvp_args(args):
+        tokens = [str(arg).strip() for arg in args if str(arg).strip()]
+        if len(tokens) < 2:
+            raise ValueError("Provide the event start time and number of games.")
+
+        if len(tokens) >= 3 and tokens[1].lower() in {"am", "pm"}:
+            raw_time = f"{tokens[0]} {tokens[1]}"
+            games_index = 2
+        else:
+            raw_time = tokens[0]
+            games_index = 1
+
+        try:
+            games = int(tokens[games_index])
+        except (IndexError, ValueError):
+            raise ValueError("The number of games must be a whole number.")
+        if games < 1 or games > 10:
+            raise ValueError("The number of games must be between 1 and 10.")
+
+        notes = " ".join(tokens[games_index + 1:]).strip()
+        if len(notes) > 500:
+            raise ValueError("Optional event notes cannot exceed 500 characters.")
+        return rsvp_manager.parse_start_time(raw_time), games, notes
 
     def normalize_betting_mode_arg(value: str | None):
         lowered = str(value or "").lower().strip().replace("-", "_").replace(" ", "_")
@@ -2423,6 +2448,182 @@ def attach_commands(bot, deps):
         else:
             await ctx.reply("An unexpected error occurred while replacing a player in the lobby.")
 
+    @bot.command(name="startrsvp")
+    @is_admin_or_has_role()
+    async def start_rsvp(ctx, *args):
+        prefix = load_guild_prefix(ctx.guild.id)
+        usage = f"Usage: `{prefix}startrsvp <time> <games> [optional notes]` (example: `{prefix}startrsvp 8:30pm 2`)"
+        try:
+            start_time, games, notes = parse_start_rsvp_args(args)
+        except ValueError as exc:
+            await ctx.reply(f"{exc}\n{usage}")
+            return
+        try:
+            event, _ = await rsvp_manager.start_event(
+                guild=ctx.guild,
+                channel=ctx.channel,
+                author=ctx.author,
+                start_time=start_time,
+                games=games,
+                notes=notes,
+            )
+        except ValueError as exc:
+            await ctx.reply(str(exc))
+            return
+        except Exception as exc:
+            print(f"[startrsvp] Failed for guild {ctx.guild.id}: {exc}")
+            await ctx.reply("I couldn't create the RSVP event. Please try again in a moment.")
+            return
+        await ctx.reply(
+            f"RSVP event started for <t:{event['start_at']}:F>.",
+            delete_after=8,
+        )
+    @start_rsvp.error
+    async def start_rsvp_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to start RSVP events. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while starting the RSVP event.")
+
+    @bot.command(name="closersvp")
+    @is_admin_or_has_role()
+    async def close_rsvp(ctx, *args):
+        if args:
+            prefix = load_guild_prefix(ctx.guild.id)
+            await ctx.reply(f"Usage: `{prefix}closersvp`")
+            return
+        try:
+            await rsvp_manager.close_event(ctx.guild.id)
+        except ValueError as exc:
+            await ctx.reply(str(exc))
+            return
+        except Exception as exc:
+            print(f"[closersvp] Failed for guild {ctx.guild.id}: {exc}")
+            await ctx.reply("I couldn't close the RSVP event. Please try again in a moment.")
+            return
+        await ctx.reply("RSVP signups are now closed and the final roster has been preserved.", delete_after=8)
+    @close_rsvp.error
+    async def close_rsvp_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to close RSVP events. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while closing the RSVP event.")
+
+    @bot.command(name="finalizersvp")
+    @is_admin_or_has_role()
+    async def finalize_rsvp(ctx, *args):
+        if args:
+            prefix = load_guild_prefix(ctx.guild.id)
+            await ctx.reply(f"Usage: `{prefix}finalizersvp`")
+            return
+        try:
+            _, outcome, _ = await rsvp_manager.finalize_event(ctx.guild.id)
+        except ValueError as exc:
+            await ctx.reply(str(exc))
+            return
+        except Exception as exc:
+            print(f"[finalizersvp] Failed for guild {ctx.guild.id}: {exc}")
+            await ctx.reply("I couldn't finalize the RSVP event. Please try again in a moment.")
+            return
+        outcome_text = "confirmed" if outcome == "confirmed" else "cancelled"
+        await ctx.reply(f"The RSVP event has been finalized and **{outcome_text}**.", delete_after=8)
+    @finalize_rsvp.error
+    async def finalize_rsvp_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to finalize RSVP events. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while finalizing the RSVP event.")
+
+    @bot.command(name="cancelrsvp")
+    @is_admin_or_has_role()
+    async def cancel_rsvp(ctx, *, reason: str = ""):
+        reason = reason.strip()
+        if len(reason) > 500:
+            await ctx.reply("The cancellation reason cannot exceed 500 characters.")
+            return
+        try:
+            await rsvp_manager.cancel_event(
+                ctx.guild.id,
+                reason=reason,
+                cancelled_by=str(ctx.author.id),
+            )
+        except ValueError as exc:
+            await ctx.reply(str(exc))
+            return
+        except Exception as exc:
+            print(f"[cancelrsvp] Failed for guild {ctx.guild.id}: {exc}")
+            await ctx.reply("I couldn't cancel the RSVP event. Please try again in a moment.")
+            return
+        await ctx.reply("The RSVP event has been cancelled and its players have been notified.", delete_after=8)
+    @cancel_rsvp.error
+    async def cancel_rsvp_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to cancel RSVP events. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while cancelling the RSVP event.")
+
+    @bot.command(name="removersvp")
+    @is_admin_or_has_role()
+    async def remove_rsvp(ctx, member: discord.Member):
+        try:
+            _, removed, promoted = await rsvp_manager.remove_signup(
+                ctx.guild.id,
+                member.id,
+                removed_by=str(ctx.author.id),
+            )
+        except ValueError as exc:
+            await ctx.reply(str(exc))
+            return
+        except Exception as exc:
+            print(f"[removersvp] Failed for guild {ctx.guild.id}: {exc}")
+            await ctx.reply("I couldn't remove that player from the RSVP event. Please try again in a moment.")
+            return
+        list_name = "RSVP" if removed.get("status") == "rsvp" else "fill"
+        promotion_text = " The next fill was promoted as the replacement." if promoted else ""
+        await ctx.reply(
+            f"Removed {member.mention} from the {list_name} list.{promotion_text}",
+            delete_after=8,
+        )
+    @remove_rsvp.error
+    async def remove_rsvp_error(ctx, error):
+        prefix = load_guild_prefix(ctx.guild.id) if ctx.guild else "!"
+        if isinstance(error, commands.MissingRequiredArgument):
+            await ctx.reply(f"Usage: `{prefix}removersvp <@user>`")
+        elif isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to remove RSVP players. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while removing the RSVP player.")
+
+    @bot.command(name="resetrsvp")
+    @is_admin_or_has_role()
+    async def reset_rsvp(ctx, confirmation: str = ""):
+        prefix = load_guild_prefix(ctx.guild.id)
+        if confirmation.lower().strip() != "confirm":
+            await ctx.reply(
+                "This clears the current RSVP and locks its buttons. "
+                f"Run `{prefix}resetrsvp confirm` to continue."
+            )
+            return
+        try:
+            await rsvp_manager.reset_event(ctx.guild.id)
+        except ValueError as exc:
+            await ctx.reply(str(exc))
+            return
+        except Exception as exc:
+            print(f"[resetrsvp] Failed for guild {ctx.guild.id}: {exc}")
+            await ctx.reply("I couldn't reset the RSVP event. Please try again in a moment.")
+            return
+        await ctx.reply("The RSVP event has been reset and its roster cleared.", delete_after=8)
+    @reset_rsvp.error
+    async def reset_rsvp_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to reset RSVP events. You must be a server admin or have the 'Inhouse Admin' role.")
+        elif isinstance(error, commands.TooManyArguments):
+            prefix = load_guild_prefix(ctx.guild.id)
+            await ctx.reply(f"Usage: `{prefix}resetrsvp confirm`")
+        else:
+            await ctx.reply("An unexpected error occurred while resetting the RSVP event.")
+
     @bot.command(name="lobby")
     @is_admin_or_has_role()
     async def lobby_cmd(ctx, mode: str = None):
@@ -3234,6 +3435,12 @@ def attach_commands(bot, deps):
                     "**!replace `<@user1|placeholder1>` `<@user2|placeholder2>`** - Replace one lobby user or placeholder with another.\n"
                     "**!lobby** - Create or refresh the inhouse lobby.\n"
                     "**!reset** - Clear the current lobby and start fresh.\n"
+                    "**!startrsvp `<time>` `<games>` `[optional notes]`** - Post an all-ranks RSVP event more than one hour before start.\n"
+                    "**!closersvp** - Lock the current RSVP list without running the go/no-go decision.\n"
+                    "**!finalizersvp** - Immediately run the RSVP event's 10-player go/no-go decision.\n"
+                    "**!cancelrsvp `[reason]`** - Call off an active/confirmed inhouse and notify its players.\n"
+                    "**!removersvp `<@user>`** - Admin-remove a signup and promote the next fill if needed.\n"
+                    "**!resetrsvp `confirm`** - Clear and retire the current RSVP event.\n"
                     "**!cfg `<steam_id>` `[@user]` `[--force]`** - Link a player's Steam ID and fetch their MMR.\n"
                     "**!setmmr `<mmr>` `<@user>`** - Manually set a user's MMR.\n"
                     "**!setpreferredroles `<1 2 3 4 5>` `<@user>`** - Set preferred roles for another user.\n"
