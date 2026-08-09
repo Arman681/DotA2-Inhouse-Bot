@@ -45,6 +45,21 @@ Want to run automated Dota 2 inhouse lobbies in your server?
 - Optional dedicated lobby channel via `!setlobbychannel`
 - Supports **real Discord users** and **placeholder players** with custom MMR values
 
+### Inhouse RSVP events
+- Admins can manually post an all-ranks event with `!startrsvp <time> <games> [optional notes]`
+- Live RSVP and fill lists update directly on the event embed
+- Players use persistent **RSVP**, **Fill**, and **Withdraw** buttons
+- RSVP is capped at 10 committed players; fills remain available as standbys
+- Players must have a linked Steam ID and usable MMR from `!cfg` before joining either list
+- One hour before start, FeederBot confirms events with at least 10 combined RSVPs/fills or cancels events below 10
+- Fills are promoted in signup order when the event is confirmed or a confirmed player later withdraws
+- Direct RSVPs are locked after confirmation; fills, including promoted fills, may still withdraw
+- Admins can use `!removersvp @user` for emergency confirmed-roster changes
+- Confirmed-roster withdrawals without an available fill trigger an `Inhouse Admin` warning
+- Active events and button handling are restored when the bot restarts
+- FeederBot must be online for button clicks and on-time deadline announcements; overdue events finalize when it next starts
+- `!finalizersvp` runs the go/no-go decision early, `!cancelrsvp [reason]` calls it off manually, and `!resetrsvp confirm` retires and clears it
+
 ### Two inhouse modes
 #### Regular mode
 - Generates 5v5 team combinations from the 10-player lobby
@@ -170,6 +185,12 @@ Below is the current command set reflected in `commands.py`.
 - `!replace ...` — replace a lobby user/placeholder with another user/placeholder
 - `!lobby [regular|immortal]` — create or refresh the lobby and optionally set mode
 - `!reset` — clear the lobby and create a fresh lobby embed
+- `!startrsvp <time> <games> [optional notes]` — post an all-ranks RSVP event more than one hour before start
+- `!closersvp` — close the active RSVP event and preserve its final roster
+- `!finalizersvp` — immediately run the 10-player go/no-go decision
+- `!cancelrsvp [reason]` — manually call off an active/confirmed event and notify its players
+- `!removersvp <@user>` — admin-remove a signup and promote the next fill when needed
+- `!resetrsvp confirm` — retire the current RSVP event and clear its roster
 - `!setmmr <mmr> <@user>` — manually set a user’s public/stored MMR
 - `!alert` — ping all 10 players when lobby is full
 - `!setpassword <new_password>` — change the inhouse password shown on embeds
@@ -235,6 +256,14 @@ Stores per-server settings such as:
 - `live_channel_id`
 - `lobby_channel_id`
 - `captain_policy`
+
+### `rsvp_events/{guild_id}`
+Stores the current per-server RSVP event, including:
+- event start time and game count
+- Discord channel/message IDs
+- active/confirmed/cancelled/closed/reset lifecycle status
+- RSVP and fill membership
+- creator and update metadata
 
 ### `inhouse_mmr/{guild_id}/users/{user_id}`
 Stores server-specific inhouse MMR and nickname.
