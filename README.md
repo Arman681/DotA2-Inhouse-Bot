@@ -52,13 +52,17 @@ Want to run automated Dota 2 inhouse lobbies in your server?
 - RSVP is capped at 10 committed players; fills remain available as standbys
 - Players must have a linked Steam ID and usable MMR from `!cfg` before joining either list
 - One hour before start, FeederBot confirms events with at least 10 combined RSVPs/fills or cancels events below 10
+- FeederBot calls off undersubscribed events at that deadline so players are not left waiting and their time is respected
 - Fills are promoted in signup order when the event is confirmed or a confirmed player later withdraws
 - Direct RSVPs are locked after confirmation; fills, including promoted fills, may still withdraw
 - Admins can use `!removersvp @user` for emergency confirmed-roster changes
 - Confirmed-roster withdrawals without an available fill trigger an `Inhouse Admin` warning
-- Active events and button handling are restored when the bot restarts
+- Active, confirmed, and temporarily closed events and their button state are restored when the bot restarts
 - FeederBot must be online for button clicks and on-time deadline announcements; overdue events finalize when it next starts
-- `!finalizersvp` runs the go/no-go decision early, `!cancelrsvp [reason]` calls it off manually, and `!resetrsvp confirm` retires and clears it
+- A second `!startrsvp` is rejected while an RSVP event is running, including while its signups are temporarily closed
+- `!closersvp` temporarily locks the buttons while preserving the scheduled one-hour go/no-go decision
+- `!cancelrsvp [reason]` can call off an active, temporarily closed, or confirmed event
+- `!resetrsvp confirm` clears the roster and replaces the old card with a fresh unlocked one when the deadline is still ahead; after the deadline, it retires the old event and requires a new `!startrsvp`
 
 ### Two inhouse modes
 #### Regular mode
@@ -185,12 +189,12 @@ Below is the current command set reflected in `commands.py`.
 - `!replace ...` — replace a lobby user/placeholder with another user/placeholder
 - `!lobby [regular|immortal]` — create or refresh the lobby and optionally set mode
 - `!reset` — clear the lobby and create a fresh lobby embed
-- `!startrsvp <time> <games> [optional notes]` — post an all-ranks RSVP event more than one hour before start
-- `!closersvp` — close the active RSVP event and preserve its final roster
+- `!startrsvp <time> <games> [optional notes]` — post one all-ranks RSVP event more than one hour before start; running events block duplicates
+- `!closersvp` — temporarily lock signups while keeping the scheduled one-hour decision
 - `!finalizersvp` — immediately run the 10-player go/no-go decision
-- `!cancelrsvp [reason]` — manually call off an active/confirmed event and notify its players
+- `!cancelrsvp [reason]` — manually call off an active, temporarily closed, or confirmed event and notify its players
 - `!removersvp <@user>` — admin-remove a signup and promote the next fill when needed
-- `!resetrsvp confirm` — retire the current RSVP event and clear its roster
+- `!resetrsvp confirm` — clear the roster and replace the RSVP card before its deadline, or retire it after the deadline
 - `!setmmr <mmr> <@user>` — manually set a user’s public/stored MMR
 - `!alert` — ping all 10 players when lobby is full
 - `!setpassword <new_password>` — change the inhouse password shown on embeds
