@@ -2501,7 +2501,10 @@ def attach_commands(bot, deps):
             print(f"[closersvp] Failed for guild {ctx.guild.id}: {exc}")
             await ctx.reply("I couldn't close the RSVP event. Please try again in a moment.")
             return
-        await ctx.reply("RSVP signups are now closed and the final roster has been preserved.", delete_after=8)
+        await ctx.reply(
+            "RSVP signups are temporarily closed. The one-hour go/no-go decision remains scheduled.",
+            delete_after=8,
+        )
     @close_rsvp.error
     async def close_rsvp_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
@@ -2600,12 +2603,15 @@ def attach_commands(bot, deps):
         prefix = load_guild_prefix(ctx.guild.id)
         if confirmation.lower().strip() != "confirm":
             await ctx.reply(
-                "This clears the current RSVP and locks its buttons. "
+                "This clears the current roster and replaces its RSVP card when the confirmation deadline is still ahead. "
                 f"Run `{prefix}resetrsvp confirm` to continue."
             )
             return
         try:
-            await rsvp_manager.reset_event(ctx.guild.id)
+            _, _, reopened = await rsvp_manager.reset_event(
+                ctx.guild.id,
+                reset_by=str(ctx.author.id),
+            )
         except ValueError as exc:
             await ctx.reply(str(exc))
             return
@@ -2613,7 +2619,16 @@ def attach_commands(bot, deps):
             print(f"[resetrsvp] Failed for guild {ctx.guild.id}: {exc}")
             await ctx.reply("I couldn't reset the RSVP event. Please try again in a moment.")
             return
-        await ctx.reply("The RSVP event has been reset and its roster cleared.", delete_after=8)
+        if reopened:
+            await ctx.reply(
+                "The old RSVP card was replaced with a fresh, unlocked card using the same event details. The roster is empty.",
+                delete_after=8,
+            )
+        else:
+            await ctx.reply(
+                "The confirmation deadline has already passed, so the old RSVP event was retired instead of reopened. "
+                f"Use `{prefix}startrsvp <time> <games> [optional notes]` to schedule a new event."
+            )
     @reset_rsvp.error
     async def reset_rsvp_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
@@ -3435,12 +3450,12 @@ def attach_commands(bot, deps):
                     "**!replace `<@user1|placeholder1>` `<@user2|placeholder2>`** - Replace one lobby user or placeholder with another.\n"
                     "**!lobby** - Create or refresh the inhouse lobby.\n"
                     "**!reset** - Clear the current lobby and start fresh.\n"
-                    "**!startrsvp `<time>` `<games>` `[optional notes]`** - Post an all-ranks RSVP event more than one hour before start.\n"
-                    "**!closersvp** - Lock the current RSVP list without running the go/no-go decision.\n"
+                    "**!startrsvp `<time>` `<games>` `[optional notes]`** - Post one all-ranks RSVP event more than one hour before start; a running event blocks duplicates.\n"
+                    "**!closersvp** - Temporarily lock signups while keeping the scheduled one-hour decision.\n"
                     "**!finalizersvp** - Immediately run the RSVP event's 10-player go/no-go decision.\n"
-                    "**!cancelrsvp `[reason]`** - Call off an active/confirmed inhouse and notify its players.\n"
+                    "**!cancelrsvp `[reason]`** - Call off an active, closed, or confirmed inhouse and notify its players.\n"
                     "**!removersvp `<@user>`** - Admin-remove a signup and promote the next fill if needed.\n"
-                    "**!resetrsvp `confirm`** - Clear and retire the current RSVP event.\n"
+                    "**!resetrsvp `confirm`** - Clear the roster and replace the card if its deadline is still ahead; otherwise retire it.\n"
                     "**!cfg `<steam_id>` `[@user]` `[--force]`** - Link a player's Steam ID and fetch their MMR.\n"
                     "**!setmmr `<mmr>` `<@user>`** - Manually set a user's MMR.\n"
                     "**!setpreferredroles `<1 2 3 4 5>` `<@user>`** - Set preferred roles for another user.\n"
