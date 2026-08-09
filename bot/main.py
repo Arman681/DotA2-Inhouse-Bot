@@ -166,6 +166,7 @@ from bot.services.stratz_guard import (
     mark_mmr_refresh_started,
     should_skip_recent_mmr_refresh,
 )
+from bot.services.rsvp_service import RsvpManager
 from bot.ui.manual_captain_select import (
     ManualCaptainSelectView,
     configure_manual_captain_select,
@@ -234,6 +235,12 @@ async def resolve_command_prefix(bot, message):
     return "!"  # fallback default for DMs
 
 bot = commands.Bot(command_prefix=resolve_command_prefix, intents=intents, help_command=None)
+rsvp_manager = RsvpManager(
+    bot=bot,
+    db=db,
+    load_player_config=load_player_config,
+    load_guild_prefix=load_guild_prefix,
+)
 
 http_session: aiohttp.ClientSession | None = None
 def get_http_session() -> aiohttp.ClientSession:
@@ -523,6 +530,7 @@ async def on_ready():
     print(f"{bot.user} is online!")
     active_match_ids.clear()
     clear_all_bets(bot)
+    await rsvp_manager.restore_active_events()
     # Cache hero IDs
     hero_id_map = await fetch_hero_id_to_name_map()
     # Load live_channel_ids from Firestore
@@ -969,6 +977,7 @@ deps = {
     # firestore
     "db": db,
     "firestore": firestore,
+    "rsvp_manager": rsvp_manager,
     # player/MMR
     "convert_to_steam32": convert_to_steam32,
     "fetch_mmr": fetch_mmr,
