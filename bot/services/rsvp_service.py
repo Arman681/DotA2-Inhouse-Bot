@@ -87,6 +87,17 @@ def _is_promoted_fill(signup: dict | None) -> bool:
     )
 
 
+def _is_pending_finalization(event: dict | None) -> bool:
+    if not isinstance(event, dict):
+        return False
+    status = event.get("status")
+    if status == STATUS_ACTIVE:
+        return True
+    if status != STATUS_CLOSED:
+        return False
+    return event.get("closed_from_status", STATUS_ACTIVE) == STATUS_ACTIVE
+
+
 def _format_roster(event: dict, signup_status: str, empty_text: str) -> str:
     rows = _ordered_signups(event, signup_status)
     if not rows:
@@ -137,7 +148,13 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
     elif status == STATUS_CLOSED:
         title += " — Closed"
         color = discord.Color.dark_grey()
-        description = "Signups are closed. The final roster is shown below."
+        if _is_pending_finalization(event):
+            description = (
+                "Signups are temporarily closed. The one-hour go/no-go decision remains scheduled, "
+                "and the current roster is shown below."
+            )
+        else:
+            description = "Signups are closed. The final roster is shown below."
     elif status == STATUS_RESET:
         title += " — Reset"
         color = discord.Color.dark_grey()
@@ -165,7 +182,8 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
     embed.add_field(
         name="Go / No-Go Policy",
         value=(
-            "FeederBot confirms the inhouse only if at least **10 total RSVPs and fills** are available one hour before start.\n"
+            "FeederBot confirms the inhouse only if at least **10 total RSVPs and fills** are available one hour before start, "
+            "or calls off the inhouse if there are not enough players in order to respect everyone’s time.\n"
             "Once confirmed, RSVP players cannot withdraw during the final 60 minutes; fills may still withdraw."
         ),
         inline=False,
@@ -312,7 +330,7 @@ class RsvpManager:
 
     def _schedule_checkpoint(self, event: dict) -> None:
         guild_id = int(event.get("guild_id", 0) or 0)
-        if not guild_id or event.get("status") != STATUS_ACTIVE:
+        if not guild_id or not _is_pending_finalization(event):
             return
         self._cancel_checkpoint_task(guild_id)
         checkpoint_at = int(
@@ -353,10 +371,12 @@ class RsvpManager:
             if existing and existing.get("status") in {
                 STATUS_ACTIVE,
                 STATUS_CONFIRMED,
+                STATUS_CLOSED,
                 STATUS_STARTING,
             }:
                 raise ValueError(
-                    "This server already has an active RSVP event. Close or reset it before starting another one."
+                    "This server already has a running RSVP event. Cancel or reset it first, "
+                    "or finalize it if it is still awaiting the go/no-go decision."
                 )
 
             now_epoch = int(time.time())
@@ -471,7 +491,7 @@ class RsvpManager:
     async def finalize_event(self, guild_id: int, *, automatic: bool = False) -> tuple[dict | None, str, list[str]]:
         async with self._locks[guild_id]:
             event = self.get_event(guild_id)
-            if not event or event.get("status") != STATUS_ACTIVE:
+            if not _is_pending_finalization(event):
                 if automatic:
                     return event, "skipped", []
                 raise ValueError("There is no open RSVP event to finalize.")
@@ -555,8 +575,8 @@ class RsvpManager:
     ) -> dict:
         async with self._locks[guild_id]:
             event = self.get_event(guild_id)
-            if not event or event.get("status") not in INTERACTIVE_STATUSES:
-                raise ValueError("There is no active or confirmed RSVP event to cancel.")
+            if not event or event.get("status") not in (INTERACTIVE_STATUSES | {STATUS_CLOSED}):
+                raise ValueError("There is no active, closed, or confirmed RSVP event to cancel.")
             event["status"] = STATUS_CANCELLED
             event["cancellation_reason"] = str(reason or "").strip()
             event["cancelled_by"] = str(cancelled_by) if cancelled_by is not None else None
@@ -670,10 +690,16 @@ class RsvpManager:
             event = self.get_event(guild_id)
             if not event or event.get("status") not in INTERACTIVE_STATUSES:
                 raise ValueError("There is no active RSVP event to close.")
+            previous_status = event.get("status")
             event["status"] = STATUS_CLOSED
+            event["closed_from_status"] = previous_status
+            event["closed_at"] = int(time.time())
             event["updated_at"] = int(time.time())
             self._save_event(guild_id, event)
-            self._cancel_checkpoint_task(guild_id)
+            if previous_status == STATUS_ACTIVE:
+                self._schedule_checkpoint(event)
+            else:
+                self._cancel_checkpoint_task(guild_id)
             message = await self._resolve_message(event)
             if message:
                 await message.edit(
@@ -682,23 +708,108 @@ class RsvpManager:
                 )
             return event
 
-    async def reset_event(self, guild_id: int) -> dict:
+    async def reset_event(
+        self,
+        guild_id: int,
+        *,
+        reset_by: str | None = None,
+    ) -> tuple[dict, discord.Message | None, bool]:
         async with self._locks[guild_id]:
             event = self.get_event(guild_id)
             if not event or event.get("status") == STATUS_RESET:
                 raise ValueError("There is no RSVP event to reset.")
-            event["status"] = STATUS_RESET
+
+            original_event = {
+                **event,
+                "signups": dict(event.get("signups", {}) or {}),
+            }
+            old_message = await self._resolve_message(event)
+            now_epoch = int(time.time())
+            checkpoint_at = int(
+                event.get("checkpoint_at", 0)
+                or (int(event.get("start_at", 0) or 0) - RSVP_CONFIRMATION_LEAD_SECONDS)
+            )
+
+            if checkpoint_at <= now_epoch:
+                self._cancel_checkpoint_task(guild_id)
+                event["status"] = STATUS_RESET
+                event["signups"] = {}
+                event["message_id"] = None
+                event["reset_by"] = str(reset_by) if reset_by is not None else None
+                event["reset_at"] = now_epoch
+                event["updated_at"] = now_epoch
+                self._save_event(guild_id, event)
+                if old_message:
+                    try:
+                        await old_message.delete()
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                        try:
+                            await old_message.edit(
+                                embed=build_rsvp_embed(event),
+                                view=self.make_view(event, disabled=True),
+                            )
+                        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                            pass
+                return event, None, False
+
+            channel = await self._resolve_channel(event)
+            if channel is None:
+                raise ValueError("I could not access the RSVP channel to post the reset event.")
+
+            self._cancel_checkpoint_task(guild_id)
+            for key in (
+                "finalized_at",
+                "finalized_automatically",
+                "cancellation_reason",
+                "cancelled_by",
+                "cancelled_at",
+                "closed_from_status",
+                "closed_at",
+                "last_admin_removal_by",
+            ):
+                event.pop(key, None)
+            event["status"] = STATUS_STARTING
             event["signups"] = {}
+            event["message_id"] = None
+            event["reset_by"] = str(reset_by) if reset_by is not None else None
+            event["reset_at"] = now_epoch
+            event["updated_at"] = now_epoch
+            self._save_event(guild_id, event)
+
+            active_preview = dict(event)
+            active_preview["status"] = STATUS_ACTIVE
+            try:
+                new_message = await channel.send(
+                    embed=build_rsvp_embed(active_preview),
+                    view=self.make_view(active_preview),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except Exception:
+                self._save_event(guild_id, original_event)
+                self._schedule_checkpoint(original_event)
+                raise
+
+            event["message_id"] = str(new_message.id)
+            event["status"] = STATUS_ACTIVE
             event["updated_at"] = int(time.time())
             self._save_event(guild_id, event)
-            self._cancel_checkpoint_task(guild_id)
-            message = await self._resolve_message(event)
-            if message:
-                await message.edit(
-                    embed=build_rsvp_embed(event),
-                    view=self.make_view(event, disabled=True),
-                )
-            return event
+            self._schedule_checkpoint(event)
+
+            if old_message:
+                try:
+                    await old_message.delete()
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+                    print(f"[rsvp] Failed to delete old RSVP message for guild {guild_id}: {exc}")
+                    retired_event = dict(event)
+                    retired_event["status"] = STATUS_RESET
+                    try:
+                        await old_message.edit(
+                            embed=build_rsvp_embed(retired_event),
+                            view=self.make_view(retired_event, disabled=True),
+                        )
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                        pass
+            return event, new_message, True
 
     async def _send_ephemeral(self, interaction: discord.Interaction, content: str) -> None:
         try:
@@ -893,7 +1004,10 @@ class RsvpManager:
             snapshots = self.db.collection(RSVP_COLLECTION).stream()
             for snapshot in snapshots:
                 event = snapshot.to_dict() or {}
-                if event.get("status") not in INTERACTIVE_STATUSES:
+                if (
+                    event.get("status") not in INTERACTIVE_STATUSES
+                    and not _is_pending_finalization(event)
+                ):
                     continue
                 try:
                     guild_id = int(event.get("guild_id") or snapshot.id)
@@ -901,7 +1015,7 @@ class RsvpManager:
                     continue
                 if self.bot.get_guild(guild_id) is None:
                     continue
-                if event.get("status") == STATUS_ACTIVE:
+                if _is_pending_finalization(event):
                     checkpoint_at = int(
                         event.get("checkpoint_at", 0)
                         or (int(event.get("start_at", 0) or 0) - RSVP_CONFIRMATION_LEAD_SECONDS)
