@@ -177,8 +177,7 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
 
     embed.add_field(name="Start Time", value=start_value, inline=True)
     embed.add_field(name="Confirmation Deadline", value=checkpoint_value, inline=True)
-    embed.add_field(name="Format", value=f"**{games} {game_label}**\n5v5 inhouse", inline=True)
-    embed.add_field(name="Eligibility", value="**All ranks**\nConfigured players", inline=True)
+    embed.add_field(name="Format", value=f"**{games} {game_label}**\nCaptain's Mode", inline=True)
     embed.add_field(
         name="Go / No-Go Policy",
         value=(
