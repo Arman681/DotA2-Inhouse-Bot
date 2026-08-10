@@ -2743,7 +2743,24 @@ def attach_commands(bot, deps):
 
     @bot.command(name="setmmr")
     @is_admin_or_has_role()
-    async def setmmr(ctx, mmr: int, member: discord.Member):
+    async def setmmr(ctx, first: str = None, second: str = None):
+        usage = "Usage: `!setmmr <mmr> <@user>` or `!setmmr <@user> <mmr>`"
+        if first is None or second is None:
+            await ctx.reply(usage)
+            return
+
+        converter = commands.MemberConverter()
+        try:
+            mmr = int(first)
+            member = await converter.convert(ctx, second)
+        except (ValueError, commands.BadArgument):
+            try:
+                mmr = int(second)
+                member = await converter.convert(ctx, first)
+            except (ValueError, commands.BadArgument):
+                await ctx.reply(f"Invalid arguments. {usage}")
+                return
+
         if mmr < 0 or mmr > 20000:
             await ctx.reply("Invalid MMR value. Please provide a value between 0 and 20000.")
             return
@@ -2760,7 +2777,7 @@ def attach_commands(bot, deps):
     @setmmr.error
     async def set_mmr_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply("Usage: !setmmr `<mmr>` `<@user>`")
+            await ctx.reply("Usage: `!setmmr <mmr> <@user>` or `!setmmr <@user> <mmr>`")
         elif isinstance(error, commands.CheckFailure):
             await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
 
@@ -3457,7 +3474,7 @@ def attach_commands(bot, deps):
                     "**!removersvp `<@user>`** - Admin-remove a signup and promote the next fill if needed.\n"
                     "**!resetrsvp `confirm`** - Clear the roster and replace the card if its deadline is still ahead; otherwise retire it.\n"
                     "**!cfg `<steam_id>` `[@user]` `[--force]`** - Link a player's Steam ID and fetch their MMR.\n"
-                    "**!setmmr `<mmr>` `<@user>`** - Manually set a user's MMR.\n"
+                    "**!setmmr `<mmr>` `<@user>`** or **!setmmr `<@user>` `<mmr>`** - Manually set a user's MMR.\n"
                     "**!setpreferredroles `<1 2 3 4 5>` `<@user>`** - Set preferred roles for another user.\n"
                     "**!separate `<@user|discord_id>` `<@user|discord_id>`** - Keep two players apart in regular team generation.\n"
                     "**!unseparate `<@user|discord_id>` `<@user|discord_id>`** - Remove a separated player pair.\n"

@@ -195,7 +195,7 @@ Below is the current command set reflected in `commands.py`.
 - `!cancelrsvp [reason]` — manually call off an active, temporarily closed, or confirmed event and notify its players
 - `!removersvp <@user>` — admin-remove a signup and promote the next fill when needed
 - `!resetrsvp confirm` — clear the roster and replace the RSVP card before its deadline, or retire it after the deadline
-- `!setmmr <mmr> <@user>` — manually set a user’s public/stored MMR
+- `!setmmr <mmr> <@user>` or `!setmmr <@user> <mmr>` — manually set a user’s public/stored MMR
 - `!alert` — ping all 10 players when lobby is full
 - `!setpassword <new_password>` — change the inhouse password shown on embeds
 - `!changeprefix <new_prefix>` — set a per-server prefix
