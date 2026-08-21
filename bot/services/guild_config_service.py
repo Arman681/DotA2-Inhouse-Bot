@@ -113,6 +113,19 @@ def load_lobby_message_id(guild_id):
     return None
 
 
+def save_lobby_roster_lock(guild_id, message_id=None, *, source=None, event_start_at=None):
+    locked = message_id is not None
+    data = {
+        "locked": locked,
+        "message_id": str(message_id) if locked else None,
+        "source": str(source) if source else None,
+        "event_start_at": int(event_start_at) if event_start_at else None,
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"lobby_roster_lock": data}, merge=True)
+
+
 def save_lobby_players(guild_id, players):
     formatted = [{"id": uid, "name": name, "mmr": mmr} for uid, name, mmr in players]
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
