@@ -82,6 +82,7 @@ def attach_commands(bot, deps):
     format_live_match_embed      = deps["format_live_match_embed"]
     map_steam_ids_to_discord_ids = deps["map_steam_ids_to_discord_ids"]
     fetch_match_result           = deps["fetch_match_result"]
+    on_inhouse_match_resolved    = deps["on_inhouse_match_resolved"]
     get_bound_league_id          = deps["get_bound_league_id"]
     get_processed_match          = deps["get_processed_match"]
     is_match_processed           = deps["is_match_processed"]
@@ -2659,6 +2660,10 @@ def attach_commands(bot, deps):
             await ctx.message.delete()
         except discord.Forbidden:
             pass"""
+        await rsvp_manager.retire_series_for_lobby_override(
+            guild_id,
+            reset_by=str(ctx.author.id),
+        )
         await full_post_rocket_reset(guild_id)
         if guild_id in lobby_message:
             try:
@@ -2692,6 +2697,10 @@ def attach_commands(bot, deps):
             return
         guild_id = ctx.guild.id
         lobby_players[guild_id] = []
+        await rsvp_manager.retire_series_for_lobby_override(
+            guild_id,
+            reset_by=str(ctx.author.id),
+        )
         await full_post_rocket_reset(guild_id)
         try:
             if guild_id in lobby_message:
@@ -2975,6 +2984,15 @@ def attach_commands(bot, deps):
                 f"Match `{match_id}` was already processed earlier "
                 f"(source: `{existing.get('source', 'unknown')}`)."
             )
+            try:
+                await on_inhouse_match_resolved(
+                    ctx.guild,
+                    ctx.channel,
+                    match_id,
+                    require_current_match=True,
+                )
+            except Exception as e:
+                print(f"[submitmatch] Failed to reconcile RSVP series for match {match_id}: {e}")
             return
         result = fetch_match_result(match_id)
         if not result:
@@ -3054,6 +3072,10 @@ def attach_commands(bot, deps):
             f"Match submitted. `{winning_team.capitalize()}` won. MMRs and bets updated.\n"
             f"All participants received **{PARTICIPATION_FEEDERBUCKS_AWARD} Feederbucks** for playing."
         )
+        try:
+            await on_inhouse_match_resolved(ctx.guild, ctx.channel, match_id)
+        except Exception as e:
+            print(f"[submitmatch] Failed to advance RSVP series after match {match_id}: {e}")
     @submitmatch.error
     async def submitmatch_error(ctx, error):
         if isinstance(error, commands.MissingRequiredArgument):
@@ -3474,7 +3496,7 @@ def attach_commands(bot, deps):
                     "**!replace `<@user1|placeholder1>` `<@user2|placeholder2>`** - Replace one lobby user or placeholder with another.\n"
                     "**!lobby** - Create or refresh the inhouse lobby.\n"
                     "**!reset** - Clear the current lobby and start fresh.\n"
-                    "**!startrsvp `<time>` `<games>` `[optional notes]`** - Post one all-ranks RSVP event more than one hour before start; confirmed rosters automatically open a locked lobby at start.\n"
+                    "**!startrsvp `<time>` `<games>` `[optional notes]`** - Post one all-ranks RSVP event more than one hour before start; confirmed rosters automatically open a locked lobby and advance through that many games.\n"
                     "**!closersvp** - Temporarily lock signups while keeping the scheduled one-hour decision.\n"
                     "**!finalizersvp** - Immediately run the RSVP event's 10-player go/no-go decision.\n"
                     "**!cancelrsvp `[reason]`** - Call off an active, closed, or confirmed inhouse and notify its players.\n"
