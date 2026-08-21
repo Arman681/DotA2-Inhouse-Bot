@@ -20,6 +20,7 @@ from bot.state.runtime_state import (
     live_channel_ids,
     live_embed_messages,
     lobby_players,
+    match_wait_tasks,
     match_tracking_start_times,
     polling_tasks,
     random_polling_flags,
@@ -55,6 +56,9 @@ get_bound_league_id = None
 log_match_ledger = None
 get_discord_id_from_steam_id = None
 schedule_match_imp_enrichment = None
+on_inhouse_match_resolved = None
+on_match_wait_outcome = None
+on_inhouse_result_pending = None
 
 PARTICIPATION_FEEDERBUCKS_AWARD = 100
 
@@ -81,13 +85,17 @@ def configure_live_tracking(
     log_match_ledger_fn,
     get_discord_id_from_steam_id_fn,
     schedule_match_imp_enrichment_fn,
+    on_inhouse_match_resolved_fn,
+    on_match_wait_outcome_fn,
+    on_inhouse_result_pending_fn,
 ):
     global bot, db, steam_api_key, stratz_token, get_http_session
     global format_live_match_embed, fetch_match_result, map_steam_ids_to_discord_ids
     global resolve_bets, get_active_double_down_users, adjust_mmr, clear_active_double_downs
     global update_balance, get_processed_match, is_match_processed, log_processed_match
     global get_bound_league_id, log_match_ledger, get_discord_id_from_steam_id
-    global schedule_match_imp_enrichment
+    global schedule_match_imp_enrichment, on_inhouse_match_resolved
+    global on_match_wait_outcome, on_inhouse_result_pending
     bot = bot_instance
     db = db_client
     steam_api_key = steam_api_key_value
@@ -108,6 +116,9 @@ def configure_live_tracking(
     log_match_ledger = log_match_ledger_fn
     get_discord_id_from_steam_id = get_discord_id_from_steam_id_fn
     schedule_match_imp_enrichment = schedule_match_imp_enrichment_fn
+    on_inhouse_match_resolved = on_inhouse_match_resolved_fn
+    on_match_wait_outcome = on_match_wait_outcome_fn
+    on_inhouse_result_pending = on_inhouse_result_pending_fn
 
 
 def clear_match_tracking_state(guild_id: int):
@@ -202,7 +213,15 @@ async def poll_live_match(match_id, guild, random_mode=False):
         print(f"[poll_live_match] No match result found for match {match_id} after {max_retries} attempts. Skipping bet resolution.")
         clear_match_tracking_state(guild.id)
         if channel:
-            await channel.send("Match ended but no result was found. Polling has been stopped.")
+            try:
+                await channel.send("Match ended but no result was found. Polling has been stopped.")
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
+                print(f"[poll_live_match] Failed to report missing result for match {match_id}: {e}")
+        if not random_mode and on_inhouse_result_pending:
+            try:
+                await on_inhouse_result_pending(guild, channel, match_id)
+            except Exception as e:
+                print(f"[poll_live_match] Failed to pause RSVP series for missing result {match_id}: {e}")
         return
     if is_match_processed(guild.id, match_id):
         existing = get_processed_match(guild.id, match_id) or {}
@@ -210,11 +229,24 @@ async def poll_live_match(match_id, guild, random_mode=False):
         clear_match_tracking_state(guild.id)
         if channel:
             processed_at = existing.get("processed_at", "unknown time")
-            await channel.send(
-                f"Match `{match_id}` was already processed earlier"
-                f" (source: `{existing.get('source', 'unknown')}`, processed_at: `{processed_at}`). "
-                "Skipping duplicate resolution."
-            )
+            try:
+                await channel.send(
+                    f"Match `{match_id}` was already processed earlier"
+                    f" (source: `{existing.get('source', 'unknown')}`, processed_at: `{processed_at}`). "
+                    "Skipping duplicate resolution."
+                )
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
+                print(f"[poll_live_match] Failed to report duplicate result for match {match_id}: {e}")
+        if not random_mode and on_inhouse_match_resolved:
+            try:
+                await on_inhouse_match_resolved(
+                    guild,
+                    channel,
+                    match_id,
+                    require_current_match=True,
+                )
+            except Exception as e:
+                print(f"[poll_live_match] Failed to reconcile RSVP series for match {match_id}: {e}")
         return
     winning_team = "radiant" if result["radiant_win"] else "dire"
     winner_ids = map_steam_ids_to_discord_ids(result["radiantplayers"] if result["radiant_win"] else result["direplayers"])
@@ -328,6 +360,11 @@ async def poll_live_match(match_id, guild, random_mode=False):
     except Exception as e:
         print(f"[poll_live_match] Failed to send match summary: {e}")
     clear_match_tracking_state(guild.id)
+    if not random_mode and on_inhouse_match_resolved:
+        try:
+            await on_inhouse_match_resolved(guild, channel, match_id)
+        except Exception as e:
+            print(f"[poll_live_match] Failed to advance RSVP series after match {match_id}: {e}")
 
 
 def convert_to_steam32(steam_id_input):
@@ -414,7 +451,7 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
     return None, None, None
 
 
-async def fetch_live_match_for_guild(guild_id, random_mode=False):
+async def fetch_live_match_for_guild(guild_id, random_mode=False, excluded_match_ids=None):
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc = doc_ref.get()
     if not doc.exists:
@@ -483,8 +520,17 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
         bound_matches = valid_matches if random_mode else [
             m for m in valid_matches if str(m.get("league_id")) == str(bound_league_id)
         ]
+        excluded_ids = {str(value) for value in (excluded_match_ids or [])}
+        if excluded_ids and not random_mode:
+            bound_matches = [
+                match for match in bound_matches
+                if str(match.get("match_id")) not in excluded_ids
+            ]
         if not bound_matches:
-            print(f"[fetch_live_match_for_guild] No live matches found for bound league_id {bound_league_id} in guild {guild_id}")
+            print(
+                f"[fetch_live_match_for_guild] No new live matches found for bound league_id "
+                f"{bound_league_id} in guild {guild_id}"
+            )
             return None
         last_match_id = active_match_ids.get(guild_id)
         prev_active_id = _last_active_match_id.get(guild_id)
@@ -496,8 +542,12 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
             _last_active_match_id[guild_id] = last_match_id
         selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
         if selected_match is None:
-            if random_mode and last_match_id:
-                print(f"[fetch_live_match_for_guild] Tracked random match {last_match_id} is no longer valid. Waiting for match resolution.")
+            if last_match_id:
+                match_kind = "random match" if random_mode else "inhouse match"
+                print(
+                    f"[fetch_live_match_for_guild] Tracked {match_kind} {last_match_id} is no longer live. "
+                    "Waiting for match resolution."
+                )
                 return None
             selected_match = random.choice(bound_matches)
             active_match_ids[guild_id] = selected_match["match_id"]
@@ -518,36 +568,112 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False):
         return None
 
 
-async def wait_for_match_then_start_polling(guild_id: int, guild: discord.Guild, channel: discord.TextChannel):
-    timeout = 15 * 60
+async def _notify_match_wait_outcome(guild, channel, outcome, *, game_number=None, match_id=None):
+    if on_match_wait_outcome is None:
+        return
+    try:
+        await on_match_wait_outcome(
+            guild,
+            channel,
+            outcome,
+            game_number=game_number,
+            match_id=match_id,
+        )
+    except Exception as exc:
+        print(f"[wait_for_match] Failed to record `{outcome}` outcome for guild {guild.id}: {exc}")
+
+
+async def _send_match_wait_message(channel, content):
+    try:
+        await channel.send(content)
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+        print(f"[wait_for_match] Failed to send wait update: {exc}")
+
+
+async def wait_for_match_then_start_polling(
+    guild_id: int,
+    guild: discord.Guild,
+    channel: discord.TextChannel,
+    *,
+    timeout_seconds: int = 15 * 60,
+    excluded_match_ids=None,
+    game_number: int | None = None,
+    scheduled_series: bool = False,
+):
+    timeout = max(1, int(timeout_seconds))
     interval = 30
     elapsed = 0
     low_lobby_time = 0
+    current_task = asyncio.current_task()
     try:
-        await channel.send("Waiting for the in-game match to appear on Steam... (up to 15 minutes)")
+        timeout_minutes = max(1, (timeout + 59) // 60)
+        await _send_match_wait_message(
+            channel,
+            f"Waiting for the in-game match to appear on Steam... (up to {timeout_minutes} minutes)"
+        )
         while elapsed < timeout:
             current_lobby = lobby_players.get(guild_id, [])
             if len(current_lobby) < 10:
                 low_lobby_time += interval
                 print(f"[wait_for_match] Lobby underfilled ({len(current_lobby)}/10) for {low_lobby_time} seconds")
                 if low_lobby_time >= 30:
-                    await channel.send("Lobby has not been full for 30 seconds. Match polling cancelled.")
+                    await _send_match_wait_message(
+                        channel,
+                        "Lobby has not been full for 30 seconds. Match polling cancelled.",
+                    )
+                    await _notify_match_wait_outcome(
+                        guild,
+                        channel,
+                        "underfilled",
+                        game_number=game_number,
+                    )
                     return
             else:
                 if low_lobby_time > 0:
-                    print("[wait_for_match] Lobby refilled to 10/10 â€” resetting grace timer.")
+                    print("[wait_for_match] Lobby refilled to 10/10 — resetting grace timer.")
                 low_lobby_time = 0
-            match = await fetch_live_match_for_guild(guild.id)
+            match = await fetch_live_match_for_guild(
+                guild.id,
+                excluded_match_ids=excluded_match_ids,
+            )
             if match:
                 match_id = match.get("match_id")
+                await _notify_match_wait_outcome(
+                    guild,
+                    channel,
+                    "match_found",
+                    game_number=game_number,
+                    match_id=match_id,
+                )
                 if guild_id not in polling_tasks:
                     active_match_ids[guild_id] = match_id
                     polling_tasks[guild_id] = asyncio.create_task(poll_live_match(match_id, guild))
-                    await channel.send(f"Started match polling for match ID {match_id} in {guild.name}")
+                    await _send_match_wait_message(
+                        channel,
+                        f"Started match polling for match ID {match_id} in {guild.name}",
+                    )
                 return
             await asyncio.sleep(interval)
             elapsed += interval
-        await channel.send("No live match was found within 15 minutes. Please restart the lobby.")
+        if scheduled_series:
+            timeout_message = (
+                f"No new live match was found within {timeout_minutes} minutes. "
+                "The same scheduled game is still pending; an Inhouse Admin can press 🚀 to retry."
+            )
+        else:
+            timeout_message = (
+                f"No live match was found within {timeout_minutes} minutes. Please restart the lobby."
+            )
+        await _send_match_wait_message(channel, timeout_message)
+        await _notify_match_wait_outcome(
+            guild,
+            channel,
+            "timeout",
+            game_number=game_number,
+        )
     except asyncio.CancelledError:
         print(f"[wait_for_match] Cancelled wait task for guild {guild_id}")
         return
+    finally:
+        if match_wait_tasks.get(guild_id) is current_task:
+            match_wait_tasks.pop(guild_id, None)
