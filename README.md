@@ -58,10 +58,14 @@ Want to run automated Dota 2 inhouse lobbies in your server?
 - Direct RSVPs are locked after confirmation; fills, including promoted fills, may still withdraw
 - At the scheduled start time, a confirmed 10-player event automatically replaces the old idle lobby, loads the latest saved regular/immortal mode, and enters the same post-🚀 team/captain flow as an impromptu lobby
 - Automatically opened RSVP lobbies keep their roster locked: 👍/👎 are omitted and ignored, while post-rocket reroll/draft controls remain available
+- The event's `<games>` value drives a real series: after each unique result is processed, FeederBot records that game, prepares fresh regular teams or Immortal captains for the same locked roster, and starts another 15-minute Steam wait until all scheduled games are complete
+- Completed match IDs are stored with the event, so automatic polling, `!submitmatch`, retries, and restart recovery cannot count the same game twice
+- If a between-game Steam wait expires, that game remains pending and an Inhouse Admin can press 🚀 on the locked lobby to retry; a missing completed-match result pauses the series for `!submitmatch` instead of skipping a game
+- Running series progress and its current waiting/live/paused/completed state are shown on the RSVP card
 - An active inhouse match is never overwritten; the RSVP card and Inhouse Admin warning explain when automatic lobby opening is blocked
 - Admins can use `!removersvp @user` for emergency confirmed-roster changes
 - Confirmed-roster withdrawals without an available fill trigger an `Inhouse Admin` warning
-- Active, confirmed, and temporarily closed events and their button state are restored when the bot restarts
+- Active, confirmed, temporarily closed, and running series events are restored when the bot restarts
 - FeederBot must be online for button clicks and on-time deadline/start actions; overdue events finalize and confirmed lobbies open when it next starts
 - A second `!startrsvp` is rejected while an RSVP event is running, including while its signups are temporarily closed
 - `!closersvp` temporarily locks the buttons while preserving the scheduled one-hour go/no-go decision
@@ -233,7 +237,7 @@ When a lobby embed is active, FeederBot uses reactions as part of the workflow:
 
 FeederBot resets the post-rocket state if the lobby changes after teams/captains were generated.
 
-For a lobby automatically created from a confirmed RSVP, the signup roster is locked to that lobby message. Players cannot manually join or leave with 👍/👎; an Inhouse Admin can still use the normal add/remove/replace tools for an emergency. Running `!lobby` or `!reset` creates a new ordinary impromptu lobby and clears that lock.
+For a lobby automatically created from a confirmed RSVP, the signup roster is locked to that lobby message. Players cannot manually join or leave with 👍/👎; an Inhouse Admin can still use the normal add/remove/replace tools for an emergency. Running `!lobby` or `!reset` intentionally retires any unfinished RSVP series, creates a new ordinary impromptu lobby, and clears that lock.
 
 ---
 
@@ -272,9 +276,10 @@ Stores per-server settings such as:
 Stores the current per-server RSVP event, including:
 - event start time and game count
 - Discord channel/message IDs
-- active/confirmed/lobby-starting/lobby-open/start-failed/cancelled/closed/reset lifecycle status
+- active/confirmed/lobby-starting/lobby-open/completed/start-failed/cancelled/closed/reset lifecycle status
 - RSVP and fill membership
 - signup MMR/inhouse-record snapshots and automatic lobby handoff metadata
+- persistent series progress, completed match IDs, current match/game, 15-minute wait deadline, and waiting/live/paused/completed state
 - creator and update metadata
 
 ### `inhouse_mmr/{guild_id}/users/{user_id}`
@@ -416,7 +421,9 @@ If a result is found:
 - bets are resolved
 - inhouse MMR is adjusted for inhouse matches
 - double-downs are applied and cleared
-- all participants are awarded 50 Feederbucks
+- all participants are awarded 100 Feederbucks
+
+For an active scheduled RSVP series, a successfully processed result advances the persisted game counter. If more games remain, FeederBot resets only the post-rocket team/draft state, keeps the confirmed roster locked, generates the next setup, and opens a new 15-minute Steam wait. The final planned result marks the series complete and does not open another wait. Automatic polling and manual `!submitmatch` processing share this same idempotent progression path.
 
 ---
 
