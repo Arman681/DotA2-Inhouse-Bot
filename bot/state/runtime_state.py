@@ -6,6 +6,7 @@ inhouse_mode = {}
 lobby_players = {}
 lobby_channel_ids = {}
 lobby_message = {}
+lobby_roster_locks = {}
 roll_count = {}
 team_rolls = {}
 original_teams = {}
