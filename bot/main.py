@@ -40,6 +40,7 @@ from bot.services.guild_config_service import (
     save_lobby_message_id,
     save_lobby_password_for_guild,
     save_lobby_players,
+    save_lobby_roster_lock,
     save_player_config,
     save_preferred_roles_setting,
     save_separated_pair,
@@ -149,6 +150,7 @@ from bot.services.processed_match_log import (
 )
 from bot.services.match_ledger_service import (
     get_all_match_ledgers,
+    get_player_inhouse_record,
     get_recent_match_ledgers,
     log_match_ledger,
 )
@@ -189,6 +191,7 @@ from bot.state.runtime_state import (
     lobby_channel_ids,
     lobby_message,
     lobby_players,
+    lobby_roster_locks,
     match_tracking_start_times,
     match_wait_tasks,
     original_teams,
@@ -240,6 +243,7 @@ rsvp_manager = RsvpManager(
     db=db,
     load_player_config=load_player_config,
     load_guild_prefix=load_guild_prefix,
+    load_inhouse_record=get_player_inhouse_record,
 )
 
 http_session: aiohttp.ClientSession | None = None
@@ -530,7 +534,6 @@ async def on_ready():
     print(f"{bot.user} is online!")
     active_match_ids.clear()
     clear_all_bets(bot)
-    await rsvp_manager.restore_active_events()
     # Cache hero IDs
     hero_id_map = await fetch_hero_id_to_name_map()
     # Load live_channel_ids from Firestore
@@ -556,6 +559,15 @@ async def on_ready():
                 lobby_channel_ids[int(doc.id)] = int(lobby_channel_id)
         except (ValueError, TypeError):
             print(f"[on_ready] Skipping guild {doc.id} due to invalid lobby_channel_id: {lobby_channel_id}")
+        roster_lock = data.get("lobby_roster_lock", {}) or {}
+        try:
+            if roster_lock.get("locked") and roster_lock.get("message_id"):
+                lobby_roster_locks[guild_id] = int(roster_lock["message_id"])
+            else:
+                lobby_roster_locks.pop(guild_id, None)
+        except (ValueError, TypeError):
+            lobby_roster_locks.pop(guild_id, None)
+            print(f"[on_ready] Skipping invalid lobby roster lock for guild {doc.id}")
         # Restore lobby players
         restored_players = load_lobby_players(guild_id)
         if restored_players:
@@ -573,6 +585,7 @@ async def on_ready():
                         break
                 except:
                     continue
+    await rsvp_manager.restore_active_events()
     for guild in bot.guilds:
         await ensure_vip_feeder_role(guild)
     await cleanup_expired_store_roles()
@@ -615,6 +628,174 @@ async def on_message(msg):
         await msg.channel.send(f"Interesting message, {msg.author.mention}")
     await bot.process_commands(msg)"""
 
+
+async def roll_lobby_to_post_rocket_state(guild_id, guild, channel, message, *, roster_locked=False):
+    mode = inhouse_mode.get(guild_id, "regular")
+    if mode == "regular":
+        team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(
+            lobby_players[guild_id],
+            guild_id,
+        )
+        if not team_rolls[guild_id]:
+            await channel.send(
+                "Cannot form teams with the current MMR/separation constraints. "
+                "Either set missing MMRs (`!cfg <steam_id>`) or let me try a relaxed threshold..."
+            )
+            team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(
+                lobby_players[guild_id],
+                guild_id,
+                max_mmr_diff=400,
+            )
+        if not team_rolls[guild_id]:
+            await channel.send(
+                "Still no valid combos. Please set MMRs, adjust separated pairs, or disable the strict threshold."
+            )
+            return False
+        valid_team_combos[guild_id] = valid_combo_count
+        team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][0]
+        original_teams[guild_id] = (team1, team2, score1, score2, roles1, roles2)
+        roll_count[guild_id] = 1
+        embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
+    elif mode == "immortal":
+        all_pairs = get_all_captain_pairs(lobby_players[guild_id])
+        policy, threshold = get_captain_policy(guild_id)
+        preferred_index = choose_captain_pair_index(
+            lobby_players[guild_id],
+            all_pairs,
+            policy=policy,
+            threshold=(threshold if isinstance(threshold, int) else 200),
+        )
+        captain_draft_state[guild_id] = {
+            "pairs": all_pairs,
+            "index": preferred_index,
+        }
+        captains, pool, _ = all_pairs[preferred_index]
+        original_teams[guild_id] = (captains, pool)
+        embed = build_immortal_embed(captains, pool, guild, 1)
+    else:
+        await channel.send(f"Unknown inhouse mode `{mode}`; use `!lobby regular` or `!lobby immortal`.")
+        return False
+
+    await message.edit(embed=embed)
+    cancel_match_wait(guild_id)
+    match_wait_tasks[guild_id] = asyncio.create_task(
+        wait_for_match_then_start_polling(guild_id, guild, channel)
+    )
+    try:
+        await message.clear_reactions()
+    except Exception as exc:
+        print(f"[roll_lobby] Failed to clear reactions in guild {guild_id}: {exc}")
+
+    reaction_emojis = ["♻️"]
+    if not roster_locked:
+        reaction_emojis = ["👍", "👎", *reaction_emojis]
+    if mode == "immortal":
+        reaction_emojis.extend(["⚔️", "🎯"])
+    for reaction_emoji in reaction_emojis:
+        try:
+            await message.add_reaction(reaction_emoji)
+        except Exception as exc:
+            print(f"[roll_lobby] Failed to add reaction {reaction_emoji} in guild {guild_id}: {exc}")
+    return True
+
+
+async def open_confirmed_rsvp_lobby(event):
+    guild_id = int(event.get("guild_id", 0) or 0)
+    guild = bot.get_guild(guild_id)
+    if guild is None:
+        raise RuntimeError("FeederBot can no longer access this event's server.")
+    polling_task = polling_tasks.get(guild_id)
+    if guild_id in active_match_ids or (polling_task is not None and not polling_task.done()):
+        raise RuntimeError("Another inhouse match is still active, so its lobby was not overwritten.")
+    if immortal_draft_running.get(guild_id):
+        raise RuntimeError("An Immortal Draft is still active, so its lobby was not overwritten.")
+
+    signup_rows = [
+        (str(user_id), data)
+        for user_id, data in (event.get("signups", {}) or {}).items()
+        if isinstance(data, dict) and data.get("status") == "rsvp"
+    ]
+    signup_rows.sort(key=lambda row: (int(row[1].get("joined_at", 0) or 0), row[0]))
+    signup_rows = signup_rows[:10]
+    if len(signup_rows) != 10:
+        raise RuntimeError(f"The confirmed roster is only {len(signup_rows)}/10.")
+
+    roster = []
+    unavailable = []
+    for user_id, signup in signup_rows:
+        member = guild.get_member(int(user_id))
+        if member is None:
+            try:
+                member = await guild.fetch_member(int(user_id))
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                member = None
+        config = load_player_config(user_id) or {}
+        mmr = config.get("mmr")
+        if member is None or not isinstance(mmr, (int, float)) or isinstance(mmr, bool):
+            unavailable.append(str(signup.get("display_name") or user_id))
+            continue
+        roster.append((member.id, member.display_name, int(mmr)))
+    if unavailable:
+        raise RuntimeError(
+            "These confirmed players are no longer available or have no usable MMR: "
+            + ", ".join(unavailable)
+        )
+
+    target_channel = get_lobby_channel_for_guild(guild)
+    if target_channel is None:
+        rsvp_channel_id = int(event.get("channel_id", 0) or 0)
+        target_channel = bot.get_channel(rsvp_channel_id)
+    if target_channel is None:
+        raise RuntimeError("FeederBot cannot access the configured lobby or RSVP channel.")
+
+    await full_post_rocket_reset(guild_id, lobby_message.get(guild_id))
+    old_message = lobby_message.get(guild_id)
+    if old_message:
+        try:
+            await old_message.delete()
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            pass
+
+    selected_mode = load_inhouse_mode_for_guild(guild_id)
+    inhouse_mode[guild_id] = selected_mode
+    lobby_players[guild_id] = roster
+    base_embed = build_lobby_embed(guild, selected_mode)
+    message = await target_channel.send(embed=base_embed)
+    lobby_message[guild_id] = message
+    save_lobby_message_id(guild_id, message.id)
+    save_lobby_players(guild_id, roster)
+    lobby_roster_locks[guild_id] = message.id
+    save_lobby_roster_lock(
+        guild_id,
+        message.id,
+        source="rsvp",
+        event_start_at=event.get("start_at"),
+    )
+
+    try:
+        auto_rolled = await roll_lobby_to_post_rocket_state(
+            guild_id,
+            guild,
+            target_channel,
+            message,
+            roster_locked=True,
+        )
+    except Exception as exc:
+        print(f"[rsvp] Post-rocket generation failed in guild {guild_id}: {exc}")
+        auto_rolled = False
+    if not auto_rolled:
+        try:
+            await message.clear_reactions()
+            await message.add_reaction("🚀")
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            pass
+    return {
+        "message_id": message.id,
+        "jump_url": message.jump_url,
+        "mode": selected_mode,
+        "auto_rolled": auto_rolled,
+    }
+
 # Handles user reactions on lobby messages to join, leave, or roll teams.
 @bot.event
 async def on_raw_reaction_add(payload):
@@ -640,6 +821,18 @@ async def on_raw_reaction_add(payload):
     roll_count.setdefault(guild_id, 1)
     team_rolls.setdefault(guild_id, [])
     original_teams.setdefault(guild_id, None)
+    roster_locked = lobby_roster_locks.get(guild_id) == message.id
+    if roster_locked and emoji in {"👍", "👎"}:
+        await channel.send(
+            f"{user.mention}, this roster came from a confirmed scheduled RSVP and is locked. "
+            "Contact an Inhouse Admin if an emergency replacement is needed.",
+            delete_after=8,
+        )
+        try:
+            await message.remove_reaction(payload.emoji, user)
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            pass
+        return
     if emoji == "👍":
         if len(lobby_players[guild_id]) >= 10:
             await channel.send(
@@ -693,63 +886,13 @@ async def on_raw_reaction_add(payload):
         # Lock this guild's rocket press
         rocket_lock[guild_id] = True
         try:
-            mode = inhouse_mode.get(guild_id, "regular")
-            if mode == "regular":
-                team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(lobby_players[guild_id], guild_id)
-                if not team_rolls[guild_id]:
-                    await channel.send(
-                        "Cannot form teams with the current MMR/separation constraints. "
-                        "Either set missing MMRs (`!cfg <steam_id>`) or let me try a relaxed threshold..."
-                    )
-                    # optional automatic fallback (see #2 below)
-                    team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(
-                        lobby_players[guild_id], guild_id, max_mmr_diff=400  # try 400 first
-                    )
-                if not team_rolls[guild_id]:
-                    await channel.send("Still no valid combos. Please set MMRs, adjust separated pairs, or disable the strict threshold.")
-                    return
-                valid_team_combos[guild_id] = valid_combo_count
-                team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][0]
-                original_teams[guild_id] = (team1, team2, score1, score2, roles1, roles2)
-                roll_count[guild_id] = 1
-                embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
-            elif mode == "immortal":
-                all_pairs = get_all_captain_pairs(lobby_players[guild_id])
-                pol, thr = get_captain_policy(guild_id)
-                # pick the starting pair index according to your policy
-                # choices: "min_diff" (current), "top2_if_close", "simulate"
-                preferred_index = choose_captain_pair_index(
-                    lobby_players[guild_id],
-                    all_pairs,
-                    policy=pol,
-                    threshold=(thr if isinstance(thr, int) else 200)
-                )
-                captain_draft_state[guild_id] = {
-                    "pairs": all_pairs,
-                    "index": preferred_index
-                }
-                captains, pool, _ = all_pairs[preferred_index]
-                original_teams[guild_id] = (captains, pool)
-                embed = build_immortal_embed(captains, pool, guild, 1)
-            await message.edit(embed=embed)
-            # Start the Steam wait in the background so 🚀 isn't "stuck processing"
-            cancel_match_wait(guild_id)  # safety: cancel any stale task first
-            match_wait_tasks[guild_id] = asyncio.create_task(wait_for_match_then_start_polling(guild_id, guild, channel))
-            try:
-                await message.clear_reactions()
-            except Exception as e:
-                print(f"[on_raw_reaction_add] Failed to clear reactions in guild {guild_id}: {e}")
-            for reaction_emoji in ["👍", "👎", "♻️"]:
-                try:
-                    await message.add_reaction(reaction_emoji)
-                except Exception as e:
-                    print(f"[on_raw_reaction_add] Failed to add reaction {reaction_emoji} in guild {guild_id}: {e}")
-            if mode == "immortal":
-                for reaction_emoji in ["⚔️", "🎯"]:
-                    try:
-                        await message.add_reaction(reaction_emoji)
-                    except Exception as e:
-                        print(f"[on_raw_reaction_add] Failed to add reaction {reaction_emoji} in guild {guild_id}: {e}")
+            await roll_lobby_to_post_rocket_state(
+                guild_id,
+                guild,
+                channel,
+                message,
+                roster_locked=roster_locked,
+            )
         finally:
             rocket_lock[guild_id] = False
     elif emoji == "⚔️":
@@ -936,6 +1079,7 @@ configure_embed_service(
     assign_roles_with_preferences_fn=assign_roles_with_preferences,
 )
 configure_lobby_service(db_client=db, update_lobby_embed_fn=update_lobby_embed)
+rsvp_manager.configure_lobby_handoff(open_confirmed_rsvp_lobby)
 configure_manual_captain_select(
     find_lobby_tuple_fn=find_lobby_tuple,
     is_placeholder_player_fn=is_placeholder_player,
@@ -1041,6 +1185,7 @@ deps = {
     # lobby + helpers
     "lobby_players": lobby_players,
     "lobby_message": lobby_message,
+    "lobby_roster_locks": lobby_roster_locks,
     "inhouse_mode": inhouse_mode,
     "captain_draft_state": captain_draft_state,
     "immortal_draft_running": immortal_draft_running,
@@ -1049,6 +1194,7 @@ deps = {
     "build_lobby_embed": build_lobby_embed,
     "build_immortal_embed": build_immortal_embed,
     "save_lobby_players": save_lobby_players,
+    "save_lobby_roster_lock": save_lobby_roster_lock,
     "save_lobby_message_id": save_lobby_message_id,
     "save_lobby_password_for_guild": save_lobby_password_for_guild,
     "load_inhouse_mode_for_guild": load_inhouse_mode_for_guild,
