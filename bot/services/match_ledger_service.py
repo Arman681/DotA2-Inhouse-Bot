@@ -75,6 +75,36 @@ def get_all_match_ledgers(guild_id):
     return results
 
 
+def get_player_inhouse_record(guild_id, user_id):
+    """Return the win/loss record represented by persisted inhouse MMR changes."""
+    target_user_id = str(user_id)
+    wins = 0
+    losses = 0
+    for doc in _ledger_collection(guild_id).stream():
+        data = doc.to_dict() or {}
+        if data.get("random_mode"):
+            continue
+        for change in data.get("mmr_changes") or []:
+            if str(change.get("user_id", "")) != target_user_id:
+                continue
+            try:
+                delta = int(change.get("delta", 0) or 0)
+            except (TypeError, ValueError):
+                delta = 0
+            if delta > 0:
+                wins += 1
+            elif delta < 0:
+                losses += 1
+            break
+    games = wins + losses
+    return {
+        "wins": wins,
+        "losses": losses,
+        "games": games,
+        "win_rate": (wins / games * 100) if games else None,
+    }
+
+
 def get_match_data(guild_id, match_id):
     snap = _ledger_ref(guild_id, match_id).get()
     if not snap.exists:
