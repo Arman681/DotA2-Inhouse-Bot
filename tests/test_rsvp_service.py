@@ -4,6 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.services.rsvp_service import (
+    SERIES_BETWEEN_GAMES,
+    SERIES_COMPLETED,
+    SERIES_LIVE,
+    SERIES_WAITING,
+    STATUS_COMPLETED,
     STATUS_CONFIRMED,
     STATUS_LOBBY_OPEN,
     STATUS_START_FAILED,
@@ -83,6 +88,21 @@ class RsvpEmbedTests(unittest.TestCase):
         self.assertIn("4,000 MMR", roster_field.value)
         self.assertIn("62.5% WR (5-3)", roster_field.value)
 
+    def test_running_series_shows_game_progress(self):
+        event = make_event()
+        event.update({
+            "status": STATUS_LOBBY_OPEN,
+            "games_completed": 1,
+            "current_game": 2,
+            "series_status": SERIES_WAITING,
+        })
+
+        embed = build_rsvp_embed(event)
+
+        self.assertIn("Waiting for Game 2/2", embed.title)
+        progress_field = next(field for field in embed.fields if field.name == "Series Progress")
+        self.assertIn("1/2 complete", progress_field.value)
+
 
 class RsvpHandoffTests(unittest.IsolatedAsyncioTestCase):
     def make_manager(self, event):
@@ -116,6 +136,9 @@ class RsvpHandoffTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("999", event["lobby_message_id"])
         self.assertEqual("immortal", event["lobby_mode"])
         self.assertTrue(event["handoff_auto_rolled"])
+        self.assertEqual(0, event["games_completed"])
+        self.assertEqual(1, event["current_game"])
+        self.assertEqual(SERIES_WAITING, event["series_status"])
         self.assertEqual(999, result["message_id"])
         self.assertEqual(STATUS_LOBBY_OPEN, events["123"]["status"])
         manager.lobby_handoff.assert_awaited_once()
@@ -131,6 +154,73 @@ class RsvpHandoffTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("9/10", event["handoff_error"])
         self.assertEqual(STATUS_START_FAILED, events["123"]["status"])
         manager.lobby_handoff.assert_not_awaited()
+
+
+class RsvpSeriesTests(unittest.IsolatedAsyncioTestCase):
+    def make_manager(self):
+        event = make_event()
+        event.update({
+            "status": STATUS_LOBBY_OPEN,
+            "lobby_message_id": "999",
+            "games_completed": 0,
+            "completed_match_ids": [],
+            "current_game": 1,
+            "series_status": SERIES_WAITING,
+        })
+        events = {"123": copy.deepcopy(event)}
+        bot = SimpleNamespace(get_guild=lambda guild_id: SimpleNamespace(roles=[]))
+        manager = RsvpManager(
+            bot=bot,
+            db=FakeDatabase(events),
+            load_player_config=lambda user_id: {"steam_id": "1", "mmr": 4_000},
+            load_guild_prefix=lambda guild_id: "!",
+        )
+        manager._resolve_message = AsyncMock(return_value=None)
+        return manager, events
+
+    async def test_each_unique_match_advances_once_and_final_match_completes_series(self):
+        manager, events = self.make_manager()
+
+        first = await manager.record_series_match(123, 111)
+        duplicate = await manager.record_series_match(123, 111)
+        await manager.mark_series_waiting(123, game_number=2)
+        await manager.mark_series_wait_outcome(123, "match_found", game_number=2, match_id=222)
+        second = await manager.record_series_match(123, 222, require_current_match=True)
+
+        self.assertTrue(first["counted"])
+        self.assertFalse(first["series_complete"])
+        self.assertEqual(SERIES_BETWEEN_GAMES, first["event"]["series_status"])
+        self.assertFalse(duplicate["counted"])
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(1, duplicate["games_completed"])
+        self.assertTrue(second["series_complete"])
+        self.assertEqual(STATUS_COMPLETED, events["123"]["status"])
+        self.assertEqual(SERIES_COMPLETED, events["123"]["series_status"])
+        self.assertEqual(["111", "222"], events["123"]["completed_match_ids"])
+
+    async def test_reconciliation_requires_the_current_tracked_match(self):
+        manager, events = self.make_manager()
+        events["123"]["series_status"] = SERIES_LIVE
+        events["123"]["current_match_id"] = "444"
+
+        result = await manager.record_series_match(123, 333, require_current_match=True)
+
+        self.assertFalse(result["counted"])
+        self.assertEqual("unexpected_match", result["reason"])
+        self.assertEqual(0, events["123"]["games_completed"])
+
+    async def test_ordinary_lobby_override_retires_an_unfinished_series(self):
+        manager, events = self.make_manager()
+
+        retired = await manager.retire_series_for_lobby_override(123, reset_by="42")
+        later_result = await manager.record_series_match(123, 555)
+
+        self.assertEqual("reset", retired["status"])
+        self.assertEqual("overridden", retired["series_status"])
+        self.assertEqual("42", retired["reset_by"])
+        self.assertFalse(later_result["counted"])
+        self.assertEqual("no_active_series", later_result["reason"])
+        self.assertEqual(0, events["123"]["games_completed"])
 
 
 if __name__ == "__main__":
