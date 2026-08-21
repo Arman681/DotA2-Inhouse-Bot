@@ -48,6 +48,7 @@ Want to run automated Dota 2 inhouse lobbies in your server?
 ### Inhouse RSVP events
 - Admins can manually post an all-ranks event with `!startrsvp <time> <games> [optional notes]`
 - Live RSVP and fill lists update directly on the event embed
+- RSVP rows show each player's stored public MMR and their recorded inhouse win rate when match-ledger history is available
 - Players use persistent **RSVP**, **Fill**, and **Withdraw** buttons
 - RSVP is capped at 10 committed players; fills remain available as standbys
 - Players must have a linked Steam ID and usable MMR from `!cfg` before joining either list
@@ -55,10 +56,13 @@ Want to run automated Dota 2 inhouse lobbies in your server?
 - FeederBot calls off undersubscribed events at that deadline so players are not left waiting and their time is respected
 - Fills are promoted in signup order when the event is confirmed or a confirmed player later withdraws
 - Direct RSVPs are locked after confirmation; fills, including promoted fills, may still withdraw
+- At the scheduled start time, a confirmed 10-player event automatically replaces the old idle lobby, loads the latest saved regular/immortal mode, and enters the same post-🚀 team/captain flow as an impromptu lobby
+- Automatically opened RSVP lobbies keep their roster locked: 👍/👎 are omitted and ignored, while post-rocket reroll/draft controls remain available
+- An active inhouse match is never overwritten; the RSVP card and Inhouse Admin warning explain when automatic lobby opening is blocked
 - Admins can use `!removersvp @user` for emergency confirmed-roster changes
 - Confirmed-roster withdrawals without an available fill trigger an `Inhouse Admin` warning
 - Active, confirmed, and temporarily closed events and their button state are restored when the bot restarts
-- FeederBot must be online for button clicks and on-time deadline announcements; overdue events finalize when it next starts
+- FeederBot must be online for button clicks and on-time deadline/start actions; overdue events finalize and confirmed lobbies open when it next starts
 - A second `!startrsvp` is rejected while an RSVP event is running, including while its signups are temporarily closed
 - `!closersvp` temporarily locks the buttons while preserving the scheduled one-hour go/no-go decision
 - `!cancelrsvp [reason]` can call off an active, temporarily closed, or confirmed event
@@ -229,6 +233,8 @@ When a lobby embed is active, FeederBot uses reactions as part of the workflow:
 
 FeederBot resets the post-rocket state if the lobby changes after teams/captains were generated.
 
+For a lobby automatically created from a confirmed RSVP, the signup roster is locked to that lobby message. Players cannot manually join or leave with 👍/👎; an Inhouse Admin can still use the normal add/remove/replace tools for an emergency. Running `!lobby` or `!reset` creates a new ordinary impromptu lobby and clears that lock.
+
 ---
 
 ## Data model overview
@@ -256,6 +262,7 @@ Stores per-server settings such as:
 - `league_id`
 - `lobby_message_id`
 - `lobby_players`
+- `lobby_roster_lock` (ties a confirmed RSVP roster lock to one lobby message)
 - `preferred_roles_setting`
 - `live_channel_id`
 - `lobby_channel_id`
@@ -265,8 +272,9 @@ Stores per-server settings such as:
 Stores the current per-server RSVP event, including:
 - event start time and game count
 - Discord channel/message IDs
-- active/confirmed/cancelled/closed/reset lifecycle status
+- active/confirmed/lobby-starting/lobby-open/start-failed/cancelled/closed/reset lifecycle status
 - RSVP and fill membership
+- signup MMR/inhouse-record snapshots and automatic lobby handoff metadata
 - creator and update metadata
 
 ### `inhouse_mmr/{guild_id}/users/{user_id}`
