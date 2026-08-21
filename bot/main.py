@@ -168,7 +168,16 @@ from bot.services.stratz_guard import (
     mark_mmr_refresh_started,
     should_skip_recent_mmr_refresh,
 )
-from bot.services.rsvp_service import RsvpManager
+from bot.services.rsvp_service import (
+    SERIES_BETWEEN_GAMES,
+    SERIES_LIVE,
+    SERIES_PREPARATION_FAILED,
+    SERIES_RESULT_PENDING,
+    SERIES_ROSTER_INCOMPLETE,
+    SERIES_WAIT_TIMED_OUT,
+    SERIES_WAITING,
+    RsvpManager,
+)
 from bot.ui.manual_captain_select import (
     ManualCaptainSelectView,
     configure_manual_captain_select,
@@ -629,7 +638,15 @@ async def on_message(msg):
     await bot.process_commands(msg)"""
 
 
-async def roll_lobby_to_post_rocket_state(guild_id, guild, channel, message, *, roster_locked=False):
+async def roll_lobby_to_post_rocket_state(
+    guild_id,
+    guild,
+    channel,
+    message,
+    *,
+    roster_locked=False,
+    wait_timeout_seconds=15 * 60,
+):
     mode = inhouse_mode.get(guild_id, "regular")
     if mode == "regular":
         team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(
@@ -678,8 +695,28 @@ async def roll_lobby_to_post_rocket_state(guild_id, guild, channel, message, *, 
 
     await message.edit(embed=embed)
     cancel_match_wait(guild_id)
+    series_game_number = None
+    excluded_match_ids = []
+    if roster_locked:
+        series_event = rsvp_manager.get_event(guild_id) or {}
+        if str(series_event.get("lobby_message_id") or "") == str(message.id):
+            series_game_number = max(1, int(series_event.get("current_game", 1) or 1))
+            excluded_match_ids = list(series_event.get("completed_match_ids", []) or [])
+            await rsvp_manager.mark_series_waiting(
+                guild_id,
+                game_number=series_game_number,
+                timeout_seconds=wait_timeout_seconds,
+            )
     match_wait_tasks[guild_id] = asyncio.create_task(
-        wait_for_match_then_start_polling(guild_id, guild, channel)
+        wait_for_match_then_start_polling(
+            guild_id,
+            guild,
+            channel,
+            timeout_seconds=wait_timeout_seconds,
+            excluded_match_ids=excluded_match_ids,
+            game_number=series_game_number,
+            scheduled_series=roster_locked,
+        )
     )
     try:
         await message.clear_reactions()
@@ -796,6 +833,269 @@ async def open_confirmed_rsvp_lobby(event):
         "auto_rolled": auto_rolled,
     }
 
+
+def _locked_series_lobby(event):
+    if not event:
+        return None
+    guild_id = int(event.get("guild_id", 0) or 0)
+    message = lobby_message.get(guild_id)
+    expected_message_id = int(event.get("lobby_message_id", 0) or 0)
+    if (
+        message is None
+        or message.id != expected_message_id
+        or lobby_roster_locks.get(guild_id) != expected_message_id
+    ):
+        return None
+    return message
+
+
+async def _add_series_retry_reaction(event):
+    message = _locked_series_lobby(event)
+    if message is None:
+        return
+    try:
+        await message.add_reaction("🚀")
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+        pass
+
+
+async def _send_series_message(channel, content):
+    if channel is None:
+        return
+    try:
+        await channel.send(content)
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+        print(f"[rsvp_series] Failed to send series update: {exc}")
+
+
+async def prepare_next_rsvp_game(
+    event,
+    *,
+    announcement_channel=None,
+    resumed=False,
+    wait_timeout_seconds=15 * 60,
+):
+    guild_id = int(event.get("guild_id", 0) or 0)
+    guild = bot.get_guild(guild_id)
+    message = _locked_series_lobby(event)
+    if guild is None or message is None:
+        reason = "The locked RSVP lobby could not be found or no longer matches this series."
+        await rsvp_manager.mark_series_preparation_failed(guild_id, reason)
+        return False
+    polling_task = polling_tasks.get(guild_id)
+    if guild_id in active_match_ids or (polling_task is not None and not polling_task.done()):
+        reason = "A match is already active, so FeederBot did not start another series wait."
+        await rsvp_manager.mark_series_preparation_failed(guild_id, reason)
+        return False
+
+    channel = message.channel
+    game_number = max(1, int(event.get("current_game", 1) or 1))
+    games_planned = max(1, int(event.get("games", 1) or 1))
+    if announcement_channel:
+        resume_text = " after restart" if resumed else ""
+        wait_text = "A fresh 15-minute Steam match wait will start automatically."
+        if resumed and wait_timeout_seconds < 15 * 60:
+            remaining_minutes = max(1, (int(wait_timeout_seconds) + 59) // 60)
+            wait_text = f"The Steam match wait will resume with about {remaining_minutes} minutes remaining."
+        await _send_series_message(
+            announcement_channel,
+            f"Preparing scheduled game **{game_number}/{games_planned}**{resume_text}. "
+            f"{wait_text}",
+        )
+
+    immortal_draft_running[guild_id] = False
+    await full_post_rocket_reset(guild_id, message)
+    try:
+        prepared = await roll_lobby_to_post_rocket_state(
+            guild_id,
+            guild,
+            channel,
+            message,
+            roster_locked=True,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+    except Exception as exc:
+        print(f"[rsvp_series] Failed to prepare game {game_number} in guild {guild_id}: {exc}")
+        prepared = False
+        reason = str(exc).strip() or "The next team or captain setup could not be generated."
+    else:
+        reason = "The next team or captain setup could not be generated with the current lobby constraints."
+    if not prepared:
+        failed_event = await rsvp_manager.mark_series_preparation_failed(guild_id, reason)
+        await _add_series_retry_reaction(failed_event or event)
+        await _send_series_message(
+            channel,
+            f"⚠️ Scheduled game **{game_number}/{games_planned}** could not be prepared automatically. "
+            "Resolve the lobby warning, then an Inhouse Admin can press 🚀 to retry.",
+        )
+        return False
+    return True
+
+
+async def handle_inhouse_match_resolved(
+    guild,
+    channel,
+    match_id,
+    *,
+    require_current_match=False,
+):
+    guild_id = guild.id
+    active_series_event = rsvp_manager.get_event(guild_id)
+    if _locked_series_lobby(active_series_event) is None:
+        return {"event": active_series_event, "counted": False, "reason": "no_locked_series_lobby"}
+    progression = await rsvp_manager.record_series_match(
+        guild_id,
+        match_id,
+        require_current_match=require_current_match,
+    )
+    if not progression.get("counted"):
+        return progression
+
+    polling_task = polling_tasks.get(guild_id)
+    if polling_task and polling_task is not asyncio.current_task() and not polling_task.done():
+        polling_task.cancel()
+    clear_match_tracking_state(guild_id)
+
+    event = progression["event"]
+    games_completed = progression["games_completed"]
+    games_planned = progression["games_planned"]
+    message = _locked_series_lobby(event)
+    progress_channel = channel or (message.channel if message else None)
+    if progression["series_complete"]:
+        immortal_draft_running[guild_id] = False
+        if message:
+            await full_post_rocket_reset(guild_id, message)
+            try:
+                await message.clear_reactions()
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                pass
+        if progress_channel:
+            await _send_series_message(
+                progress_channel,
+                f"✅ Match `{match_id}` completed scheduled game **{games_completed}/{games_planned}**. "
+                "The RSVP series is complete.",
+            )
+        return progression
+
+    if progress_channel:
+        await _send_series_message(
+            progress_channel,
+            f"✅ Match `{match_id}` completed scheduled game **{games_completed}/{games_planned}**.",
+        )
+    await prepare_next_rsvp_game(event, announcement_channel=progress_channel)
+    return progression
+
+
+async def handle_match_wait_outcome(
+    guild,
+    channel,
+    outcome,
+    *,
+    game_number=None,
+    match_id=None,
+):
+    active_series_event = rsvp_manager.get_event(guild.id)
+    if _locked_series_lobby(active_series_event) is None:
+        return None
+    event = await rsvp_manager.mark_series_wait_outcome(
+        guild.id,
+        outcome,
+        game_number=game_number,
+        match_id=match_id,
+    )
+    if event and outcome in {"timeout", "underfilled"}:
+        await _add_series_retry_reaction(event)
+    return event
+
+
+async def handle_inhouse_result_pending(guild, channel, match_id):
+    active_series_event = rsvp_manager.get_event(guild.id)
+    series_message = _locked_series_lobby(active_series_event)
+    if series_message is None:
+        return None
+    event = await rsvp_manager.mark_series_result_pending(guild.id, match_id)
+    if event:
+        current_game = int(event.get("current_game", 1) or 1)
+        games_planned = int(event.get("games", 1) or 1)
+        await _send_series_message(
+            channel or series_message.channel,
+            f"⏸️ Scheduled game **{current_game}/{games_planned}** is paused until result `{match_id}` "
+            f"can be processed. Use `!submitmatch {match_id}` once it is available.",
+        )
+    return event
+
+
+async def resume_rsvp_series(event):
+    guild_id = int(event.get("guild_id", 0) or 0)
+    guild = bot.get_guild(guild_id)
+    message = _locked_series_lobby(event)
+    if guild is None or message is None:
+        await rsvp_manager.mark_series_preparation_failed(
+            guild_id,
+            "FeederBot restarted but could not restore the locked RSVP lobby.",
+        )
+        return
+
+    series_status = str(event.get("series_status") or SERIES_WAITING)
+    game_number = max(1, int(event.get("current_game", 1) or 1))
+    if series_status == SERIES_LIVE:
+        match_id = str(event.get("current_match_id") or "")
+        if not match_id:
+            await rsvp_manager.mark_series_preparation_failed(
+                guild_id,
+                "The restored live-game state did not include a match ID.",
+            )
+            await _add_series_retry_reaction(event)
+            return
+        if is_match_processed(guild_id, match_id):
+            await handle_inhouse_match_resolved(
+                guild,
+                message.channel,
+                match_id,
+                require_current_match=True,
+            )
+            return
+        stored_match_id = int(match_id) if match_id.isdigit() else match_id
+        active_match_ids[guild_id] = stored_match_id
+        polling_tasks[guild_id] = asyncio.create_task(poll_live_match(stored_match_id, guild))
+        await _send_series_message(
+            message.channel,
+            f"Resumed tracking scheduled game **{game_number}/{int(event.get('games', 1) or 1)}** "
+            f"(match `{match_id}`) after FeederBot restarted.",
+        )
+        return
+    if series_status == SERIES_WAITING:
+        now_epoch = int(datetime.now(timezone.utc).timestamp())
+        deadline = int(event.get("wait_deadline_at", 0) or 0)
+        remaining = deadline - now_epoch if deadline else 15 * 60
+        if remaining <= 0:
+            await handle_match_wait_outcome(
+                guild,
+                message.channel,
+                "timeout",
+                game_number=game_number,
+            )
+            return
+        await prepare_next_rsvp_game(
+            event,
+            announcement_channel=message.channel,
+            resumed=True,
+            wait_timeout_seconds=remaining,
+        )
+        return
+    if series_status == SERIES_BETWEEN_GAMES:
+        await prepare_next_rsvp_game(event, announcement_channel=message.channel, resumed=True)
+        return
+    if series_status in {
+        SERIES_WAIT_TIMED_OUT,
+        SERIES_ROSTER_INCOMPLETE,
+        SERIES_PREPARATION_FAILED,
+    }:
+        await _add_series_retry_reaction(event)
+        return
+    if series_status == SERIES_RESULT_PENDING:
+        return
+
 # Handles user reactions on lobby messages to join, leave, or roll teams.
 @bot.event
 async def on_raw_reaction_add(payload):
@@ -886,13 +1186,19 @@ async def on_raw_reaction_add(payload):
         # Lock this guild's rocket press
         rocket_lock[guild_id] = True
         try:
-            await roll_lobby_to_post_rocket_state(
+            prepared = await roll_lobby_to_post_rocket_state(
                 guild_id,
                 guild,
                 channel,
                 message,
                 roster_locked=roster_locked,
             )
+            if roster_locked and not prepared:
+                event = await rsvp_manager.mark_series_preparation_failed(
+                    guild_id,
+                    "The team or captain setup could not be generated with the current lobby constraints.",
+                )
+                await _add_series_retry_reaction(event)
         finally:
             rocket_lock[guild_id] = False
     elif emoji == "⚔️":
@@ -1080,6 +1386,7 @@ configure_embed_service(
 )
 configure_lobby_service(db_client=db, update_lobby_embed_fn=update_lobby_embed)
 rsvp_manager.configure_lobby_handoff(open_confirmed_rsvp_lobby)
+rsvp_manager.configure_series_resume(resume_rsvp_series)
 configure_manual_captain_select(
     find_lobby_tuple_fn=find_lobby_tuple,
     is_placeholder_player_fn=is_placeholder_player,
@@ -1111,6 +1418,9 @@ configure_live_tracking(
     log_match_ledger_fn=log_match_ledger,
     get_discord_id_from_steam_id_fn=get_discord_id_from_steam_id,
     schedule_match_imp_enrichment_fn=schedule_match_imp_enrichment,
+    on_inhouse_match_resolved_fn=handle_inhouse_match_resolved,
+    on_match_wait_outcome_fn=handle_match_wait_outcome,
+    on_inhouse_result_pending_fn=handle_inhouse_result_pending,
 )
 
 deps = {
@@ -1172,6 +1482,7 @@ deps = {
     "format_live_match_embed": format_live_match_embed,
     "map_steam_ids_to_discord_ids": map_steam_ids_to_discord_ids,
     "fetch_match_result": fetch_match_result,
+    "on_inhouse_match_resolved": handle_inhouse_match_resolved,
     # state dicts
     "active_match_ids": active_match_ids,
     "polling_tasks": polling_tasks,
