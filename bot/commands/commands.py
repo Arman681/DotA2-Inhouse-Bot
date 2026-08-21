@@ -106,10 +106,12 @@ def attach_commands(bot, deps):
     # Lobby state + helpers
     lobby_players                = deps["lobby_players"]
     lobby_message                = deps["lobby_message"]
+    lobby_roster_locks           = deps["lobby_roster_locks"]
     rocket_lock                  = deps["rocket_lock"]
     update_lobby_embed           = deps["update_lobby_embed"]
     build_lobby_embed            = deps["build_lobby_embed"]
     save_lobby_players           = deps["save_lobby_players"]
+    save_lobby_roster_lock       = deps["save_lobby_roster_lock"]
     save_lobby_message_id        = deps["save_lobby_message_id"]
     save_lobby_password_for_guild= deps["save_lobby_password_for_guild"]
     load_inhouse_mode_for_guild  = deps["load_inhouse_mode_for_guild"]
@@ -2493,7 +2495,7 @@ def attach_commands(bot, deps):
             await ctx.reply(f"Usage: `{prefix}closersvp`")
             return
         try:
-            await rsvp_manager.close_event(ctx.guild.id)
+            event = await rsvp_manager.close_event(ctx.guild.id)
         except ValueError as exc:
             await ctx.reply(str(exc))
             return
@@ -2501,10 +2503,11 @@ def attach_commands(bot, deps):
             print(f"[closersvp] Failed for guild {ctx.guild.id}: {exc}")
             await ctx.reply("I couldn't close the RSVP event. Please try again in a moment.")
             return
-        await ctx.reply(
-            "RSVP signups are temporarily closed. The one-hour go/no-go decision remains scheduled.",
-            delete_after=8,
-        )
+        if event.get("closed_from_status") == "confirmed":
+            response = "The confirmed roster is closed. Its automatic locked-lobby opening remains scheduled."
+        else:
+            response = "RSVP signups are temporarily closed. The one-hour go/no-go decision remains scheduled."
+        await ctx.reply(response, delete_after=8)
     @close_rsvp.error
     async def close_rsvp_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
@@ -2666,7 +2669,9 @@ def attach_commands(bot, deps):
         target_channel = get_lobby_channel_for_guild(ctx.guild) or ctx.channel
         message = await target_channel.send(embed=embed)
         lobby_message[guild_id] = message
+        lobby_roster_locks.pop(guild_id, None)
         save_lobby_message_id(guild_id, message.id)
+        save_lobby_roster_lock(guild_id)
         save_lobby_players(guild_id, lobby_players[guild_id])
         await message.add_reaction("👍")
         await message.add_reaction("👎")
@@ -2697,7 +2702,9 @@ def attach_commands(bot, deps):
         target_channel = get_lobby_channel_for_guild(ctx.guild) or ctx.channel
         message = await target_channel.send(embed=embed)
         lobby_message[guild_id] = message
+        lobby_roster_locks.pop(guild_id, None)
         save_lobby_message_id(guild_id, message.id)
+        save_lobby_roster_lock(guild_id)
         save_lobby_players(guild_id, lobby_players[guild_id])
         await message.add_reaction("👍")
         await message.add_reaction("👎")
@@ -3467,7 +3474,7 @@ def attach_commands(bot, deps):
                     "**!replace `<@user1|placeholder1>` `<@user2|placeholder2>`** - Replace one lobby user or placeholder with another.\n"
                     "**!lobby** - Create or refresh the inhouse lobby.\n"
                     "**!reset** - Clear the current lobby and start fresh.\n"
-                    "**!startrsvp `<time>` `<games>` `[optional notes]`** - Post one all-ranks RSVP event more than one hour before start; a running event blocks duplicates.\n"
+                    "**!startrsvp `<time>` `<games>` `[optional notes]`** - Post one all-ranks RSVP event more than one hour before start; confirmed rosters automatically open a locked lobby at start.\n"
                     "**!closersvp** - Temporarily lock signups while keeping the scheduled one-hour decision.\n"
                     "**!finalizersvp** - Immediately run the RSVP event's 10-player go/no-go decision.\n"
                     "**!cancelrsvp `[reason]`** - Call off an active, closed, or confirmed inhouse and notify its players.\n"
