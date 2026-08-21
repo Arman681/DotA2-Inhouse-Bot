@@ -19,6 +19,9 @@ STATUS_CANCELLED = "cancelled"
 STATUS_CLOSED = "closed"
 STATUS_RESET = "reset"
 STATUS_STARTING = "starting"
+STATUS_LOBBY_STARTING = "lobby_starting"
+STATUS_LOBBY_OPEN = "lobby_open"
+STATUS_START_FAILED = "start_failed"
 
 INTERACTIVE_STATUSES = {STATUS_ACTIVE, STATUS_CONFIRMED}
 
@@ -98,6 +101,15 @@ def _is_pending_finalization(event: dict | None) -> bool:
     return event.get("closed_from_status", STATUS_ACTIVE) == STATUS_ACTIVE
 
 
+def _is_pending_lobby_start(event: dict | None) -> bool:
+    if not isinstance(event, dict):
+        return False
+    status = event.get("status")
+    if status in {STATUS_CONFIRMED, STATUS_LOBBY_STARTING}:
+        return True
+    return status == STATUS_CLOSED and event.get("closed_from_status") == STATUS_CONFIRMED
+
+
 def _format_roster(event: dict, signup_status: str, empty_text: str) -> str:
     rows = _ordered_signups(event, signup_status)
     if not rows:
@@ -108,6 +120,18 @@ def _format_roster(event: dict, signup_status: str, empty_text: str) -> str:
         fallback_name = f"User {user_id}"
         display_name = discord.utils.escape_markdown(str(data.get("display_name") or fallback_name))
         line = f"`{index}.` **{display_name}**"
+        details = []
+        mmr = data.get("mmr")
+        if isinstance(mmr, (int, float)) and not isinstance(mmr, bool):
+            details.append(f"{int(mmr):,} MMR")
+        games = int(data.get("inhouse_games", 0) or 0)
+        win_rate = data.get("inhouse_win_rate")
+        if games > 0 and isinstance(win_rate, (int, float)) and not isinstance(win_rate, bool):
+            wins = int(data.get("inhouse_wins", 0) or 0)
+            losses = int(data.get("inhouse_losses", 0) or 0)
+            details.append(f"{float(win_rate):.1f}% WR ({wins}-{losses})")
+        if details:
+            line += " — " + " • ".join(details)
         if len("\n".join(lines + [line])) > 960:
             remaining = len(rows) - len(lines)
             lines.append(f"*…and {remaining} more*" if remaining > 0 else "*…*")
@@ -135,6 +159,30 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
             color = discord.Color.orange()
             status_text = f"The confirmed roster needs {RSVP_CAPACITY - len(rsvp_rows)} replacement player(s)."
         description = f"{description}\n\n{status_text}"
+    elif status == STATUS_LOBBY_STARTING:
+        title += " — Opening Lobby"
+        color = discord.Color.gold()
+        description = "The scheduled start time has arrived. FeederBot is preparing the confirmed roster's lobby."
+    elif status == STATUS_LOBBY_OPEN:
+        title += " — Lobby Open"
+        color = discord.Color.green()
+        lobby_link = str(event.get("lobby_jump_url") or "").strip()
+        mode = str(event.get("lobby_mode") or "regular").capitalize()
+        if event.get("handoff_auto_rolled", True):
+            description = (
+                f"The confirmed roster has been moved into a locked **{mode}** lobby and the post-rocket flow has started."
+            )
+        else:
+            description = (
+                f"The confirmed roster has been moved into a locked **{mode}** lobby, but an admin must press 🚀 after resolving the team-generation warning."
+            )
+        if lobby_link:
+            description += f"\n\n[Open the playable lobby]({lobby_link})"
+    elif status == STATUS_START_FAILED:
+        title += " — Lobby Start Blocked"
+        color = discord.Color.red()
+        reason = str(event.get("handoff_error") or "The playable lobby could not be prepared.")
+        description = f"The RSVP was confirmed, but FeederBot could not open its lobby automatically.\n\n**Reason:** {reason}"
     elif status == STATUS_CANCELLED:
         title += " — Cancelled"
         color = discord.Color.red()
@@ -193,7 +241,11 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
         inline=False,
     )
 
-    rsvp_heading = "Confirmed Players" if status == STATUS_CONFIRMED else "RSVP"
+    rsvp_heading = (
+        "Confirmed Players"
+        if status in {STATUS_CONFIRMED, STATUS_LOBBY_STARTING, STATUS_LOBBY_OPEN, STATUS_START_FAILED}
+        else "RSVP"
+    )
     embed.add_field(
         name=f"✅ {rsvp_heading} — {len(rsvp_rows)}/{RSVP_CAPACITY}",
         value=_format_roster(event, SIGNUP_RSVP, "*No players yet.*"),
@@ -211,6 +263,8 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
         embed.set_footer(text="RSVP = committed • Fill = available if promoted • Last updated")
     elif status == STATUS_CONFIRMED:
         embed.set_footer(text="Confirmed RSVPs are locked • Fills remain flexible • Last updated")
+    elif status == STATUS_LOBBY_OPEN:
+        embed.set_footer(text="Roster handed off to the playable lobby • Last updated")
     else:
         embed.set_footer(text="This event is no longer accepting signups • Last updated")
     return embed
@@ -261,15 +315,29 @@ class RsvpView(discord.ui.View):
 class RsvpManager:
     parse_start_time = staticmethod(parse_rsvp_start_time)
 
-    def __init__(self, *, bot, db, load_player_config, load_guild_prefix):
+    def __init__(
+        self,
+        *,
+        bot,
+        db,
+        load_player_config,
+        load_guild_prefix,
+        load_inhouse_record=None,
+    ):
         self.bot = bot
         self.db = db
         self.load_player_config = load_player_config
         self.load_guild_prefix = load_guild_prefix
+        self.load_inhouse_record = load_inhouse_record
+        self.lobby_handoff = None
         self._locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._persistent_view_registered = False
         self._ephemeral_delete_tasks: set[asyncio.Task] = set()
         self._checkpoint_tasks: dict[int, asyncio.Task] = {}
+        self._lobby_start_tasks: dict[int, asyncio.Task] = {}
+
+    def configure_lobby_handoff(self, callback) -> None:
+        self.lobby_handoff = callback
 
     def _event_ref(self, guild_id: int):
         return self.db.collection(RSVP_COLLECTION).document(str(guild_id))
@@ -327,6 +395,11 @@ class RsvpManager:
         if task and not task.done() and task is not asyncio.current_task():
             task.cancel()
 
+    def _cancel_lobby_start_task(self, guild_id: int) -> None:
+        task = self._lobby_start_tasks.pop(guild_id, None)
+        if task and not task.done() and task is not asyncio.current_task():
+            task.cancel()
+
     def _schedule_checkpoint(self, event: dict) -> None:
         guild_id = int(event.get("guild_id", 0) or 0)
         if not guild_id or not _is_pending_finalization(event):
@@ -354,6 +427,30 @@ class RsvpManager:
             if self._checkpoint_tasks.get(guild_id) is current_task:
                 self._checkpoint_tasks.pop(guild_id, None)
 
+    def _schedule_lobby_start(self, event: dict) -> None:
+        guild_id = int(event.get("guild_id", 0) or 0)
+        if not guild_id or not _is_pending_lobby_start(event):
+            return
+        self._cancel_lobby_start_task(guild_id)
+        start_at = int(event.get("start_at", 0) or 0)
+        delay = max(0.0, start_at - time.time())
+        task = asyncio.create_task(self._run_lobby_start(guild_id, delay))
+        self._lobby_start_tasks[guild_id] = task
+
+    async def _run_lobby_start(self, guild_id: int, delay: int) -> None:
+        current_task = asyncio.current_task()
+        try:
+            if delay > 0:
+                await asyncio.sleep(delay)
+            await self.open_confirmed_lobby(guild_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[rsvp] Automatic lobby start failed for guild {guild_id}: {exc}")
+        finally:
+            if self._lobby_start_tasks.get(guild_id) is current_task:
+                self._lobby_start_tasks.pop(guild_id, None)
+
     async def start_event(
         self,
         *,
@@ -372,11 +469,15 @@ class RsvpManager:
                 STATUS_CONFIRMED,
                 STATUS_CLOSED,
                 STATUS_STARTING,
+                STATUS_LOBBY_STARTING,
             }:
                 raise ValueError(
                     "This server already has a running RSVP event. Cancel or reset it first, "
                     "or finalize it if it is still awaiting the go/no-go decision."
                 )
+
+            self._cancel_checkpoint_task(guild_id)
+            self._cancel_lobby_start_task(guild_id)
 
             now_epoch = int(time.time())
             start_at = int(start_time.astimezone(timezone.utc).timestamp())
@@ -512,6 +613,10 @@ class RsvpManager:
             event["updated_at"] = int(time.time())
             self._save_event(guild_id, event)
             self._cancel_checkpoint_task(guild_id)
+            if outcome == STATUS_CONFIRMED:
+                self._schedule_lobby_start(event)
+            else:
+                self._cancel_lobby_start_task(guild_id)
 
             message = await self._resolve_message(event)
             if message:
@@ -558,12 +663,132 @@ class RsvpManager:
                     (
                         f"✅ **The inhouse is confirmed for <t:{int(event['start_at'])}:t>.** "
                         f"We have {RSVP_CAPACITY} confirmed players. Please be ready 10 minutes early. "
-                        "Confirmed RSVP players cannot withdraw during the final 60 minutes; fills may still withdraw."
+                        "Confirmed RSVP players cannot withdraw during the final 60 minutes; fills may still withdraw. "
+                        "At the scheduled start time, FeederBot will automatically open the locked playable lobby and generate teams or captains."
                         f"{promoted_text}"
                     ),
                     user_ids=confirmed_ids,
                 )
             return event, outcome, promoted
+
+    async def _announce_handoff_failure(self, event: dict, reason: str) -> None:
+        guild_id = int(event.get("guild_id", 0) or 0)
+        guild = self.bot.get_guild(guild_id)
+        admin_role = discord.utils.get(getattr(guild, "roles", []), name="Inhouse Admin")
+        role_ids = [admin_role.id] if admin_role else []
+        role_prefix = f"{admin_role.mention} " if admin_role else "Admins: "
+        channel = await self._resolve_channel(event)
+        await self._send_channel_announcement(
+            channel,
+            (
+                f"⚠️ {role_prefix}the confirmed RSVP reached its scheduled start time, "
+                f"but FeederBot could not open the playable lobby automatically. **{reason}**"
+            ),
+            role_ids=role_ids,
+        )
+
+    async def open_confirmed_lobby(self, guild_id: int) -> tuple[dict | None, dict | None]:
+        handoff_event = None
+        failure_reason = None
+        async with self._locks[guild_id]:
+            event = self.get_event(guild_id)
+            if not _is_pending_lobby_start(event):
+                return event, None
+            confirmed_rows = _ordered_signups(event, SIGNUP_RSVP)[:RSVP_CAPACITY]
+            if len(confirmed_rows) != RSVP_CAPACITY:
+                failure_reason = (
+                    f"The confirmed roster is only {len(confirmed_rows)}/{RSVP_CAPACITY}; "
+                    "a full roster is required for automatic team generation."
+                )
+            elif self.lobby_handoff is None:
+                failure_reason = "The RSVP-to-lobby handoff is not configured."
+
+            event["handoff_attempted_at"] = int(time.time())
+            event["updated_at"] = int(time.time())
+            if failure_reason:
+                event["status"] = STATUS_START_FAILED
+                event["handoff_error"] = failure_reason
+            else:
+                event["status"] = STATUS_LOBBY_STARTING
+                event.pop("handoff_error", None)
+                handoff_event = {
+                    **event,
+                    "signups": dict(event.get("signups", {}) or {}),
+                }
+            self._save_event(guild_id, event)
+
+        message = await self._resolve_message(event)
+        if message:
+            try:
+                await message.edit(
+                    embed=build_rsvp_embed(event),
+                    view=self.make_view(event, disabled=True),
+                )
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+                print(f"[rsvp] Failed to show lobby handoff state for guild {guild_id}: {exc}")
+
+        if failure_reason:
+            await self._announce_handoff_failure(event, failure_reason)
+            return event, None
+
+        try:
+            result = await self.lobby_handoff(handoff_event)
+            if not isinstance(result, dict) or not result.get("message_id"):
+                raise RuntimeError("The playable lobby was not created successfully.")
+        except Exception as exc:
+            failure_reason = str(exc).strip() or "The playable lobby could not be created."
+            async with self._locks[guild_id]:
+                event = self.get_event(guild_id) or handoff_event
+                event["status"] = STATUS_START_FAILED
+                event["handoff_error"] = failure_reason[:500]
+                event["updated_at"] = int(time.time())
+                self._save_event(guild_id, event)
+            message = await self._resolve_message(event)
+            if message:
+                try:
+                    await message.edit(
+                        embed=build_rsvp_embed(event),
+                        view=self.make_view(event, disabled=True),
+                    )
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                    pass
+            await self._announce_handoff_failure(event, failure_reason)
+            return event, None
+
+        async with self._locks[guild_id]:
+            event = self.get_event(guild_id) or handoff_event
+            event["status"] = STATUS_LOBBY_OPEN
+            event["lobby_message_id"] = str(result["message_id"])
+            event["lobby_jump_url"] = str(result.get("jump_url") or "")
+            event["lobby_mode"] = str(result.get("mode") or "regular")
+            event["handoff_auto_rolled"] = bool(result.get("auto_rolled", False))
+            event["lobby_opened_at"] = int(time.time())
+            event["updated_at"] = int(time.time())
+            self._save_event(guild_id, event)
+            self._cancel_lobby_start_task(guild_id)
+
+        message = await self._resolve_message(event)
+        if message:
+            try:
+                await message.edit(
+                    embed=build_rsvp_embed(event),
+                    view=self.make_view(event, disabled=True),
+                )
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+                print(f"[rsvp] Failed to show opened lobby for guild {guild_id}: {exc}")
+
+        confirmed_ids = [user_id for user_id, _ in _ordered_signups(event, SIGNUP_RSVP)[:RSVP_CAPACITY]]
+        lobby_link = str(result.get("jump_url") or "").strip()
+        link_text = f" [Open the lobby]({lobby_link})" if lobby_link else ""
+        await self._send_channel_announcement(
+            await self._resolve_channel(event),
+            (
+                f"🚀 **The scheduled inhouse lobby is open in {str(result.get('mode') or 'regular').capitalize()} mode.**"
+                f"{link_text} The confirmed roster is locked; use an Inhouse Admin for emergency replacements."
+            ),
+            user_ids=confirmed_ids,
+        )
+        return event, result
 
     async def cancel_event(
         self,
@@ -583,6 +808,7 @@ class RsvpManager:
             event["updated_at"] = int(time.time())
             self._save_event(guild_id, event)
             self._cancel_checkpoint_task(guild_id)
+            self._cancel_lobby_start_task(guild_id)
 
             message = await self._resolve_message(event)
             if message:
@@ -699,6 +925,7 @@ class RsvpManager:
                 self._schedule_checkpoint(event)
             else:
                 self._cancel_checkpoint_task(guild_id)
+                self._schedule_lobby_start(event)
             message = await self._resolve_message(event)
             if message:
                 await message.edit(
@@ -717,6 +944,8 @@ class RsvpManager:
             event = self.get_event(guild_id)
             if not event or event.get("status") == STATUS_RESET:
                 raise ValueError("There is no RSVP event to reset.")
+
+            self._cancel_lobby_start_task(guild_id)
 
             original_event = {
                 **event,
@@ -832,8 +1061,8 @@ class RsvpManager:
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):
             pass
 
-    def _configuration_error(self, guild_id: int, user_id: int) -> str | None:
-        config = self.load_player_config(str(user_id)) or {}
+    def _configuration_error(self, guild_id: int, user_id: int, config: dict | None = None) -> str | None:
+        config = config if isinstance(config, dict) else (self.load_player_config(str(user_id)) or {})
         steam_id = config.get("steam_id")
         mmr = config.get("mmr")
         if steam_id and isinstance(mmr, (int, float)) and not isinstance(mmr, bool):
@@ -844,6 +1073,47 @@ class RsvpManager:
             f"Run `{prefix}cfg <Steam friend code>` (example: `{prefix}cfg 123456789`). "
             "If your Steam account is already linked but has no MMR, rerun the command or ask an admin for help."
         )
+
+    def _signup_profile(self, guild_id: int, user_id: str, config: dict | None = None) -> dict:
+        config = config if isinstance(config, dict) else (self.load_player_config(str(user_id)) or {})
+        profile = {}
+        mmr = config.get("mmr")
+        if isinstance(mmr, (int, float)) and not isinstance(mmr, bool):
+            profile["mmr"] = int(mmr)
+        if self.load_inhouse_record is None:
+            return profile
+        try:
+            record = self.load_inhouse_record(guild_id, user_id) or {}
+        except Exception as exc:
+            print(f"[rsvp] Failed to load inhouse record for {user_id} in guild {guild_id}: {exc}")
+            return profile
+        games = int(record.get("games", 0) or 0)
+        if games <= 0:
+            return profile
+        profile.update({
+            "inhouse_wins": int(record.get("wins", 0) or 0),
+            "inhouse_losses": int(record.get("losses", 0) or 0),
+            "inhouse_games": games,
+            "inhouse_win_rate": float(record.get("win_rate", 0) or 0),
+        })
+        return profile
+
+    def _refresh_signup_profiles(self, event: dict) -> bool:
+        guild_id = int(event.get("guild_id", 0) or 0)
+        signups = dict(event.get("signups", {}) or {})
+        changed = False
+        for user_id, data in list(signups.items()):
+            if not isinstance(data, dict):
+                continue
+            updated = dict(data)
+            updated.update(self._signup_profile(guild_id, str(user_id)))
+            if updated != data:
+                signups[str(user_id)] = updated
+                changed = True
+        if changed:
+            event["signups"] = signups
+            event["updated_at"] = int(time.time())
+        return changed
 
     async def handle_signup(self, interaction: discord.Interaction, action: str) -> None:
         await interaction.response.defer(ephemeral=True, thinking=False)
@@ -870,8 +1140,14 @@ class RsvpManager:
                 signups = dict(event.get("signups", {}) or {})
                 current = signups.get(user_id)
 
+                signup_config = None
                 if action in {SIGNUP_RSVP, SIGNUP_FILL}:
-                    configuration_error = self._configuration_error(guild_id, interaction.user.id)
+                    signup_config = self.load_player_config(str(interaction.user.id)) or {}
+                    configuration_error = self._configuration_error(
+                        guild_id,
+                        interaction.user.id,
+                        signup_config,
+                    )
                     if configuration_error:
                         await self._send_ephemeral(interaction, configuration_error)
                         return
@@ -933,6 +1209,7 @@ class RsvpManager:
                         "signup_origin": action,
                         "display_name": interaction.user.display_name,
                         "joined_at": int(time.time()),
+                        **self._signup_profile(guild_id, user_id, signup_config),
                     }
 
                 event["signups"] = signups
@@ -1006,6 +1283,7 @@ class RsvpManager:
                 if (
                     event.get("status") not in INTERACTIVE_STATUSES
                     and not _is_pending_finalization(event)
+                    and not _is_pending_lobby_start(event)
                 ):
                     continue
                 try:
@@ -1014,6 +1292,8 @@ class RsvpManager:
                     continue
                 if self.bot.get_guild(guild_id) is None:
                     continue
+                if self._refresh_signup_profiles(event):
+                    self._save_event(guild_id, event)
                 if _is_pending_finalization(event):
                     checkpoint_at = int(
                         event.get("checkpoint_at", 0)
@@ -1023,10 +1303,14 @@ class RsvpManager:
                         event["checkpoint_at"] = checkpoint_at
                         self._save_event(guild_id, event)
                     if checkpoint_at <= int(time.time()):
-                        await self.finalize_event(guild_id, automatic=True)
+                        event, outcome, _ = await self.finalize_event(guild_id, automatic=True)
                         print(f"[rsvp] Finalized overdue RSVP event for guild {guild_id}")
-                        continue
-                    self._schedule_checkpoint(event)
+                        if outcome != STATUS_CONFIRMED:
+                            continue
+                    else:
+                        self._schedule_checkpoint(event)
+                if _is_pending_lobby_start(event):
+                    self._schedule_lobby_start(event)
                 message = await self._resolve_message(event)
                 if message is None:
                     print(f"[rsvp] Could not restore RSVP message for guild {guild_id}")
