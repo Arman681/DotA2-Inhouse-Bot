@@ -22,6 +22,16 @@ STATUS_STARTING = "starting"
 STATUS_LOBBY_STARTING = "lobby_starting"
 STATUS_LOBBY_OPEN = "lobby_open"
 STATUS_START_FAILED = "start_failed"
+STATUS_COMPLETED = "completed"
+
+SERIES_WAITING = "waiting_for_match"
+SERIES_LIVE = "game_live"
+SERIES_BETWEEN_GAMES = "between_games"
+SERIES_WAIT_TIMED_OUT = "wait_timed_out"
+SERIES_ROSTER_INCOMPLETE = "roster_incomplete"
+SERIES_RESULT_PENDING = "result_pending"
+SERIES_PREPARATION_FAILED = "preparation_failed"
+SERIES_COMPLETED = "completed"
 
 INTERACTIVE_STATUSES = {STATUS_ACTIVE, STATUS_CONFIRMED}
 
@@ -110,6 +120,14 @@ def _is_pending_lobby_start(event: dict | None) -> bool:
     return status == STATUS_CLOSED and event.get("closed_from_status") == STATUS_CONFIRMED
 
 
+def _is_active_series(event: dict | None) -> bool:
+    if not isinstance(event, dict) or event.get("status") != STATUS_LOBBY_OPEN:
+        return False
+    games_planned = max(1, int(event.get("games", 1) or 1))
+    games_completed = max(0, int(event.get("games_completed", 0) or 0))
+    return games_completed < games_planned
+
+
 def _format_roster(event: dict, signup_status: str, empty_text: str) -> str:
     rows = _ordered_signups(event, signup_status)
     if not rows:
@@ -164,13 +182,55 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
         color = discord.Color.gold()
         description = "The scheduled start time has arrived. FeederBot is preparing the confirmed roster's lobby."
     elif status == STATUS_LOBBY_OPEN:
-        title += " — Lobby Open"
-        color = discord.Color.green()
+        games_planned = max(1, int(event.get("games", 1) or 1))
+        games_completed = max(0, int(event.get("games_completed", 0) or 0))
+        current_game = min(games_planned, max(1, int(event.get("current_game", games_completed + 1) or 1)))
+        series_status = str(event.get("series_status") or SERIES_WAITING)
+        series_labels = {
+            SERIES_WAITING: (f"Waiting for Game {current_game}/{games_planned}", discord.Color.green()),
+            SERIES_LIVE: (f"Game {current_game}/{games_planned} Live", discord.Color.green()),
+            SERIES_BETWEEN_GAMES: (f"Preparing Game {current_game}/{games_planned}", discord.Color.gold()),
+            SERIES_WAIT_TIMED_OUT: (f"Game {current_game}/{games_planned} Wait Timed Out", discord.Color.orange()),
+            SERIES_ROSTER_INCOMPLETE: (f"Game {current_game}/{games_planned} Roster Incomplete", discord.Color.orange()),
+            SERIES_RESULT_PENDING: (f"Game {current_game}/{games_planned} Result Pending", discord.Color.orange()),
+            SERIES_PREPARATION_FAILED: (f"Game {current_game}/{games_planned} Setup Blocked", discord.Color.red()),
+        }
+        status_label, color = series_labels.get(
+            series_status,
+            (f"Lobby Open — Game {current_game}/{games_planned}", discord.Color.green()),
+        )
+        title += f" — {status_label}"
         lobby_link = str(event.get("lobby_jump_url") or "").strip()
         mode = str(event.get("lobby_mode") or "regular").capitalize()
-        if event.get("handoff_auto_rolled", True):
+        if series_status == SERIES_LIVE:
+            match_id = str(event.get("current_match_id") or "").strip()
+            match_text = f" `{match_id}`" if match_id else ""
+            description = f"Game **{current_game}/{games_planned}**{match_text} is live and being tracked."
+        elif series_status == SERIES_BETWEEN_GAMES:
+            description = f"Game **{games_completed}/{games_planned}** is recorded. FeederBot is preparing the next game."
+        elif series_status == SERIES_WAIT_TIMED_OUT:
             description = (
-                f"The confirmed roster has been moved into a locked **{mode}** lobby and the post-rocket flow has started."
+                f"No new Steam match appeared for game **{current_game}/{games_planned}** within 15 minutes. "
+                "An Inhouse Admin can press 🚀 on the locked lobby to retry the same game."
+            )
+        elif series_status == SERIES_ROSTER_INCOMPLETE:
+            description = (
+                f"The locked roster fell below 10 players while waiting for game **{current_game}/{games_planned}**. "
+                "An Inhouse Admin must restore the roster and press 🚀 to retry."
+            )
+        elif series_status == SERIES_RESULT_PENDING:
+            match_id = str(event.get("current_match_id") or "unknown")
+            description = (
+                f"Game **{current_game}/{games_planned}** ended, but result `{match_id}` is not available yet. "
+                "The series is paused so the game is not skipped; an admin can resolve it with `!submitmatch`."
+            )
+        elif series_status == SERIES_PREPARATION_FAILED:
+            reason = str(event.get("series_error") or "The next lobby setup could not be generated.")
+            description = f"The series is paused before game **{current_game}/{games_planned}**.\n\n**Reason:** {reason}"
+        elif event.get("handoff_auto_rolled", True):
+            description = (
+                f"The confirmed roster is in a locked **{mode}** lobby. FeederBot is waiting for game "
+                f"**{current_game}/{games_planned}** to appear on Steam."
             )
         else:
             description = (
@@ -178,6 +238,15 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
             )
         if lobby_link:
             description += f"\n\n[Open the playable lobby]({lobby_link})"
+    elif status == STATUS_COMPLETED:
+        games_planned = max(1, int(event.get("games", 1) or 1))
+        games_completed = max(0, int(event.get("games_completed", 0) or 0))
+        title += f" — Series Complete ({games_completed}/{games_planned})"
+        color = discord.Color.green()
+        description = "All scheduled games have been recorded. This RSVP series is complete."
+        lobby_link = str(event.get("lobby_jump_url") or "").strip()
+        if lobby_link:
+            description += f"\n\n[Open the final lobby]({lobby_link})"
     elif status == STATUS_START_FAILED:
         title += " — Lobby Start Blocked"
         color = discord.Color.red()
@@ -226,6 +295,13 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
     embed.add_field(name="Start Time", value=start_value, inline=True)
     embed.add_field(name="Confirmation Deadline", value=checkpoint_value, inline=True)
     embed.add_field(name="Format", value=f"**{games} {game_label}**\nCaptain's Mode", inline=True)
+    if status in {STATUS_LOBBY_OPEN, STATUS_COMPLETED}:
+        games_completed = max(0, int(event.get("games_completed", 0) or 0))
+        current_game = min(games, max(1, int(event.get("current_game", games_completed + 1) or 1)))
+        progress_value = f"**{games_completed}/{games} complete**"
+        if status == STATUS_LOBBY_OPEN:
+            progress_value += f"\nCurrent: game {current_game}/{games}"
+        embed.add_field(name="Series Progress", value=progress_value, inline=True)
     embed.add_field(
         name="Go / No-Go Policy",
         value=(
@@ -243,7 +319,7 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
 
     rsvp_heading = (
         "Confirmed Players"
-        if status in {STATUS_CONFIRMED, STATUS_LOBBY_STARTING, STATUS_LOBBY_OPEN, STATUS_START_FAILED}
+        if status in {STATUS_CONFIRMED, STATUS_LOBBY_STARTING, STATUS_LOBBY_OPEN, STATUS_START_FAILED, STATUS_COMPLETED}
         else "RSVP"
     )
     embed.add_field(
@@ -264,7 +340,9 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
     elif status == STATUS_CONFIRMED:
         embed.set_footer(text="Confirmed RSVPs are locked • Fills remain flexible • Last updated")
     elif status == STATUS_LOBBY_OPEN:
-        embed.set_footer(text="Roster handed off to the playable lobby • Last updated")
+        embed.set_footer(text="Scheduled series is active • Roster remains locked between games • Last updated")
+    elif status == STATUS_COMPLETED:
+        embed.set_footer(text="Scheduled series complete • Last updated")
     else:
         embed.set_footer(text="This event is no longer accepting signups • Last updated")
     return embed
@@ -330,6 +408,7 @@ class RsvpManager:
         self.load_guild_prefix = load_guild_prefix
         self.load_inhouse_record = load_inhouse_record
         self.lobby_handoff = None
+        self.series_resume = None
         self._locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._persistent_view_registered = False
         self._ephemeral_delete_tasks: set[asyncio.Task] = set()
@@ -338,6 +417,9 @@ class RsvpManager:
 
     def configure_lobby_handoff(self, callback) -> None:
         self.lobby_handoff = callback
+
+    def configure_series_resume(self, callback) -> None:
+        self.series_resume = callback
 
     def _event_ref(self, guild_id: int):
         return self.db.collection(RSVP_COLLECTION).document(str(guild_id))
@@ -389,6 +471,18 @@ class RsvpManager:
             return await channel.fetch_message(message_id)
         except (discord.Forbidden, discord.NotFound, discord.HTTPException, AttributeError):
             return None
+
+    async def _refresh_event_message(self, event: dict) -> None:
+        message = await self._resolve_message(event)
+        if message is None:
+            return
+        try:
+            await message.edit(
+                embed=build_rsvp_embed(event),
+                view=self.make_view(event, disabled=event.get("status") not in INTERACTIVE_STATUSES),
+            )
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+            print(f"[rsvp] Failed to refresh RSVP series for guild {event.get('guild_id')}: {exc}")
 
     def _cancel_checkpoint_task(self, guild_id: int) -> None:
         task = self._checkpoint_tasks.pop(guild_id, None)
@@ -470,9 +564,10 @@ class RsvpManager:
                 STATUS_CLOSED,
                 STATUS_STARTING,
                 STATUS_LOBBY_STARTING,
+                STATUS_LOBBY_OPEN,
             }:
                 raise ValueError(
-                    "This server already has a running RSVP event. Cancel or reset it first, "
+                    "This server already has a running RSVP event or scheduled series. Finish or reset it first, "
                     "or finalize it if it is still awaiting the go/no-go decision."
                 )
 
@@ -495,6 +590,8 @@ class RsvpManager:
                 "start_at": start_at,
                 "checkpoint_at": checkpoint_at,
                 "games": int(games),
+                "games_completed": 0,
+                "completed_match_ids": [],
                 "capacity": RSVP_CAPACITY,
                 "notes": str(notes or "").strip(),
                 "signups": {},
@@ -757,13 +854,25 @@ class RsvpManager:
 
         async with self._locks[guild_id]:
             event = self.get_event(guild_id) or handoff_event
+            now_epoch = int(time.time())
             event["status"] = STATUS_LOBBY_OPEN
             event["lobby_message_id"] = str(result["message_id"])
             event["lobby_jump_url"] = str(result.get("jump_url") or "")
             event["lobby_mode"] = str(result.get("mode") or "regular")
             event["handoff_auto_rolled"] = bool(result.get("auto_rolled", False))
-            event["lobby_opened_at"] = int(time.time())
-            event["updated_at"] = int(time.time())
+            event["games_completed"] = 0
+            event["completed_match_ids"] = []
+            event["current_game"] = 1
+            event["series_status"] = (
+                SERIES_WAITING if event["handoff_auto_rolled"] else SERIES_PREPARATION_FAILED
+            )
+            if event["handoff_auto_rolled"]:
+                event["wait_started_at"] = now_epoch
+                event["wait_deadline_at"] = now_epoch + (15 * 60)
+            else:
+                event["series_error"] = "Automatic team or captain generation did not complete."
+            event["lobby_opened_at"] = now_epoch
+            event["updated_at"] = now_epoch
             self._save_event(guild_id, event)
             self._cancel_lobby_start_task(guild_id)
 
@@ -789,6 +898,178 @@ class RsvpManager:
             user_ids=confirmed_ids,
         )
         return event, result
+
+    async def mark_series_waiting(
+        self,
+        guild_id: int,
+        *,
+        game_number: int | None = None,
+        timeout_seconds: int = 15 * 60,
+    ) -> dict | None:
+        async with self._locks[guild_id]:
+            event = self.get_event(guild_id)
+            if not _is_active_series(event):
+                return None
+            current_game = max(1, int(event.get("current_game", 1) or 1))
+            if game_number is not None and int(game_number) != current_game:
+                return None
+            now_epoch = int(time.time())
+            event["series_status"] = SERIES_WAITING
+            event["wait_started_at"] = now_epoch
+            event["wait_deadline_at"] = now_epoch + max(1, int(timeout_seconds))
+            event.pop("current_match_id", None)
+            event.pop("series_error", None)
+            event["updated_at"] = now_epoch
+            self._save_event(guild_id, event)
+        await self._refresh_event_message(event)
+        return event
+
+    async def mark_series_wait_outcome(
+        self,
+        guild_id: int,
+        outcome: str,
+        *,
+        game_number: int | None = None,
+        match_id=None,
+    ) -> dict | None:
+        async with self._locks[guild_id]:
+            event = self.get_event(guild_id)
+            if not _is_active_series(event):
+                return None
+            current_game = max(1, int(event.get("current_game", 1) or 1))
+            if game_number is not None and int(game_number) != current_game:
+                return None
+            now_epoch = int(time.time())
+            if outcome == "match_found":
+                event["series_status"] = SERIES_LIVE
+                event["current_match_id"] = str(match_id)
+                event["match_found_at"] = now_epoch
+            elif outcome == "timeout":
+                event["series_status"] = SERIES_WAIT_TIMED_OUT
+                event["wait_timed_out_at"] = now_epoch
+                event.pop("current_match_id", None)
+            elif outcome == "underfilled":
+                event["series_status"] = SERIES_ROSTER_INCOMPLETE
+                event["roster_incomplete_at"] = now_epoch
+                event.pop("current_match_id", None)
+            else:
+                return None
+            event["updated_at"] = now_epoch
+            self._save_event(guild_id, event)
+        await self._refresh_event_message(event)
+        return event
+
+    async def mark_series_result_pending(self, guild_id: int, match_id) -> dict | None:
+        async with self._locks[guild_id]:
+            event = self.get_event(guild_id)
+            if not _is_active_series(event):
+                return None
+            expected_match_id = str(event.get("current_match_id") or "")
+            if expected_match_id and expected_match_id != str(match_id):
+                return None
+            now_epoch = int(time.time())
+            event["series_status"] = SERIES_RESULT_PENDING
+            event["current_match_id"] = str(match_id)
+            event["result_pending_at"] = now_epoch
+            event["updated_at"] = now_epoch
+            self._save_event(guild_id, event)
+        await self._refresh_event_message(event)
+        return event
+
+    async def mark_series_preparation_failed(self, guild_id: int, reason: str) -> dict | None:
+        async with self._locks[guild_id]:
+            event = self.get_event(guild_id)
+            if not _is_active_series(event):
+                return None
+            event["series_status"] = SERIES_PREPARATION_FAILED
+            event["series_error"] = str(reason or "The next game setup could not be generated.")[:500]
+            event["updated_at"] = int(time.time())
+            self._save_event(guild_id, event)
+        await self._refresh_event_message(event)
+        return event
+
+    async def record_series_match(
+        self,
+        guild_id: int,
+        match_id,
+        *,
+        require_current_match: bool = False,
+    ) -> dict:
+        normalized_match_id = str(match_id)
+        async with self._locks[guild_id]:
+            event = self.get_event(guild_id)
+            if not event:
+                return {"event": None, "counted": False, "reason": "no_event"}
+            completed_match_ids = [str(value) for value in (event.get("completed_match_ids", []) or [])]
+            games_planned = max(1, int(event.get("games", 1) or 1))
+            games_completed = max(0, int(event.get("games_completed", 0) or 0))
+            if normalized_match_id in completed_match_ids:
+                return {
+                    "event": event,
+                    "counted": False,
+                    "duplicate": True,
+                    "series_complete": games_completed >= games_planned,
+                    "games_completed": games_completed,
+                    "games_planned": games_planned,
+                }
+            if not _is_active_series(event):
+                return {"event": event, "counted": False, "reason": "no_active_series"}
+            current_match_id = str(event.get("current_match_id") or "")
+            if current_match_id and current_match_id != normalized_match_id:
+                return {"event": event, "counted": False, "reason": "unexpected_match"}
+            if require_current_match and current_match_id != normalized_match_id:
+                return {"event": event, "counted": False, "reason": "untracked_match"}
+
+            completed_match_ids.append(normalized_match_id)
+            games_completed = min(games_planned, games_completed + 1)
+            now_epoch = int(time.time())
+            event["completed_match_ids"] = completed_match_ids
+            event["games_completed"] = games_completed
+            event["last_completed_match_id"] = normalized_match_id
+            event["last_game_completed_at"] = now_epoch
+            event.pop("current_match_id", None)
+            event.pop("series_error", None)
+            series_complete = games_completed >= games_planned
+            if series_complete:
+                event["status"] = STATUS_COMPLETED
+                event["series_status"] = SERIES_COMPLETED
+                event["current_game"] = games_planned
+                event["series_completed_at"] = now_epoch
+            else:
+                event["series_status"] = SERIES_BETWEEN_GAMES
+                event["current_game"] = games_completed + 1
+            event["updated_at"] = now_epoch
+            self._save_event(guild_id, event)
+        await self._refresh_event_message(event)
+        return {
+            "event": event,
+            "counted": True,
+            "duplicate": False,
+            "series_complete": series_complete,
+            "games_completed": games_completed,
+            "games_planned": games_planned,
+            "next_game": None if series_complete else games_completed + 1,
+        }
+
+    async def retire_series_for_lobby_override(
+        self,
+        guild_id: int,
+        *,
+        reset_by: str | None = None,
+    ) -> dict | None:
+        async with self._locks[guild_id]:
+            event = self.get_event(guild_id)
+            if not _is_active_series(event):
+                return None
+            now_epoch = int(time.time())
+            event["status"] = STATUS_RESET
+            event["series_status"] = "overridden"
+            event["reset_by"] = str(reset_by) if reset_by is not None else None
+            event["reset_at"] = now_epoch
+            event["updated_at"] = now_epoch
+            self._save_event(guild_id, event)
+        await self._refresh_event_message(event)
+        return event
 
     async def cancel_event(
         self,
@@ -1282,8 +1563,10 @@ class RsvpManager:
                 event = snapshot.to_dict() or {}
                 if (
                     event.get("status") not in INTERACTIVE_STATUSES
+                    and event.get("status") != STATUS_COMPLETED
                     and not _is_pending_finalization(event)
                     and not _is_pending_lobby_start(event)
+                    and not _is_active_series(event)
                 ):
                     continue
                 try:
@@ -1314,15 +1597,20 @@ class RsvpManager:
                 message = await self._resolve_message(event)
                 if message is None:
                     print(f"[rsvp] Could not restore RSVP message for guild {guild_id}")
-                    continue
-                try:
-                    await message.edit(
-                        embed=build_rsvp_embed(event),
-                        view=self.make_view(event),
-                    )
-                except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
-                    print(f"[rsvp] Failed to refresh RSVP message for guild {guild_id}: {exc}")
-                    continue
-                print(f"[rsvp] Restored interactive RSVP event for guild {guild_id}")
+                else:
+                    try:
+                        await message.edit(
+                            embed=build_rsvp_embed(event),
+                            view=self.make_view(event),
+                        )
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+                        print(f"[rsvp] Failed to refresh RSVP message for guild {guild_id}: {exc}")
+                    else:
+                        print(f"[rsvp] Restored RSVP event for guild {guild_id}")
+                if _is_active_series(event) and self.series_resume is not None:
+                    try:
+                        await self.series_resume(event)
+                    except Exception as exc:
+                        print(f"[rsvp] Failed to resume RSVP series for guild {guild_id}: {exc}")
         except Exception as exc:
             print(f"[rsvp] Failed to restore active RSVP events: {exc}")
