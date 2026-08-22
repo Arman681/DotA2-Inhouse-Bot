@@ -3496,7 +3496,7 @@ def attach_commands(bot, deps):
                     "**!replace `<@user1|placeholder1>` `<@user2|placeholder2>`** - Replace one lobby user or placeholder with another.\n"
                     "**!lobby** - Create or refresh the inhouse lobby.\n"
                     "**!reset** - Clear the current lobby and start fresh.\n"
-                    "**!startrsvp `<time>` `<games>` `[optional notes]`** - Post one all-ranks RSVP event more than one hour before start; confirmed rosters automatically open a locked lobby and advance through that many games.\n"
+                    "**!startrsvp `<time>` `<games>` `[optional notes]`** - Post one all-ranks RSVP event more than one hour before start; confirmed rosters automatically open a locked lobby five minutes early and advance through that many games.\n"
                     "**!closersvp** - Temporarily lock signups while keeping the scheduled one-hour decision.\n"
                     "**!finalizersvp** - Immediately run the RSVP event's 10-player go/no-go decision.\n"
                     "**!cancelrsvp `[reason]`** - Call off an active, closed, or confirmed inhouse and notify its players.\n"
