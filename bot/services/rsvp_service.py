@@ -12,6 +12,7 @@ RSVP_CAPACITY = 10
 RSVP_COLLECTION = "rsvp_events"
 RSVP_TIMEZONE = ZoneInfo("America/New_York")
 RSVP_CONFIRMATION_LEAD_SECONDS = 60 * 60
+RSVP_LOBBY_OPEN_LEAD_SECONDS = 5 * 60
 
 STATUS_ACTIVE = "active"
 STATUS_CONFIRMED = "confirmed"
@@ -120,6 +121,14 @@ def _is_pending_lobby_start(event: dict | None) -> bool:
     return status == STATUS_CLOSED and event.get("closed_from_status") == STATUS_CONFIRMED
 
 
+def _lobby_open_at(event: dict) -> int:
+    start_at = int(event.get("start_at", 0) or 0)
+    return int(
+        event.get("lobby_open_at", 0)
+        or (start_at - RSVP_LOBBY_OPEN_LEAD_SECONDS if start_at else 0)
+    )
+
+
 def _is_active_series(event: dict | None) -> bool:
     if not isinstance(event, dict) or event.get("status") != STATUS_LOBBY_OPEN:
         return False
@@ -180,7 +189,7 @@ def build_rsvp_embed(event: dict) -> discord.Embed:
     elif status == STATUS_LOBBY_STARTING:
         title += " — Opening Lobby"
         color = discord.Color.gold()
-        description = "The scheduled start time has arrived. FeederBot is preparing the confirmed roster's lobby."
+        description = "The five-minute pre-game window has arrived. FeederBot is preparing the confirmed roster's lobby."
     elif status == STATUS_LOBBY_OPEN:
         games_planned = max(1, int(event.get("games", 1) or 1))
         games_completed = max(0, int(event.get("games_completed", 0) or 0))
@@ -526,8 +535,11 @@ class RsvpManager:
         if not guild_id or not _is_pending_lobby_start(event):
             return
         self._cancel_lobby_start_task(guild_id)
-        start_at = int(event.get("start_at", 0) or 0)
-        delay = max(0.0, start_at - time.time())
+        lobby_open_at = _lobby_open_at(event)
+        if not event.get("lobby_open_at"):
+            event["lobby_open_at"] = lobby_open_at
+            self._save_event(guild_id, event)
+        delay = max(0.0, lobby_open_at - time.time())
         task = asyncio.create_task(self._run_lobby_start(guild_id, delay))
         self._lobby_start_tasks[guild_id] = task
 
@@ -577,6 +589,7 @@ class RsvpManager:
             now_epoch = int(time.time())
             start_at = int(start_time.astimezone(timezone.utc).timestamp())
             checkpoint_at = start_at - RSVP_CONFIRMATION_LEAD_SECONDS
+            lobby_open_at = start_at - RSVP_LOBBY_OPEN_LEAD_SECONDS
             if checkpoint_at <= now_epoch:
                 raise ValueError(
                     "The inhouse start time must be more than one hour away because the go/no-go decision happens one hour before start."
@@ -589,6 +602,7 @@ class RsvpManager:
                 "status": STATUS_STARTING,
                 "start_at": start_at,
                 "checkpoint_at": checkpoint_at,
+                "lobby_open_at": lobby_open_at,
                 "games": int(games),
                 "games_completed": 0,
                 "completed_match_ids": [],
@@ -761,7 +775,7 @@ class RsvpManager:
                         f"✅ **The inhouse is confirmed for <t:{int(event['start_at'])}:t>.** "
                         f"We have {RSVP_CAPACITY} confirmed players. Please be ready 10 minutes early. "
                         "Confirmed RSVP players cannot withdraw during the final 60 minutes; fills may still withdraw. "
-                        "At the scheduled start time, FeederBot will automatically open the locked playable lobby and generate teams or captains."
+                        "Five minutes before the scheduled start, FeederBot will automatically open the locked playable lobby and generate teams or captains."
                         f"{promoted_text}"
                     ),
                     user_ids=confirmed_ids,
@@ -778,7 +792,7 @@ class RsvpManager:
         await self._send_channel_announcement(
             channel,
             (
-                f"⚠️ {role_prefix}the confirmed RSVP reached its scheduled start time, "
+                f"⚠️ {role_prefix}the confirmed RSVP reached its five-minute pre-game lobby window, "
                 f"but FeederBot could not open the playable lobby automatically. **{reason}**"
             ),
             role_ids=role_ids,
@@ -893,7 +907,8 @@ class RsvpManager:
             await self._resolve_channel(event),
             (
                 f"🚀 **The scheduled inhouse lobby is open in {str(result.get('mode') or 'regular').capitalize()} mode.**"
-                f"{link_text} The confirmed roster is locked; use an Inhouse Admin for emergency replacements."
+                f"{link_text} The inhouse starts at <t:{int(event.get('start_at', 0) or 0)}:t>. "
+                "The confirmed roster is locked; use an Inhouse Admin for emergency replacements."
             ),
             user_ids=confirmed_ids,
         )
