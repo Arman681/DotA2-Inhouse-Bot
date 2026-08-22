@@ -56,7 +56,7 @@ Want to run automated Dota 2 inhouse lobbies in your server?
 - FeederBot calls off undersubscribed events at that deadline so players are not left waiting and their time is respected
 - Fills are promoted in signup order when the event is confirmed or a confirmed player later withdraws
 - Direct RSVPs are locked after confirmation; fills, including promoted fills, may still withdraw
-- At the scheduled start time, a confirmed 10-player event automatically replaces the old idle lobby, loads the latest saved regular/immortal mode, and enters the same post-🚀 team/captain flow as an impromptu lobby
+- Five minutes before the scheduled start time, a confirmed 10-player event automatically replaces the old idle lobby, loads the latest saved regular/immortal mode, and enters the same post-🚀 team/captain flow as an impromptu lobby
 - Automatically opened RSVP lobbies keep their roster locked: 👍/👎 are omitted and ignored, while post-rocket reroll/draft controls remain available
 - The event's `<games>` value drives a real series: after each unique result is processed, FeederBot records that game, prepares fresh regular teams or Immortal captains for the same locked roster, and starts another 15-minute Steam wait until all scheduled games are complete
 - Completed match IDs are stored with the event, so automatic polling, `!submitmatch`, retries, and restart recovery cannot count the same game twice
@@ -274,7 +274,7 @@ Stores per-server settings such as:
 
 ### `rsvp_events/{guild_id}`
 Stores the current per-server RSVP event, including:
-- event start time and game count
+- event start time, one-hour confirmation deadline, five-minute-early lobby-open time, and game count
 - Discord channel/message IDs
 - active/confirmed/lobby-starting/lobby-open/completed/start-failed/cancelled/closed/reset lifecycle status
 - RSVP and fill membership
