@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.services.rsvp_service import (
+    RSVP_LOBBY_OPEN_LEAD_SECONDS,
     SERIES_BETWEEN_GAMES,
     SERIES_COMPLETED,
     SERIES_LIVE,
@@ -13,6 +14,7 @@ from bot.services.rsvp_service import (
     STATUS_LOBBY_OPEN,
     STATUS_START_FAILED,
     RsvpManager,
+    _lobby_open_at,
     build_rsvp_embed,
 )
 
@@ -64,6 +66,7 @@ def make_event(player_count=10):
         "status": STATUS_CONFIRMED,
         "start_at": 2_000_000_000,
         "checkpoint_at": 1_999_996_400,
+        "lobby_open_at": 1_999_999_700,
         "games": 2,
         "signups": {
             str(index): {
@@ -82,6 +85,15 @@ def make_event(player_count=10):
 
 
 class RsvpEmbedTests(unittest.TestCase):
+    def test_lobby_open_is_scheduled_five_minutes_before_start(self):
+        event = make_event()
+        self.assertEqual(5 * 60, RSVP_LOBBY_OPEN_LEAD_SECONDS)
+        self.assertEqual(event["start_at"] - (5 * 60), _lobby_open_at(event))
+
+        legacy_event = make_event()
+        legacy_event.pop("lobby_open_at")
+        self.assertEqual(legacy_event["start_at"] - (5 * 60), _lobby_open_at(legacy_event))
+
     def test_roster_shows_public_mmr_and_recorded_win_rate(self):
         embed = build_rsvp_embed(make_event())
         roster_field = next(field for field in embed.fields if "Confirmed Players" in field.name)
