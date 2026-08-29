@@ -34,7 +34,7 @@ Want to run automated Dota 2 inhouse lobbies in your server?
 
 ### Lobby system
 - Per-guild lobby state stored in Firestore and restored on bot restart
-- Lobby embed with current players, MMR, mode, preferred-role toggle state, and password
+- Lobby embed with current players, MMR, mode, balancing-toggle states, and password
 - Player join/leave through reactions:
   - 👍 join
   - 👎 leave
@@ -216,6 +216,8 @@ Below is the current command set reflected in `commands.py`.
 - `!randompoll` — poll a random public live match
 - `!submitmatch <match_id>` — manually resolve match result, MMR, and bets
 - `!toggle_roles <on|off>` — enable/disable preferred-role balancing
+- `!toggle_stddev <on|off>` — rank valid regular teams using average-MMR difference plus `0.6 ×` the difference between team MMR standard deviations
+- `!debug <on|off>` — make 🚀 generate teams without starting the Steam live-match search
 - `!lobbyroles` — show preferred roles for the current 10-player lobby
 - `!captainpolicy <policy> [threshold]` — show or set captain selection policy
 
@@ -268,6 +270,8 @@ Stores per-server settings such as:
 - `lobby_players`
 - `lobby_roster_lock` (ties a confirmed RSVP roster lock to one lobby message)
 - `preferred_roles_setting`
+- `mmr_spread_setting`
+- `debug_mode_setting`
 - `live_channel_id`
 - `lobby_channel_id`
 - `captain_policy`
