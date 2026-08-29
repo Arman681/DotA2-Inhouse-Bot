@@ -24,6 +24,106 @@ class FakeAsyncResponse:
         return ""
 
 
+class LiveMatchSelectionTests(unittest.TestCase):
+    matches = [
+        {"match_id": 100},
+        {"match_id": 103},
+        {"match_id": 101},
+    ]
+
+    def test_exact_match_id_is_selected(self):
+        selected = live_tracking._select_requested_live_match(
+            self.matches,
+            target_match_id="101",
+        )
+
+        self.assertEqual(selected["match_id"], 101)
+
+    def test_unknown_exact_match_id_is_not_selected(self):
+        selected = live_tracking._select_requested_live_match(
+            self.matches,
+            target_match_id="999",
+        )
+
+        self.assertIsNone(selected)
+
+    def test_next_selects_highest_newer_match_id(self):
+        selected = live_tracking._select_requested_live_match(
+            self.matches,
+            prefer_latest=True,
+            newer_than_match_id=100,
+        )
+
+        self.assertEqual(selected["match_id"], 103)
+
+    def test_next_without_tracked_match_selects_highest_match_id(self):
+        selected = live_tracking._select_requested_live_match(
+            self.matches,
+            prefer_latest=True,
+        )
+
+        self.assertEqual(selected["match_id"], 103)
+
+    def test_next_returns_none_when_no_newer_match_exists(self):
+        selected = live_tracking._select_requested_live_match(
+            self.matches,
+            prefer_latest=True,
+            newer_than_match_id=103,
+        )
+
+        self.assertIsNone(selected)
+
+
+class LivePollTimingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_first_live_poll_waits_thirty_seconds(self):
+        guild = SimpleNamespace(id=555001, name="Timing Test Guild")
+        live_tracking.live_channel_ids.pop(guild.id, None)
+
+        with patch.object(
+            live_tracking.asyncio,
+            "sleep",
+            AsyncMock(side_effect=asyncio.CancelledError),
+        ) as sleep:
+            with self.assertRaises(asyncio.CancelledError):
+                await live_tracking.poll_live_match("123", guild)
+
+        sleep.assert_awaited_once_with(30)
+
+    async def test_live_poll_uses_fifteen_second_updates_after_initial_delay(self):
+        guild = SimpleNamespace(id=555002, name="Interval Test Guild")
+        live_tracking.live_channel_ids.pop(guild.id, None)
+        live_tracking.active_match_ids[guild.id] = "123"
+
+        try:
+            with (
+                patch.object(
+                    live_tracking.asyncio,
+                    "sleep",
+                    AsyncMock(side_effect=[None, asyncio.CancelledError]),
+                ) as sleep,
+                patch.object(
+                    live_tracking,
+                    "fetch_live_match_for_guild",
+                    AsyncMock(return_value={"match_id": "123"}),
+                ),
+                patch.object(live_tracking, "process_live_betting_markets"),
+                patch.object(
+                    live_tracking,
+                    "format_live_match_embed",
+                    AsyncMock(return_value=object()),
+                ),
+            ):
+                with self.assertRaises(asyncio.CancelledError):
+                    await live_tracking.poll_live_match("123", guild)
+        finally:
+            live_tracking.active_match_ids.pop(guild.id, None)
+
+        self.assertEqual(
+            [call.args[0] for call in sleep.await_args_list],
+            [30, 15],
+        )
+
+
 class StratzMmrFallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_open_stratz_circuit_falls_back_to_opendota(self):
         opendota_response = FakeAsyncResponse(200, {"rank_tier": 52})

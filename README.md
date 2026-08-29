@@ -211,7 +211,7 @@ Below is the current command set reflected in `commands.py`.
 - `!bindleague <league_id>` — bind a league ID for live inhouse match tracking
 - `!setlivechannel` — set the channel for live-match updates
 - `!setlobbychannel` — set the channel for lobby embeds/resets
-- `!startpolling` — manually start polling the bound league for a live match
+- `!startpolling [match_id|next]` — poll the bound league normally, target an exact live match ID, or select the newest broadcast after the tracked match
 - `!stoppolling` — stop polling and clear active match state
 - `!randompoll` — poll a random public live match
 - `!submitmatch <match_id>` — manually resolve match result, MMR, and bets
@@ -410,7 +410,9 @@ After a 10/10 lobby is rolled, FeederBot starts waiting for a matching live game
 - if the lobby stays under 10 players for **30 seconds**, waiting is cancelled
 
 ### Live polling
-Once a live match is found, FeederBot polls the match every **15 seconds** and updates the live match embed.
+Once a live match is found, FeederBot waits **30 seconds** before posting the first live match embed, then polls the match every **15 seconds** and updates that embed.
+
+For remade lobbies that overlap on Steam's live endpoint, an Inhouse Admin can use `!startpolling <match_id>` to select an exact match being broadcast under the bound league ID. If the replacement match ID is not readily available, `!startpolling next` selects the highest live match ID newer than the currently tracked match. If nothing is currently tracked, `next` selects the highest live match ID for the bound league.
 
 ### Match resolution
 When the match disappears from the Steam live endpoint, FeederBot retries completed-match lookup up to:

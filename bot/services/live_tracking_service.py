@@ -61,6 +61,8 @@ on_match_wait_outcome = None
 on_inhouse_result_pending = None
 
 PARTICIPATION_FEEDERBUCKS_AWARD = 100
+LIVE_POLL_INTERVAL_SECONDS = 15
+LIVE_EMBED_INITIAL_DELAY_SECONDS = 30
 
 
 def configure_live_tracking(
@@ -169,13 +171,28 @@ async def poll_live_match(match_id, guild, random_mode=False):
     live_embed_messages.pop(guild.id, None)
     channel_id = live_channel_ids.get(guild.id)
     channel = bot.get_channel(channel_id) if channel_id else None
+    next_poll_delay = LIVE_EMBED_INITIAL_DELAY_SECONDS
     while True:
-        await asyncio.sleep(15)
+        await asyncio.sleep(next_poll_delay)
+        next_poll_delay = LIVE_POLL_INTERVAL_SECONDS
+        tracked_match_id = active_match_ids.get(guild.id)
+        if tracked_match_id is not None and str(tracked_match_id) != str(match_id):
+            print(
+                f"[poll_live_match] Match {match_id} was replaced by {tracked_match_id} "
+                f"for guild {guild.id}. Stopping the old poll task."
+            )
+            return
         try:
             match = await fetch_live_match_for_guild(guild.id, random_mode=random_mode)
             if not match:
                 print(f"[poll_live_match] Match {match_id} no longer reported as live. Stopping Steam polling.")
                 break
+            if str(match.get("match_id")) != str(match_id):
+                print(
+                    f"[poll_live_match] Steam selection changed from {match_id} to "
+                    f"{match.get('match_id')} for guild {guild.id}. Stopping the old poll task."
+                )
+                return
             process_live_betting_markets(guild.id, match_id, match)
             embed = await format_live_match_embed(match, guild)
             if channel:
@@ -451,7 +468,58 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
     return None, None, None
 
 
-async def fetch_live_match_for_guild(guild_id, random_mode=False, excluded_match_ids=None):
+def _numeric_match_id(value):
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _select_requested_live_match(
+    matches,
+    *,
+    target_match_id=None,
+    prefer_latest=False,
+    newer_than_match_id=None,
+):
+    candidates = list(matches or [])
+    if target_match_id is not None:
+        requested_id = str(target_match_id)
+        return next(
+            (match for match in candidates if str(match.get("match_id")) == requested_id),
+            None,
+        )
+    if not prefer_latest:
+        return None
+
+    if newer_than_match_id is not None:
+        baseline = _numeric_match_id(newer_than_match_id)
+        if baseline is None:
+            return None
+        candidates = [
+            match
+            for match in candidates
+            if (_numeric_match_id(match.get("match_id")) or -1) > baseline
+        ]
+    candidates = [
+        match for match in candidates
+        if _numeric_match_id(match.get("match_id")) is not None
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda match: _numeric_match_id(match.get("match_id")))
+
+
+async def fetch_live_match_for_guild(
+    guild_id,
+    random_mode=False,
+    excluded_match_ids=None,
+    *,
+    target_match_id=None,
+    prefer_latest=False,
+    newer_than_match_id=None,
+):
+    requested_selection = target_match_id is not None or prefer_latest
     doc_ref = db.collection("guild_specific_info").document(str(guild_id))
     doc = doc_ref.get()
     if not doc.exists:
@@ -505,7 +573,7 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False, excluded_match
                     continue
                 valid_matches.append(m)
         if not valid_matches:
-            if guild_id in active_match_ids:
+            if not requested_selection and guild_id in active_match_ids:
                 print(f"[fetch_live_match_for_guild] Clearing expired match for guild {guild_id}")
                 del active_match_ids[guild_id]
                 _last_fetch_stats.pop(guild_id, None)
@@ -540,17 +608,45 @@ async def fetch_live_match_for_guild(guild_id, random_mode=False, excluded_match
             else:
                 print(f"[fetch_live_match_for_guild] Step 4 skipped: No active match found for guild {guild_id}")
             _last_active_match_id[guild_id] = last_match_id
-        selected_match = next((m for m in bound_matches if m.get("match_id") == last_match_id), None)
-        if selected_match is None:
-            if last_match_id:
-                match_kind = "random match" if random_mode else "inhouse match"
-                print(
-                    f"[fetch_live_match_for_guild] Tracked {match_kind} {last_match_id} is no longer live. "
-                    "Waiting for match resolution."
-                )
+
+        if requested_selection:
+            selected_match = _select_requested_live_match(
+                bound_matches,
+                target_match_id=target_match_id,
+                prefer_latest=prefer_latest,
+                newer_than_match_id=newer_than_match_id,
+            )
+            if selected_match is None:
+                if target_match_id is not None:
+                    print(
+                        f"[fetch_live_match_for_guild] Requested match {target_match_id} is not live "
+                        f"for bound league_id {bound_league_id} in guild {guild_id}."
+                    )
+                else:
+                    print(
+                        f"[fetch_live_match_for_guild] No newer live match found after "
+                        f"{newer_than_match_id} for bound league_id {bound_league_id} in guild {guild_id}."
+                    )
                 return None
-            selected_match = random.choice(bound_matches)
             active_match_ids[guild_id] = selected_match["match_id"]
+        else:
+            selected_match = next(
+                (
+                    match for match in bound_matches
+                    if str(match.get("match_id")) == str(last_match_id)
+                ),
+                None,
+            )
+            if selected_match is None:
+                if last_match_id:
+                    match_kind = "random match" if random_mode else "inhouse match"
+                    print(
+                        f"[fetch_live_match_for_guild] Tracked {match_kind} {last_match_id} is no longer live. "
+                        "Waiting for match resolution."
+                    )
+                    return None
+                selected_match = random.choice(bound_matches)
+                active_match_ids[guild_id] = selected_match["match_id"]
         sel_id = selected_match["match_id"]
         prev_sel_id = _last_selected_match_id.get(guild_id)
         if prev_sel_id != sel_id:

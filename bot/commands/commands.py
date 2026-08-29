@@ -3123,22 +3123,104 @@ def attach_commands(bot, deps):
 
     @bot.command(name="startpolling")
     @is_admin_or_has_role()
-    async def start_polling(ctx):
+    async def start_polling(ctx, selector: str = None):
         channel = ctx.channel
-        match = await fetch_live_match_for_guild(ctx.guild.id, random_mode=False)
-        if match:
-            match_id = match.get("match_id")
-            if ctx.guild.id not in polling_tasks:
-                active_match_ids[ctx.guild.id] = match_id
-                polling_tasks[ctx.guild.id] = asyncio.create_task(poll_live_match(match_id, ctx.guild, random_mode=False))
-                await channel.send(f"Started match polling for match ID {match_id} in guild {ctx.guild.name}")
-                random_polling_flags[ctx.guild.id] = False
-        else:
-            await channel.send("No live match found for the bound league.")
+        guild_id = ctx.guild.id
+        selector_token = str(selector or "").strip().lower()
+        if selector_token and selector_token != "next" and not selector_token.isdigit():
+            await ctx.reply("Usage: !startpolling `[match_id|next]`")
+            return
+
+        existing_task = polling_tasks.get(guild_id)
+        if existing_task is not None and existing_task.done():
+            polling_tasks.pop(guild_id, None)
+            existing_task = None
+        if existing_task is not None and not selector_token:
+            await channel.send(
+                "Polling is already running for this server. Use `!startpolling next` "
+                "or provide a match ID to switch matches."
+            )
+            return
+
+        previous_match_id = active_match_ids.get(guild_id)
+        previous_random_mode = random_polling_flags.get(guild_id, False)
+        selection_kwargs = {}
+        if selector_token == "next":
+            baseline_match_id = previous_match_id
+            if baseline_match_id is None:
+                event = rsvp_manager.get_event(guild_id) or {}
+                baseline_match_id = event.get("current_match_id")
+            selection_kwargs = {
+                "prefer_latest": True,
+                "newer_than_match_id": baseline_match_id,
+            }
+        elif selector_token:
+            selection_kwargs = {"target_match_id": selector_token}
+
+        match = await fetch_live_match_for_guild(
+            guild_id,
+            random_mode=False,
+            **selection_kwargs,
+        )
+        if not match:
+            if selector_token == "next":
+                baseline_text = f" after `{baseline_match_id}`" if baseline_match_id else ""
+                await channel.send(f"No newer live match was found{baseline_text} for the bound league.")
+            elif selector_token:
+                await channel.send(
+                    f"Match `{selector_token}` is not currently being broadcast for the bound league."
+                )
+            else:
+                await channel.send("No live match found for the bound league.")
+            return
+
+        match_id = match.get("match_id")
+        if existing_task is not None and str(previous_match_id) == str(match_id):
+            await channel.send(f"Polling is already running for match ID `{match_id}`.")
+            return
+
+        if existing_task is not None:
+            existing_task.cancel()
+            polling_tasks.pop(guild_id, None)
+        if previous_match_id and str(previous_match_id) != str(match_id) and not previous_random_mode:
+            try:
+                await unmute_match_store_mutes(
+                    ctx.guild,
+                    previous_match_id,
+                    reason=f"Mute a Feeder ended because polling switched from match {previous_match_id}.",
+                )
+            except Exception as exc:
+                print(f"[startpolling] Failed to release match mute(s) for {previous_match_id}: {exc}")
+
+        cancel_match_wait(guild_id)
+        live_embed_messages.pop(guild_id, None)
+        match_tracking_start_times.pop(guild_id, None)
+        active_match_ids[guild_id] = match_id
+        random_polling_flags[guild_id] = False
+        polling_tasks[guild_id] = asyncio.create_task(
+            poll_live_match(match_id, ctx.guild, random_mode=False)
+        )
+        try:
+            await rsvp_manager.mark_series_wait_outcome(
+                guild_id,
+                "match_found",
+                match_id=match_id,
+            )
+        except Exception as exc:
+            print(f"[startpolling] Failed to update RSVP match ID to {match_id}: {exc}")
+        await channel.send(
+            f"Started match polling for match ID `{match_id}` in guild {ctx.guild.name}. "
+            "The live match embed will appear after 30 seconds."
+        )
     @start_polling.error
     async def start_polling_error(ctx, error):
         if isinstance(error, commands.CheckFailure):
             await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        elif isinstance(error, commands.TooManyArguments):
+            await ctx.reply("Usage: !startpolling `[match_id|next]`")
+        else:
+            await ctx.reply("An unexpected error occurred while starting match polling.")
+            print(f"[ERROR] startpolling command: {error}")
 
     @bot.command(name="stoppolling")
     @is_admin_or_has_role()
@@ -3536,7 +3618,7 @@ def attach_commands(bot, deps):
                     "__**Match Tracking**__\n"
                     "**!bindleague `<league_id>`** - Bind a Steam league ID for live match tracking.\n"
                     "**!setlivechannel** - Set current channel for live match updates.\n"
-                    "**!startpolling** - Start live match polling for the bound league.\n"
+                    "**!startpolling `[match_id|next]`** - Start polling the bound league, target an exact live match ID, or switch to the newest broadcast after the tracked match.\n"
                     "**!stoppolling** - Stop live match polling.\n"
                     "**!randompoll** - Start polling for random public live matches.\n"
                     "**!submitmatch `<match_id>`** - Submit match result and resolve MMR + bets."
