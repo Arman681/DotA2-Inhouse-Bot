@@ -118,6 +118,10 @@ def attach_commands(bot, deps):
     load_inhouse_mode_for_guild  = deps["load_inhouse_mode_for_guild"]
     save_inhouse_mode_for_guild  = deps["save_inhouse_mode_for_guild"]
     save_preferred_roles_setting = deps["save_preferred_roles_setting"]
+    save_mmr_spread_setting      = deps["save_mmr_spread_setting"]
+    load_mmr_spread_setting      = deps["load_mmr_spread_setting"]
+    save_debug_mode_setting      = deps["save_debug_mode_setting"]
+    load_debug_mode_setting      = deps["load_debug_mode_setting"]
     save_separated_pair          = deps["save_separated_pair"]
     delete_separated_pair        = deps["delete_separated_pair"]
     get_separated_pairs          = deps["get_separated_pairs"]
@@ -2916,6 +2920,22 @@ def attach_commands(bot, deps):
                 lines.append(f"\n**Preferred Roles Integration**:\n  • Status: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n  • Set by: {preferred_roles_set_by}\n  • Timestamp: {preferred_roles_time}\n  • Field: preferred_roles_enabled = {preferred_roles_enabled}")
             else:
                 lines.append(f"\n**Preferred Roles Integration**: {'✅ Enabled' if preferred_roles_enabled else '❌ Disabled'}\n Set by: {preferred_roles_set_by}\n Time: {preferred_roles_time}")
+            mmr_spread_data = data.get("mmr_spread_setting", {})
+            mmr_spread_enabled = mmr_spread_data.get("mmr_spread_enabled", False)
+            mmr_spread_set_by = mmr_spread_data.get("mmr_spread_set_by", "Unknown")
+            mmr_spread_time = mmr_spread_data.get("mmr_spread_timestamp", "Unknown")
+            if verbose:
+                lines.append(f"\n**MMR Spread Balancing**:\n  • Status: {'✅ Enabled' if mmr_spread_enabled else '❌ Disabled'}\n  • Set by: {mmr_spread_set_by}\n  • Timestamp: {mmr_spread_time}\n  • Field: mmr_spread_enabled = {mmr_spread_enabled}")
+            else:
+                lines.append(f"\n**MMR Spread Balancing**: {'✅ Enabled' if mmr_spread_enabled else '❌ Disabled'}\n Set by: {mmr_spread_set_by}\n Time: {mmr_spread_time}")
+            debug_mode_data = data.get("debug_mode_setting", {})
+            debug_mode_enabled = debug_mode_data.get("debug_mode_enabled", False)
+            debug_mode_set_by = debug_mode_data.get("debug_mode_set_by", "Unknown")
+            debug_mode_time = debug_mode_data.get("debug_mode_timestamp", "Unknown")
+            if verbose:
+                lines.append(f"\n**Rocket Debug Mode**:\n  • Status: {'✅ Enabled' if debug_mode_enabled else '❌ Disabled'}\n  • Set by: {debug_mode_set_by}\n  • Timestamp: {debug_mode_time}\n  • Field: debug_mode_enabled = {debug_mode_enabled}")
+            else:
+                lines.append(f"\n**Rocket Debug Mode**: {'✅ Enabled' if debug_mode_enabled else '❌ Disabled'}\n Set by: {debug_mode_set_by}\n Time: {debug_mode_time}")
             # --- Captain Policy (policy + optional threshold) ---
             captain_data = data.get("captain_policy", {}) or {}
             # Values as stored by set_captain_policy()
@@ -3309,7 +3329,72 @@ def attach_commands(bot, deps):
         else:
             await ctx.reply("An unexpected error occurred while toggling preferred roles.")
             print(f"[ERROR] toggle_preferred_roles command: {error}")
-    
+
+    @bot.command(name="toggle_stddev", aliases=["stddev"])
+    @is_admin_or_has_role()
+    async def toggle_mmr_spread(ctx, mode: str = None):
+        if mode is None:
+            enabled = load_mmr_spread_setting(ctx.guild.id)
+            await ctx.reply(
+                f"Standard-deviation MMR balancing is currently **{'on' if enabled else 'off'}**. "
+                "Usage: !toggle_stddev `<on|off>`"
+            )
+            return
+        mode = mode.lower()
+        if mode not in ["on", "off"]:
+            await ctx.reply("Usage: !toggle_stddev `<on|off>`")
+            return
+        enabled = mode == "on"
+        save_mmr_spread_setting(ctx.guild.id, enabled, set_by=ctx.author)
+        await update_lobby_embed(ctx.guild)
+        status = "enabled" if enabled else "disabled"
+        await ctx.reply(
+            f"Standard-deviation MMR balancing is now {status}. "
+            "When enabled, valid teams are ranked using `average MMR difference + 0.6 × standard-deviation difference`."
+        )
+
+    @toggle_mmr_spread.error
+    async def toggle_mmr_spread_error(ctx, error):
+        if isinstance(error, commands.MissingRequiredArgument):
+            await ctx.reply("Missing required argument `mode`.\nUsage: !toggle_stddev `<on|off>`")
+        elif isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while toggling standard-deviation balancing.")
+            print(f"[ERROR] toggle_mmr_spread command: {error}")
+
+    @bot.command(name="debug")
+    @is_admin_or_has_role()
+    async def debug_mode(ctx, mode: str = None):
+        if mode is None:
+            enabled = load_debug_mode_setting(ctx.guild.id)
+            await ctx.reply(
+                f"Rocket debug mode is currently **{'on' if enabled else 'off'}**. "
+                "Usage: !debug `<on|off>`"
+            )
+            return
+        mode = mode.lower()
+        if mode not in ["on", "off"]:
+            await ctx.reply("Usage: !debug `<on|off>`")
+            return
+        enabled = mode == "on"
+        save_debug_mode_setting(ctx.guild.id, enabled, set_by=ctx.author)
+        status = "enabled" if enabled else "disabled"
+        effect = (
+            "🚀 will generate teams without starting the Steam live-match search."
+            if enabled
+            else "🚀 will start the Steam live-match search normally."
+        )
+        await ctx.reply(f"Rocket debug mode is now {status}. {effect}")
+
+    @debug_mode.error
+    async def debug_mode_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while changing rocket debug mode.")
+            print(f"[ERROR] debug_mode command: {error}")
+
     @bot.command(name="lobbyroles")
     @is_admin_or_has_role()
     async def lobby_roles(ctx):
@@ -3598,6 +3683,7 @@ def attach_commands(bot, deps):
                     "**!setpassword `<new_password>`** - Change the inhouse lobby password.\n"
                     "**!setlobbychannel** - Set current channel for lobby embeds and reset posts.\n"
                     "**!toggle_roles `<on|off>`** - Enable/disable preferred role usage in team balancing.\n"
+                    "**!toggle_stddev `<on|off>`** - Rank valid regular teams using average-MMR and standard-deviation differences.\n"
                     "**!lobbyroles** - Show preferred roles for all 10 lobby players.\n\n"
 
                     "__**Bot Settings**__\n"
@@ -3609,6 +3695,7 @@ def attach_commands(bot, deps):
                     "Examples: `!voidmarket 2 suspicious first blood`, `!voidmarket prop suspected collusion`, `!voidmarket all data issue`.\n"
                     "**!voidbet `<@user>` `<market|all>` `[reason]`** - Void and refund one user's current bet in a market, or all current bets from that user.\n"
                     "**!modifycost `<item_index|item_name>` `<cost>`** - Override a store item cost for this server. Example: `!modifycost 2 60000`.\n"
+                    "**!debug `<on|off>`** - Make 🚀 generate teams without starting the Steam live-match search.\n"
                     "**!viewlogs** - View recent configuration logs for this server.\n"
                     "**!viewlogs --verbose** - View detailed logs with full Firestore data.\n\n"
 
