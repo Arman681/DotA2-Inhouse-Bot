@@ -27,20 +27,24 @@ from bot.services.guild_config_service import (
     delete_separated_pair,
     get_captain_policy,
     get_separated_pairs,
+    load_debug_mode_setting,
     load_guild_prefix,
     load_inhouse_mode_for_guild,
     load_lobby_message_id,
     load_lobby_password_for_guild,
     load_lobby_players,
+    load_mmr_spread_setting,
     load_player_config,
     load_preferred_roles_setting,
     save_guild_prefix,
+    save_debug_mode_setting,
     save_inhouse_mode_for_guild,
     save_league_guild_mapping,
     save_lobby_message_id,
     save_lobby_password_for_guild,
     save_lobby_players,
     save_lobby_roster_lock,
+    save_mmr_spread_setting,
     save_player_config,
     save_preferred_roles_setting,
     save_separated_pair,
@@ -645,6 +649,7 @@ async def roll_lobby_to_post_rocket_state(
     message,
     *,
     roster_locked=False,
+    start_match_search=True,
     wait_timeout_seconds=15 * 60,
 ):
     mode = inhouse_mode.get(guild_id, "regular")
@@ -695,29 +700,34 @@ async def roll_lobby_to_post_rocket_state(
 
     await message.edit(embed=embed)
     cancel_match_wait(guild_id)
-    series_game_number = None
-    excluded_match_ids = []
-    if roster_locked:
-        series_event = rsvp_manager.get_event(guild_id) or {}
-        if str(series_event.get("lobby_message_id") or "") == str(message.id):
-            series_game_number = max(1, int(series_event.get("current_game", 1) or 1))
-            excluded_match_ids = list(series_event.get("completed_match_ids", []) or [])
-            await rsvp_manager.mark_series_waiting(
+    if start_match_search:
+        series_game_number = None
+        excluded_match_ids = []
+        if roster_locked:
+            series_event = rsvp_manager.get_event(guild_id) or {}
+            if str(series_event.get("lobby_message_id") or "") == str(message.id):
+                series_game_number = max(1, int(series_event.get("current_game", 1) or 1))
+                excluded_match_ids = list(series_event.get("completed_match_ids", []) or [])
+                await rsvp_manager.mark_series_waiting(
+                    guild_id,
+                    game_number=series_game_number,
+                    timeout_seconds=wait_timeout_seconds,
+                )
+        match_wait_tasks[guild_id] = asyncio.create_task(
+            wait_for_match_then_start_polling(
                 guild_id,
-                game_number=series_game_number,
+                guild,
+                channel,
                 timeout_seconds=wait_timeout_seconds,
+                excluded_match_ids=excluded_match_ids,
+                game_number=series_game_number,
+                scheduled_series=roster_locked,
             )
-    match_wait_tasks[guild_id] = asyncio.create_task(
-        wait_for_match_then_start_polling(
-            guild_id,
-            guild,
-            channel,
-            timeout_seconds=wait_timeout_seconds,
-            excluded_match_ids=excluded_match_ids,
-            game_number=series_game_number,
-            scheduled_series=roster_locked,
         )
-    )
+    else:
+        await channel.send(
+            "🧪 Debug mode is enabled: teams were generated, but the Steam live-match search was skipped."
+        )
     try:
         await message.clear_reactions()
     except Exception as exc:
@@ -1192,6 +1202,7 @@ async def on_raw_reaction_add(payload):
                 channel,
                 message,
                 roster_locked=roster_locked,
+                start_match_search=not load_debug_mode_setting(guild_id),
             )
             if roster_locked and not prepared:
                 event = await rsvp_manager.mark_series_preparation_failed(
@@ -1524,6 +1535,10 @@ deps = {
     # guild settings
     "save_guild_prefix": save_guild_prefix,
     "load_guild_prefix": load_guild_prefix,
+    "save_mmr_spread_setting": save_mmr_spread_setting,
+    "load_mmr_spread_setting": load_mmr_spread_setting,
+    "save_debug_mode_setting": save_debug_mode_setting,
+    "load_debug_mode_setting": load_debug_mode_setting,
     "get_store_item_info": get_store_item_info,
     "normalize_store_item_name": normalize_store_item_name,
     "get_store_cost": get_store_cost,
