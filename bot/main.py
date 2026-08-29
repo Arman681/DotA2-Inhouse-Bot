@@ -724,10 +724,6 @@ async def roll_lobby_to_post_rocket_state(
                 scheduled_series=roster_locked,
             )
         )
-    else:
-        await channel.send(
-            "🧪 Debug mode is enabled: teams were generated, but the Steam live-match search was skipped."
-        )
     try:
         await message.clear_reactions()
     except Exception as exc:
