@@ -167,8 +167,8 @@ def fetch_match_result(match_id):
             if match_data:
                 print("[match-result] source=STRATZ")
                 return _build_stratz_result(match_data)
-            print("[STRATZ] 200 but no data -> not indexed yet")
-            return None
+            print("[STRATZ] 200 but no data -> trying OpenDota")
+            return _fetch_opendota_result(match_id)
         if note_stratz_response(resp.status_code, resp.text, headers=resp.headers, endpoint="fetch_match_result"):
             return None
         if resp.status_code == 429:
