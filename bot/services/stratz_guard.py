@@ -105,7 +105,7 @@ def _reserve_rate_slot():
 async def reserve_stratz_request():
     blocked, reason, blocked_until = get_stratz_block_state()
     if blocked:
-        return False, reason, blocked_until
+        return True, reason, blocked_until
     while True:
         wait_seconds = _reserve_rate_slot()
         if wait_seconds <= 0:
@@ -117,7 +117,7 @@ async def reserve_stratz_request():
 def reserve_stratz_request_sync():
     blocked, reason, blocked_until = get_stratz_block_state()
     if blocked:
-        return False, reason, blocked_until
+        return True, reason, blocked_until
     while True:
         wait_seconds = _reserve_rate_slot()
         if wait_seconds <= 0:

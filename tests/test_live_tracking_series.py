@@ -1,9 +1,53 @@
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from bot.services import live_tracking_service as live_tracking
+
+
+class FakeAsyncResponse:
+    def __init__(self, status, payload):
+        self.status = status
+        self._payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def json(self):
+        return self._payload
+
+    async def text(self):
+        return ""
+
+
+class StratzMmrFallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_open_stratz_circuit_falls_back_to_opendota(self):
+        opendota_response = FakeAsyncResponse(200, {"rank_tier": 52})
+        session = SimpleNamespace(
+            post=Mock(),
+            get=Mock(return_value=opendota_response),
+        )
+
+        with (
+            patch.object(
+                live_tracking,
+                "reserve_stratz_request",
+                AsyncMock(return_value=(True, "STRATZ 403 different IP lockout", None)),
+            ),
+            patch.object(live_tracking, "get_http_session", return_value=session),
+        ):
+            result = await live_tracking.fetch_mmr("123")
+
+        self.assertEqual(result, (3311, 52, "OpenDota"))
+        session.post.assert_not_called()
+        session.get.assert_called_once_with(
+            "https://api.opendota.com/api/players/123",
+            timeout=8,
+        )
 
 
 class SeriesMatchWaitTests(unittest.IsolatedAsyncioTestCase):

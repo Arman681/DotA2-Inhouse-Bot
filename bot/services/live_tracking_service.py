@@ -404,7 +404,7 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
             blocked, block_reason, blocked_until = await reserve_stratz_request()
             if blocked:
                 print(f"[fetch_mmr] Skipping STRATZ for steam_id={steam_id}: {format_stratz_block(block_reason, blocked_until)}")
-                return None, None, None
+                break
             async with get_http_session().post(url, json=query, headers=headers, timeout=8) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -424,7 +424,7 @@ async def fetch_mmr(steam_id, max_retries: int = 2):
                         f"for steam_id={steam_id}: {txt[:180]}"
                     )
                     if note_stratz_response(response.status, txt, headers=response.headers, endpoint="fetch_mmr"):
-                        return None, None, None
+                        break
                     if response.status in (403, 429, 500, 502, 503, 504):
                         continue
                     break

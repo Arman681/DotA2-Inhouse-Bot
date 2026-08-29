@@ -158,8 +158,11 @@ def fetch_match_result(match_id):
         }
         blocked, block_reason, blocked_until = reserve_stratz_request_sync()
         if blocked:
-            print(f"[STRATZ] Skipping match result for {match_id}: {format_stratz_block(block_reason, blocked_until)}")
-            return None
+            print(
+                f"[STRATZ] Skipping STRATZ match result for {match_id}: "
+                f"{format_stratz_block(block_reason, blocked_until)}; trying OpenDota"
+            )
+            return _fetch_opendota_result(match_id)
         resp = requests.post(url, json=query, headers=headers, timeout=8)
         print("[STRATZ] code:", resp.status_code)
         if resp.status_code == 200:
@@ -170,10 +173,8 @@ def fetch_match_result(match_id):
             print("[STRATZ] 200 but no data -> trying OpenDota")
             return _fetch_opendota_result(match_id)
         if note_stratz_response(resp.status_code, resp.text, headers=resp.headers, endpoint="fetch_match_result"):
-            return None
-        if resp.status_code == 429:
-            print("[STRATZ] 429 rate-limited -> defer to outer retry")
-            return None
+            print("[STRATZ] unavailable -> trying OpenDota")
+            return _fetch_opendota_result(match_id)
         print(f"[STRATZ] HTTP {resp.status_code} -> will try OpenDota")
     except Exception as e:
         print("[STRATZ] Exception:", e)
