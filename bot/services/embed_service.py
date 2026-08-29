@@ -5,8 +5,10 @@ from bot.services.guild_config_service import (
     get_captain_policy,
     load_inhouse_mode_for_guild,
     load_lobby_password_for_guild,
+    load_mmr_spread_setting,
     load_preferred_roles_setting,
 )
+from bot.services.lobby_service import calculate_team_mmr_std_dev
 from bot.state.runtime_state import (
     IMMORTAL_MAX_ROLLS,
     MAX_ROLLS,
@@ -105,11 +107,13 @@ def build_lobby_embed(guild, mode=None):
             inhouse_mode[guild_id] = mode
     embed = discord.Embed(title="DotA2 Inhouse Lobby", color=discord.Color.purple())
     embed.add_field(name=f"**Mode** `{mode.capitalize()}`", value=f"\n({len(lobby_players[guild.id])}/10)", inline=True)
-    embed.add_field(name="\u200b", value="\u200b", inline=True)
     if mode != "immortal":
+        spread_enabled = load_mmr_spread_setting(guild.id)
+        embed.add_field(name="MMR Spread", value="✅ Enabled" if spread_enabled else "❌ Disabled", inline=True)
         roles_enabled = load_preferred_roles_setting(guild.id)
         embed.add_field(name="Preferred Roles", value="✅ Enabled" if roles_enabled else "❌ Disabled", inline=True)
     else:
+        embed.add_field(name="\u200b", value="\u200b", inline=True)
         embed.add_field(name="\u200b", value="\u200b", inline=True)
     for _, name, mmr in lobby_players.get(guild_id, []):
         embed.add_field(name=name, value=str(mmr), inline=True)
@@ -148,9 +152,17 @@ async def update_all_lobbies():
 
 def build_team_embed(team1, team2, score1, score2, roles1=None, roles2=None, guild=None, preference_map=None, mmr_map=None):
     roles_enabled = load_preferred_roles_setting(guild.id)
+    spread_enabled = load_mmr_spread_setting(guild.id)
     avg1 = sum(p[2] for p in team1) / 5
     avg2 = sum(p[2] for p in team2) / 5
     description = f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count.get(guild.id, 1)}/{MAX_ROLLS}"
+    if spread_enabled:
+        std_dev1 = calculate_team_mmr_std_dev(team1)
+        std_dev2 = calculate_team_mmr_std_dev(team2)
+        description += (
+            f"\n📊 MMR standard deviation — T1: {std_dev1:.1f}, "
+            f"T2: {std_dev2:.1f}, Difference: {abs(std_dev1 - std_dev2):.1f}"
+        )
     if guild.id in valid_team_combos:
         description += f"\n🧮 Valid team combinations found: {valid_team_combos[guild.id]}"
     embed = discord.Embed(title="DotA2 Inhouse Lobby", description=description, color=discord.Color.gold())
