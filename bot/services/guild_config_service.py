@@ -157,6 +157,40 @@ def load_preferred_roles_setting(guild_id):
     return True
 
 
+def save_mmr_spread_setting(guild_id, enabled, set_by=None):
+    data = {
+        "mmr_spread_enabled": enabled,
+        "mmr_spread_set_by": str(set_by),
+        "mmr_spread_timestamp": firestore.SERVER_TIMESTAMP,
+    }
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"mmr_spread_setting": data}, merge=True)
+
+
+def load_mmr_spread_setting(guild_id):
+    doc = db.collection("guild_specific_info").document(str(guild_id)).get()
+    if doc.exists:
+        return doc.to_dict().get("mmr_spread_setting", {}).get("mmr_spread_enabled", False)
+    return False
+
+
+def save_debug_mode_setting(guild_id, enabled, set_by=None):
+    data = {
+        "debug_mode_enabled": enabled,
+        "debug_mode_set_by": str(set_by),
+        "debug_mode_timestamp": firestore.SERVER_TIMESTAMP,
+    }
+    doc_ref = db.collection("guild_specific_info").document(str(guild_id))
+    doc_ref.set({"debug_mode_setting": data}, merge=True)
+
+
+def load_debug_mode_setting(guild_id):
+    doc = db.collection("guild_specific_info").document(str(guild_id)).get()
+    if doc.exists:
+        return doc.to_dict().get("debug_mode_setting", {}).get("debug_mode_enabled", False)
+    return False
+
+
 def _separated_doc_ref(guild_id):
     return db.collection("separated").document(str(guild_id))
 
