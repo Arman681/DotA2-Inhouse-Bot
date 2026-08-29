@@ -1,17 +1,20 @@
 import itertools
 import random
+from statistics import pstdev
 from concurrent.futures import ThreadPoolExecutor
 
 import discord
 
 from bot.services.guild_config_service import (
     get_separated_pairs,
+    load_mmr_spread_setting,
     load_preferred_roles_setting,
     save_lobby_players,
 )
 from bot.services.immortal_draft import Candidate, ImmortalDraftSession
 from bot.state.runtime_state import (
     MMR_ROLE_OVERRULE_THRESHOLD,
+    MMR_STD_DEV_WEIGHT,
     ROLE_FIT_WEIGHT,
     captain_draft_state,
     immortal_draft_running,
@@ -297,6 +300,10 @@ def get_lobby_channel_for_guild(guild):
     return None
 
 
+def calculate_team_mmr_std_dev(team):
+    return pstdev(float(player[2]) for player in team)
+
+
 def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
     preference_map = {}
     mmr_map = {}
@@ -308,6 +315,7 @@ def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
         preferred = data.get("preferred_roles", [1, 2, 3, 4, 5]) if (data and isinstance(data.get("preferred_roles"), list)) else [1, 2, 3, 4, 5]
         preference_map[uid_str] = preferred
     use_roles = load_preferred_roles_setting(guild_id)
+    use_mmr_spread = load_mmr_spread_setting(guild_id)
     active_player_ids = {str(uid) for uid, _, _ in players}
     separated_pairs = [
         tuple(pair["user_ids"])
@@ -345,7 +353,12 @@ def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
         else:
             score1 = score2 = 0
             roles1 = roles2 = None
-        total_score = (mmr_diff / 5) - ROLE_FIT_WEIGHT * (score1 + score2)
+        mmr_balance_score = mmr_diff
+        if use_mmr_spread:
+            std_dev1 = calculate_team_mmr_std_dev(team1)
+            std_dev2 = calculate_team_mmr_std_dev(team2)
+            mmr_balance_score += MMR_STD_DEV_WEIGHT * abs(std_dev1 - std_dev2)
+        total_score = (mmr_balance_score / 5) - ROLE_FIT_WEIGHT * (score1 + score2)
         return (total_score, team1, team2, score1, score2, roles1, roles2)
 
     with ThreadPoolExecutor() as executor:
