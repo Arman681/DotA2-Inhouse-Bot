@@ -2104,11 +2104,11 @@ def attach_commands(bot, deps):
             if message:
                 await update_lobby_embed(ctx.guild)
             await ctx.reply(
-                f"Separated **{first_member.display_name}** and **{second_member.display_name}** for regular inhouse team generation."
+                f"Separated Discord IDs **{first_member.id}** and **{second_member.id}** for regular inhouse team generation."
             )
         else:
             await ctx.reply(
-                f"**{first_member.display_name}** and **{second_member.display_name}** are already on the separated list."
+                f"Discord IDs **{first_member.id}** and **{second_member.id}** are already on the separated list."
             )
     @separate_players.error
     async def separate_players_error(ctx, error):
