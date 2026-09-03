@@ -109,7 +109,8 @@ Want to run automated Dota 2 inhouse lobbies in your server?
 ### Inhouse MMR system
 - Separate **inhouse MMR** from public ranked MMR
 - Manual adjustment via match result processing
-- Admin override command: `!setmmr`
+- Public MMR overrides via `!setmmr` (subject to later automatic ranked-MMR refreshes)
+- Per-server private matchmaking MMR caps via `!deflate`, without changing public MMR displays
 - Leaderboard command for top inhouse players
 - Double-down token support for doubling inhouse MMR gain/loss during active inhouse matches
 
@@ -132,6 +133,8 @@ Each Discord server can have its own:
 - lobby channel
 - preferred-role integration setting
 - captain selection policy
+- separated player pairs
+- private matchmaking MMR caps
 
 ### Persistence and restart recovery
 - Firestore-backed persistence for:
@@ -203,7 +206,13 @@ Below is the current command set reflected in `commands.py`.
 - `!cancelrsvp [reason]` — manually call off an active, temporarily closed, or confirmed event and notify its players
 - `!removersvp <@user>` — admin-remove a signup and promote the next fill when needed
 - `!resetrsvp confirm` — clear the roster and replace the RSVP card before its deadline, or retire it after the deadline
-- `!setmmr <mmr> <@user>` or `!setmmr <@user> <mmr>` — manually set a user’s public/stored MMR
+- `!setmmr <mmr> <@user>` or `!setmmr <@user> <mmr>` — manually set a user’s public/stored MMR; automatic refreshes may replace it
+- `!deflate <@user|discord_id> <mmr>` — cap the MMR used privately for matchmaking while preserving the public value
+- `!undeflate <@user|discord_id>` — remove a private matchmaking MMR cap
+- `!deflated [--verbose]` — list capped players by Discord ID; verbose mode includes names, public/capped/effective values, and audit details
+- `!separate <@user|discord_id> <@user|discord_id>` — prevent two players from being placed on the same regular-inhouse team
+- `!unseparate <@user|discord_id> <@user|discord_id>` — remove a separated-player pair
+- `!separated [--verbose]` — list separated pairs by Discord ID; verbose mode includes names
 - `!alert` — ping all 10 players when lobby is full
 - `!setpassword <new_password>` — change the inhouse password shown on embeds
 - `!changeprefix <new_prefix>` — set a per-server prefix
@@ -288,6 +297,9 @@ Stores the current per-server RSVP event, including:
 
 ### `inhouse_mmr/{guild_id}/users/{user_id}`
 Stores server-specific inhouse MMR and nickname.
+
+### `deflated_mmr/{guild_id}`
+Stores per-server matchmaking MMR caps keyed by Discord user ID, including the last-known name and administrator/timestamp audit metadata. FeederBot uses the lower of the current public MMR and the configured cap for regular team balancing, role tie-breaking, automatic Immortal captain selection, and timeout autopicks. Public lobby, RSVP, draft, and `!mmr` displays continue to use the public MMR.
 
 ### `wallets/{guild_id}/users/{user_id}`
 Stores Feederbucks balances and optionally nicknames.
@@ -476,7 +488,8 @@ See `requirements.txt` for the exact pinned versions.
 
 ## Notes and implementation details
 
-- Public MMR and inhouse MMR are separate systems.
+- Public MMR, private matchmaking MMR caps, and inhouse MMR are separate systems.
+- A deflated MMR is a ceiling, so it can never raise a player whose public MMR later falls below the configured value.
 - Placeholder players can join lobbies, but cannot be captains.
 - Hero names are resolved from `hero_id_map.json`, with Steam API caching support.
 - Prefixes are cached in memory after load for faster command prefix resolution.
