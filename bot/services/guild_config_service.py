@@ -191,6 +191,117 @@ def load_debug_mode_setting(guild_id):
     return False
 
 
+def _deflated_mmr_doc_ref(guild_id):
+    return db.collection("deflated_mmr").document(str(guild_id))
+
+
+def save_deflated_mmr(
+    guild_id,
+    user_id,
+    mmr,
+    *,
+    guild_name=None,
+    set_by=None,
+    name=None,
+):
+    user_id = str(user_id)
+    mmr = int(mmr)
+    if mmr < 0 or mmr > 20000:
+        raise ValueError("Deflated MMR must be between 0 and 20000.")
+    doc_ref = _deflated_mmr_doc_ref(guild_id)
+    doc = doc_ref.get()
+    existing_overrides = {}
+    if doc.exists:
+        existing_overrides = (doc.to_dict() or {}).get("overrides", {}) or {}
+
+    previous = existing_overrides.get(user_id)
+    previous = previous if isinstance(previous, dict) else {}
+    created = not previous
+    entry = {
+        "user_id": user_id,
+        "mmr": mmr,
+        "name": str(name) if name is not None else str(previous.get("name") or "Unknown member"),
+        "created_by": previous.get("created_by", str(set_by) if set_by is not None else "Unknown"),
+        "created_at": previous.get("created_at", firestore.SERVER_TIMESTAMP),
+        "updated_by": str(set_by) if set_by is not None else "Unknown",
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    updated_overrides = dict(existing_overrides)
+    updated_overrides[user_id] = entry
+    doc_ref.set(
+        {
+            "guild_id": str(guild_id),
+            "guild_name": guild_name,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+            "overrides": updated_overrides,
+        }
+    )
+    return created, entry
+
+
+def delete_deflated_mmr(guild_id, user_id):
+    user_id = str(user_id)
+    doc_ref = _deflated_mmr_doc_ref(guild_id)
+    doc = doc_ref.get()
+    if not doc.exists:
+        return False, None
+
+    data = doc.to_dict() or {}
+    existing_overrides = data.get("overrides", {}) or {}
+    if user_id not in existing_overrides:
+        return False, None
+
+    updated_overrides = dict(existing_overrides)
+    removed = updated_overrides.pop(user_id)
+    doc_ref.set(
+        {
+            "guild_id": str(guild_id),
+            "guild_name": data.get("guild_name"),
+            "updated_at": firestore.SERVER_TIMESTAMP,
+            "overrides": updated_overrides,
+        }
+    )
+    return True, removed
+
+
+def get_deflated_mmrs(guild_id):
+    doc = _deflated_mmr_doc_ref(guild_id).get()
+    if not doc.exists:
+        return []
+
+    overrides = (doc.to_dict() or {}).get("overrides", {}) or {}
+    results = []
+    for user_id, entry in overrides.items():
+        if not isinstance(entry, dict):
+            continue
+        mmr = entry.get("mmr")
+        if not isinstance(mmr, (int, float)) or isinstance(mmr, bool):
+            continue
+        mmr = int(mmr)
+        if mmr < 0 or mmr > 20000:
+            continue
+        results.append({
+            "user_id": str(entry.get("user_id") or user_id),
+            "mmr": mmr,
+            "name": str(entry.get("name") or "Unknown member"),
+            "created_by": entry.get("created_by"),
+            "created_at": entry.get("created_at"),
+            "updated_by": entry.get("updated_by"),
+            "updated_at": entry.get("updated_at"),
+        })
+    return sorted(
+        results,
+        key=lambda entry: (
+            0 if entry["user_id"].isdigit() else 1,
+            int(entry["user_id"]) if entry["user_id"].isdigit() else entry["user_id"],
+        ),
+    )
+
+
+def get_deflated_mmr_map(guild_id):
+    return {entry["user_id"]: entry["mmr"] for entry in get_deflated_mmrs(guild_id)}
+
+
 def _separated_doc_ref(guild_id):
     return db.collection("separated").document(str(guild_id))
 
