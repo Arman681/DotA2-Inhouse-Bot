@@ -24,8 +24,10 @@ import bot.storage.firebase_setup  # ensures Firebase is initialized before anyt
 from bot.commands.commands import attach_commands
 from bot.services.guild_config_service import (
     configure_guild_config,
+    delete_deflated_mmr,
     delete_separated_pair,
     get_captain_policy,
+    get_deflated_mmrs,
     get_separated_pairs,
     load_debug_mode_setting,
     load_guild_prefix,
@@ -38,6 +40,7 @@ from bot.services.guild_config_service import (
     load_preferred_roles_setting,
     save_guild_prefix,
     save_debug_mode_setting,
+    save_deflated_mmr,
     save_inhouse_mode_for_guild,
     save_league_guild_mapping,
     save_lobby_message_id,
@@ -78,6 +81,7 @@ from bot.services.store_service import (
 )
 from bot.services.lobby_service import (
     assign_roles_with_preferences,
+    build_effective_mmr_map,
     calculate_balanced_teams,
     calculate_role_fit_score,
     cancel_match_wait,
@@ -679,13 +683,18 @@ async def roll_lobby_to_post_rocket_state(
         roll_count[guild_id] = 1
         embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
     elif mode == "immortal":
-        all_pairs = get_all_captain_pairs(lobby_players[guild_id])
+        effective_mmr_map = build_effective_mmr_map(lobby_players[guild_id], guild_id)
+        all_pairs = get_all_captain_pairs(
+            lobby_players[guild_id],
+            effective_mmr_map=effective_mmr_map,
+        )
         policy, threshold = get_captain_policy(guild_id)
         preferred_index = choose_captain_pair_index(
             lobby_players[guild_id],
             all_pairs,
             policy=policy,
             threshold=(threshold if isinstance(threshold, int) else 200),
+            effective_mmr_map=effective_mmr_map,
         )
         captain_draft_state[guild_id] = {
             "pairs": all_pairs,
@@ -1290,7 +1299,7 @@ async def on_raw_reaction_add(payload):
         elif mode == "immortal":
             max_rolls = IMMORTAL_MAX_ROLLS
             if guild_id not in captain_draft_state:
-                all_pairs = get_all_captain_pairs(lobby_players[guild_id])
+                all_pairs = get_all_captain_pairs(lobby_players[guild_id], guild_id=guild_id)
                 captain_draft_state[guild_id] = {
                     "pairs": all_pairs,
                     "index": 0
@@ -1563,6 +1572,9 @@ deps = {
     "schedule_match_imp_enrichment": schedule_match_imp_enrichment,
     "get_top_avg_imp_players": get_top_avg_imp_players,
     "save_preferred_roles_setting": save_preferred_roles_setting,
+    "save_deflated_mmr": save_deflated_mmr,
+    "delete_deflated_mmr": delete_deflated_mmr,
+    "get_deflated_mmrs": get_deflated_mmrs,
     "save_separated_pair": save_separated_pair,
     "delete_separated_pair": delete_separated_pair,
     "get_separated_pairs": get_separated_pairs,
