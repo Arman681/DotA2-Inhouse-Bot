@@ -11,11 +11,19 @@ def set_cancel_callback(callback):
     _cancel_callback = callback
 
 class Candidate:
-    def __init__(self, player_id: str, mmr: int, member: Optional[discord.Member] = None, name: Optional[str] = None):
+    def __init__(
+        self,
+        player_id: str,
+        mmr: int,
+        member: Optional[discord.Member] = None,
+        name: Optional[str] = None,
+        effective_mmr: Optional[int] = None,
+    ):
         self.player_id = str(player_id)
         self.member = member
         self.name = name or (member.display_name if member else "Unknown")
-        self.mmr = mmr
+        self.mmr = int(mmr)
+        self.effective_mmr = min(self.mmr, int(effective_mmr)) if effective_mmr is not None else self.mmr
     def display(self) -> str:
         return f"{self.name} · {self.mmr}"
     def mention_or_name(self) -> str:
@@ -171,11 +179,10 @@ class ImmortalDraftSession:
         return e
 
     def _autopick_member_id(self) -> Optional[str]:
-        # Auto-pick lowest remaining MMR (leftmost)
-        for c in self.candidates:            # candidates are sorted low→high at init
-            if c.player_id in self.available_ids:
-                return c.player_id
-        return None
+        available = [c for c in self.candidates if c.player_id in self.available_ids]
+        if not available:
+            return None
+        return min(available, key=lambda candidate: candidate.effective_mmr).player_id
     
     async def cancel_draft(self):
         self.cancelled = True
@@ -285,7 +292,7 @@ class ImmortalDraftSession:
             print(f"[ImmortalDraftSession._run_timer] Timer task crashed: {e}")
     
     async def _timeout_autopick(self):
-        # autopick the lowest remaining MMR
+        # Autopick the lowest remaining effective matchmaking MMR.
         target_id = self._autopick_member_id()
         if target_id is None:
             self.locked = True
