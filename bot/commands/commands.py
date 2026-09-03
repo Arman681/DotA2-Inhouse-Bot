@@ -108,6 +108,7 @@ def attach_commands(bot, deps):
     lobby_players                = deps["lobby_players"]
     lobby_message                = deps["lobby_message"]
     lobby_roster_locks           = deps["lobby_roster_locks"]
+    immortal_draft_running       = deps["immortal_draft_running"]
     rocket_lock                  = deps["rocket_lock"]
     update_lobby_embed           = deps["update_lobby_embed"]
     build_lobby_embed            = deps["build_lobby_embed"]
@@ -122,6 +123,9 @@ def attach_commands(bot, deps):
     load_mmr_spread_setting      = deps["load_mmr_spread_setting"]
     save_debug_mode_setting      = deps["save_debug_mode_setting"]
     load_debug_mode_setting      = deps["load_debug_mode_setting"]
+    save_deflated_mmr            = deps["save_deflated_mmr"]
+    delete_deflated_mmr          = deps["delete_deflated_mmr"]
+    get_deflated_mmrs            = deps["get_deflated_mmrs"]
     save_separated_pair          = deps["save_separated_pair"]
     delete_separated_pair        = deps["delete_separated_pair"]
     get_separated_pairs          = deps["get_separated_pairs"]
@@ -2068,10 +2072,180 @@ def attach_commands(bot, deps):
             return member
         try:
             return await ctx.guild.fetch_member(user_id)
-        except discord.NotFound:
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
             return None
-        except discord.HTTPException:
-            return None
+
+    async def invalidate_generated_matchmaking(ctx):
+        guild_id = ctx.guild.id
+        if active_match_ids.get(guild_id) or immortal_draft_running.get(guild_id):
+            return False
+        message = lobby_message.get(guild_id)
+        await full_post_rocket_reset(guild_id, message)
+        if message:
+            await update_lobby_embed(ctx.guild)
+        return bool(message)
+
+    @bot.command(name="deflate")
+    @is_admin_or_has_role()
+    async def deflate_player(ctx, *args):
+        usage = "Usage: `!deflate <@user|discord_id> <mmr>`"
+        if len(args) != 2:
+            await ctx.reply(usage)
+            return
+
+        member = await resolve_guild_member(ctx, args[0])
+        if member is None:
+            await ctx.reply("I could not find that user in this server. Use an @mention or Discord ID.")
+            return
+        try:
+            deflated_mmr = int(args[1])
+        except (TypeError, ValueError):
+            await ctx.reply(f"Invalid MMR value. {usage}")
+            return
+        if deflated_mmr < 0 or deflated_mmr > 20000:
+            await ctx.reply("Invalid MMR value. Please provide a value between 0 and 20000.")
+            return
+
+        public_mmr = get_mmr(member)
+        if (
+            not isinstance(public_mmr, (int, float))
+            or isinstance(public_mmr, bool)
+            or public_mmr <= 0
+        ):
+            await ctx.reply(f"Discord ID **{member.id}** does not have a usable public MMR.")
+            return
+        public_mmr = int(public_mmr)
+        if deflated_mmr >= public_mmr:
+            await ctx.reply(
+                f"The deflated MMR must be lower than Discord ID **{member.id}**'s "
+                f"current public MMR of **{public_mmr:,}**."
+            )
+            return
+
+        try:
+            created, _entry = save_deflated_mmr(
+                ctx.guild.id,
+                member.id,
+                deflated_mmr,
+                guild_name=ctx.guild.name,
+                set_by=ctx.author.id,
+                name=member.display_name,
+            )
+            applied_to_lobby = await invalidate_generated_matchmaking(ctx)
+            action = "Created" if created else "Updated"
+            timing = (
+                " Any generated teams or captains were cleared so the override applies on the next roll."
+                if applied_to_lobby
+                else " It will apply the next time teams or captains are generated."
+            )
+            await ctx.reply(
+                f"{action} a matchmaking MMR cap of **{deflated_mmr:,}** for Discord ID "
+                f"**{member.id}**. Their public MMR remains **{public_mmr:,}**.{timing}"
+            )
+        except Exception as error:
+            await ctx.reply(f"Failed to save the deflated MMR due to an error: {error}")
+
+    @deflate_player.error
+    async def deflate_player_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while saving the deflated MMR.")
+
+    @bot.command(name="undeflate")
+    @is_admin_or_has_role()
+    async def undeflate_player(ctx, *args):
+        if len(args) != 1:
+            await ctx.reply("Usage: `!undeflate <@user|discord_id>`")
+            return
+        user_id = parse_discord_user_id(args[0])
+        if user_id is None:
+            await ctx.reply("Invalid user. Use an @mention or Discord ID.")
+            return
+
+        try:
+            removed, _entry = delete_deflated_mmr(ctx.guild.id, user_id)
+            if not removed:
+                await ctx.reply(f"Discord ID **{user_id}** does not have a deflated MMR override.")
+                return
+            applied_to_lobby = await invalidate_generated_matchmaking(ctx)
+            timing = (
+                " Any generated teams or captains were cleared so public MMR applies on the next roll."
+                if applied_to_lobby
+                else " Their public MMR will apply the next time teams or captains are generated."
+            )
+            await ctx.reply(f"Removed the deflated MMR override for Discord ID **{user_id}**.{timing}")
+        except Exception as error:
+            await ctx.reply(f"Failed to remove the deflated MMR due to an error: {error}")
+
+    @undeflate_player.error
+    async def undeflate_player_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while removing the deflated MMR.")
+
+    @bot.command(name="deflated")
+    @is_admin_or_has_role()
+    async def deflated_players(ctx, *args):
+        if len(args) > 1 or (args and args[0].lower() != "--verbose"):
+            await ctx.reply("Usage: `!deflated [--verbose]`")
+            return
+        verbose = bool(args)
+        overrides = get_deflated_mmrs(ctx.guild.id)
+        embed = discord.Embed(
+            title="Deflated MMR Overrides",
+            description=f"Matchmaking-only MMR caps for **{ctx.guild.name}**",
+            color=discord.Color.blurple(),
+        )
+        if not overrides:
+            embed.add_field(
+                name="Overrides",
+                value="No deflated MMR overrides have been configured.",
+                inline=False,
+            )
+            await ctx.reply(embed=embed)
+            return
+
+        lines = []
+        for index, entry in enumerate(overrides, start=1):
+            user_id = entry["user_id"]
+            configured_mmr = int(entry["mmr"])
+            member = ctx.guild.get_member(int(user_id)) if user_id.isdigit() else None
+            public_mmr = get_mmr(member) if member is not None else None
+            has_public_mmr = isinstance(public_mmr, (int, float)) and not isinstance(public_mmr, bool)
+            effective_mmr = min(int(public_mmr), configured_mmr) if has_public_mmr else configured_mmr
+            if not verbose:
+                lines.append(f"{index}. `{user_id}` — **{effective_mmr:,} MMR**")
+                continue
+
+            current_name = member.display_name if member is not None else entry.get("name", "Unknown member")
+            current_name = discord.utils.escape_markdown(str(current_name))
+            public_text = f"{int(public_mmr):,}" if has_public_mmr else "Unknown"
+            updated_by = str(entry.get("updated_by") or entry.get("created_by") or "Unknown")
+            updated_at = format_ledger_timestamp(entry.get("updated_at") or entry.get("created_at"))
+            lines.append(
+                f"{index}. **{current_name}** (`{user_id}`) — Public: **{public_text}** | "
+                f"Cap: **{configured_mmr:,}** | Effective: **{effective_mmr:,}** | "
+                f"Updated by: `{updated_by}` at {updated_at}"
+            )
+        embed.add_field(
+            name="Overrides",
+            value=truncate_embed_field("\n".join(lines)),
+            inline=False,
+        )
+        footer = f"{len(overrides)} deflated player(s)"
+        if not verbose:
+            footer += " • Use --verbose for names and audit details"
+        embed.set_footer(text=footer)
+        await ctx.reply(embed=embed)
+
+    @deflated_players.error
+    async def deflated_players_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while loading deflated MMR overrides.")
 
     @bot.command(name="separate")
     @is_admin_or_has_role()
@@ -2157,7 +2331,11 @@ def attach_commands(bot, deps):
 
     @bot.command(name="separated")
     @is_admin_or_has_role()
-    async def separated_players(ctx):
+    async def separated_players(ctx, *args):
+        if len(args) > 1 or (args and args[0].lower() != "--verbose"):
+            await ctx.reply("Usage: `!separated [--verbose]`")
+            return
+        verbose = bool(args)
         pairs = get_separated_pairs(ctx.guild.id)
         embed = discord.Embed(
             title="Separated Players",
@@ -2182,15 +2360,24 @@ def attach_commands(bot, deps):
         lines = []
         for index, pair in enumerate(pairs, start=1):
             first_id, second_id = pair["user_ids"]
-            first_name = display_name_for(first_id, pair)
-            second_name = display_name_for(second_id, pair)
-            lines.append(f"{index}. **{first_name}** <-> **{second_name}**")
+            if verbose:
+                first_name = discord.utils.escape_markdown(display_name_for(first_id, pair))
+                second_name = discord.utils.escape_markdown(display_name_for(second_id, pair))
+                lines.append(
+                    f"{index}. **{first_name}** (`{first_id}`) <-> "
+                    f"**{second_name}** (`{second_id}`)"
+                )
+            else:
+                lines.append(f"{index}. `{first_id}` <-> `{second_id}`")
         embed.add_field(
             name="Pairs",
             value=truncate_embed_field("\n".join(lines)),
             inline=False,
         )
-        embed.set_footer(text=f"{len(pairs)} separated pair(s)")
+        footer = f"{len(pairs)} separated pair(s)"
+        if not verbose:
+            footer += " • Use --verbose for names"
+        embed.set_footer(text=footer)
         await ctx.reply(embed=embed)
     @separated_players.error
     async def separated_players_error(ctx, error):
@@ -3571,10 +3758,16 @@ def attach_commands(bot, deps):
         # If we’re in Immortal mode with a full lobby, re-seed the lobby embed now
         try:
             if inhouse_mode.get(gid) == "immortal" and len(lobby_players.get(gid, [])) == 10:
-                all_pairs = get_all_captain_pairs(lobby_players[gid])
+                all_pairs = get_all_captain_pairs(lobby_players[gid], guild_id=gid)
                 thr = threshold if threshold is not None else (get_captain_policy(gid)[1] or 200)
                 chooser = deps.get("choose_captain_pair_index") or choose_captain_pair_index
-                preferred_index = chooser(lobby_players[gid], all_pairs, policy=policy, threshold=thr)
+                preferred_index = chooser(
+                    lobby_players[gid],
+                    all_pairs,
+                    policy=policy,
+                    threshold=thr,
+                    guild_id=gid,
+                )
                 captain_draft_state[gid] = {"pairs": all_pairs, "index": preferred_index}
                 captains, pool, _ = all_pairs[preferred_index]
                 # reroll display uses 1-based count
@@ -3670,11 +3863,8 @@ def attach_commands(bot, deps):
                     "**!removersvp `<@user>`** - Admin-remove a signup and promote the next fill if needed.\n"
                     "**!resetrsvp `confirm`** - Clear the roster and replace the card if its deadline is still ahead; otherwise retire it.\n"
                     "**!cfg `<steam_id>` `[@user]` `[--force]`** - Link a player's Steam ID and fetch their MMR.\n"
-                    "**!setmmr `<mmr>` `<@user>`** or **!setmmr `<@user>` `<mmr>`** - Manually set a user's MMR.\n"
+                    "**!setmmr `<mmr>` `<@user>`** or **!setmmr `<@user>` `<mmr>`** - Set public MMR; automatic refreshes may replace it.\n"
                     "**!setpreferredroles `<1 2 3 4 5>` `<@user>`** - Set preferred roles for another user.\n"
-                    "**!separate `<@user|discord_id>` `<@user|discord_id>`** - Keep two players apart in regular team generation.\n"
-                    "**!unseparate `<@user|discord_id>` `<@user|discord_id>`** - Remove a separated player pair.\n"
-                    "**!separated** - View the separated player pairs for this server.\n"
                     "**!alert** - Mention all 10 players when the lobby is full.\n\n"
 
                     "__**Lobby Configuration**__\n"
@@ -3711,6 +3901,18 @@ def attach_commands(bot, deps):
                     "**!submitmatch `<match_id>`** - Submit match result and resolve MMR + bets."
                 ),
                 color=discord.Color.gold()
+            )
+            embed.add_field(
+                name="Matchmaking Overrides",
+                value=(
+                    "**!deflate `<@user|discord_id>` `<mmr>`** - Set a private MMR cap while public MMR stays visible.\n"
+                    "**!undeflate `<@user|discord_id>`** - Remove a private MMR cap.\n"
+                    "**!deflated `[--verbose]`** - List capped IDs; verbose mode includes names and audit details.\n"
+                    "**!separate `<@user|discord_id>` `<@user|discord_id>`** - Keep two players on different regular teams.\n"
+                    "**!unseparate `<@user|discord_id>` `<@user|discord_id>`** - Remove a separated pair.\n"
+                    "**!separated `[--verbose]`** - List separated IDs; verbose mode includes names."
+                ),
+                inline=False,
             )
             await ctx.reply(embed=embed)
             return
