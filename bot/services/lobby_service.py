@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import discord
 
 from bot.services.guild_config_service import (
+    get_deflated_mmr_map,
     get_separated_pairs,
     load_mmr_spread_setting,
     load_preferred_roles_setting,
@@ -81,31 +82,60 @@ def assign_roles_with_preferences(team, preference_map=None, mmr_map=None):
     return assigned
 
 
-def get_all_captain_pairs(players):
+def build_effective_mmr_map(players, guild_id=None):
+    overrides = get_deflated_mmr_map(guild_id) if guild_id is not None else {}
+    effective_mmrs = {}
+    for uid, _name, public_mmr in players:
+        public_mmr = int(public_mmr)
+        override = overrides.get(str(uid))
+        effective_mmrs[str(uid)] = min(public_mmr, int(override)) if override is not None else public_mmr
+    return effective_mmrs
+
+
+def get_all_captain_pairs(players, guild_id=None, effective_mmr_map=None):
+    if effective_mmr_map is None:
+        effective_mmr_map = build_effective_mmr_map(players, guild_id)
+
+    def effective_mmr(player):
+        return effective_mmr_map[str(player[0])]
+
     captain_eligible = [p for p in players if not is_placeholder_player(p[0])]
-    sorted_players = sorted(players, key=lambda p: p[2])
+    sorted_players = sorted(players, key=effective_mmr)
     pairs = []
     for i in range(len(captain_eligible)):
         for j in range(i + 1, len(captain_eligible)):
             p1 = captain_eligible[i]
             p2 = captain_eligible[j]
-            diff = abs(p1[2] - p2[2])
+            diff = abs(effective_mmr(p1) - effective_mmr(p2))
             pool = [p for p in sorted_players if p not in (p1, p2)]
             pairs.append(((p1, p2), pool, diff))
     pairs.sort(key=lambda x: x[2])
     return pairs
 
 
-def choose_captain_pair_index(players, all_pairs, policy="min_diff", threshold=150):
+def choose_captain_pair_index(
+    players,
+    all_pairs,
+    policy="min_diff",
+    threshold=150,
+    guild_id=None,
+    effective_mmr_map=None,
+):
     if not all_pairs:
         return 0
+    if effective_mmr_map is None:
+        effective_mmr_map = build_effective_mmr_map(players, guild_id)
+
+    def effective_mmr(player):
+        return effective_mmr_map[str(player[0])]
+
     if policy == "min_diff":
         return 0
     if policy == "top2_if_close":
-        sorted_players = sorted(players, key=lambda x: x[2])
+        sorted_players = sorted(players, key=effective_mmr)
         top2 = (sorted_players[-2], sorted_players[-1])
         top2_ids = {top2[0][0], top2[1][0]}
-        top2_diff = abs(top2[1][2] - top2[0][2])
+        top2_diff = abs(effective_mmr(top2[1]) - effective_mmr(top2[0]))
         if top2_diff <= threshold:
             for i, (caps, _pool, _d) in enumerate(all_pairs):
                 if {caps[0][0], caps[1][0]} == top2_ids:
@@ -114,15 +144,15 @@ def choose_captain_pair_index(players, all_pairs, policy="min_diff", threshold=1
     if policy == "simulate":
         def simulate_score(caps, pool):
             cap1, cap2 = caps
-            totals = {"cap1": cap1[2], "cap2": cap2[2]}
-            remaining = sorted(pool, key=lambda x: x[2])
+            totals = {"cap1": effective_mmr(cap1), "cap2": effective_mmr(cap2)}
+            remaining = sorted(pool, key=effective_mmr)
             pick_order = [("cap1", 1), ("cap2", 2), ("cap1", 2), ("cap2", 2), ("cap1", 1)]
             for who, cnt in pick_order:
                 for _ in range(cnt):
                     if not remaining:
                         break
                     pick = remaining.pop()
-                    totals[who] += pick[2]
+                    totals[who] += effective_mmr(pick)
             return abs(totals["cap1"] - totals["cap2"])
 
         best_i, best_score = 0, None
@@ -215,14 +245,32 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
         return
     await channel.send(f"Randomized player draft first pick: **{cap1.mention}** gets first pick!")
 
+    effective_mmr_map = build_effective_mmr_map(players, gid)
     candidates = []
     for uid, name, mmr in pool:
+        effective_mmr = effective_mmr_map[str(uid)]
         if is_placeholder_player(uid):
-            candidates.append(Candidate(player_id=str(uid), mmr=int(mmr), member=None, name=name))
+            candidates.append(
+                Candidate(
+                    player_id=str(uid),
+                    mmr=int(mmr),
+                    effective_mmr=effective_mmr,
+                    member=None,
+                    name=name,
+                )
+            )
         else:
             member = guild.get_member(int(uid))
             if member and not member.bot:
-                candidates.append(Candidate(player_id=str(member.id), mmr=int(mmr), member=member, name=member.display_name))
+                candidates.append(
+                    Candidate(
+                        player_id=str(member.id),
+                        mmr=int(mmr),
+                        effective_mmr=effective_mmr,
+                        member=member,
+                        name=member.display_name,
+                    )
+                )
     if len(candidates) != 8:
         await channel.send("Need **8 valid non-captain** players available for the draft.")
         return
@@ -306,10 +354,9 @@ def calculate_team_mmr_std_dev(team):
 
 def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
     preference_map = {}
-    mmr_map = {}
-    for uid, _, mmr in players:
+    mmr_map = build_effective_mmr_map(players, guild_id)
+    for uid, _, _mmr in players:
         uid_str = str(uid)
-        mmr_map[uid_str] = mmr
         doc = db.collection("players").document(uid_str).get()
         data = doc.to_dict() if doc.exists else None
         preferred = data.get("preferred_roles", [1, 2, 3, 4, 5]) if (data and isinstance(data.get("preferred_roles"), list)) else [1, 2, 3, 4, 5]
@@ -331,8 +378,8 @@ def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
             continue
         if any(pair[0] in team2_ids and pair[1] in team2_ids for pair in separated_pairs):
             continue
-        mmr1 = sum(p[2] for p in team1) / 5
-        mmr2 = sum(p[2] for p in team2) / 5
+        mmr1 = sum(mmr_map[str(p[0])] for p in team1) / 5
+        mmr2 = sum(mmr_map[str(p[0])] for p in team2) / 5
         mmr_diff = abs(mmr1 - mmr2)
         if mmr_diff > max_mmr_diff:
             continue
@@ -355,8 +402,8 @@ def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
             roles1 = roles2 = None
         mmr_balance_score = mmr_diff
         if use_mmr_spread:
-            std_dev1 = calculate_team_mmr_std_dev(team1)
-            std_dev2 = calculate_team_mmr_std_dev(team2)
+            std_dev1 = pstdev(float(mmr_map[str(player[0])]) for player in team1)
+            std_dev2 = pstdev(float(mmr_map[str(player[0])]) for player in team2)
             mmr_balance_score += MMR_STD_DEV_WEIGHT * abs(std_dev1 - std_dev2)
         total_score = (mmr_balance_score / 5) - ROLE_FIT_WEIGHT * (score1 + score2)
         return (total_score, team1, team2, score1, score2, roles1, roles2)
