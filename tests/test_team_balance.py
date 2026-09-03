@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from bot.services import embed_service, guild_config_service, lobby_service
+from bot.services.immortal_draft import Candidate, ImmortalDraftSession
 
 
 class MissingPlayerSnapshot:
@@ -68,11 +69,14 @@ class ConfigCollection:
 class ConfigDatabase:
     def __init__(self):
         self.guilds = {}
+        self.deflated_mmrs = {}
 
     def collection(self, name):
-        if name != "guild_specific_info":
-            raise AssertionError(f"Unexpected collection: {name}")
-        return ConfigCollection(self.guilds)
+        if name == "guild_specific_info":
+            return ConfigCollection(self.guilds)
+        if name == "deflated_mmr":
+            return ConfigCollection(self.deflated_mmrs)
+        raise AssertionError(f"Unexpected collection: {name}")
 
 
 class TeamBalanceTests(unittest.TestCase):
@@ -85,13 +89,18 @@ class TeamBalanceTests(unittest.TestCase):
         ]
         self.original_db = lobby_service.db
         lobby_service.db = FakePlayerDatabase()
+        self.deflated_mmr_patcher = patch.object(lobby_service, "get_deflated_mmr_map", return_value={})
+        self.deflated_mmr_patcher.start()
 
     def tearDown(self):
+        self.deflated_mmr_patcher.stop()
         lobby_service.db = self.original_db
         lobby_service.team_rolls.pop(1001, None)
         lobby_service.team_rolls.pop(1002, None)
+        lobby_service.team_rolls.pop(1003, None)
         lobby_service.valid_team_combos.pop(1001, None)
         lobby_service.valid_team_combos.pop(1002, None)
+        lobby_service.valid_team_combos.pop(1003, None)
 
     def test_spread_toggle_changes_ranking_after_mmr_filter(self):
         common_patches = (
@@ -130,6 +139,54 @@ class TeamBalanceTests(unittest.TestCase):
             avg1 = sum(player[2] for player in team1) / 5
             avg2 = sum(player[2] for player in team2) / 5
             self.assertLessEqual(abs(avg1 - avg2), 100)
+
+    def test_deflated_mmr_balances_privately_but_keeps_public_values_in_results(self):
+        players = [(index, f"Player {index}", 1000) for index in range(9)]
+        players.append((9, "Boosted Player", 10000))
+
+        with (
+            patch.object(lobby_service, "get_deflated_mmr_map", return_value={"9": 1000}),
+            patch.object(lobby_service, "load_preferred_roles_setting", return_value=False),
+            patch.object(lobby_service, "load_mmr_spread_setting", return_value=False),
+            patch.object(lobby_service, "get_separated_pairs", return_value=[]),
+        ):
+            teams, valid_count = lobby_service.calculate_balanced_teams(
+                players,
+                1003,
+                max_mmr_diff=0,
+            )
+
+        self.assertGreater(valid_count, 0)
+        team1, team2 = teams[0][0], teams[0][1]
+        self.assertIn((9, "Boosted Player", 10000), team2)
+        self.assertEqual(1000, sum(player[2] for player in team1) / 5)
+        self.assertEqual(2800, sum(player[2] for player in team2) / 5)
+
+    def test_deflated_mmr_is_a_cap_and_never_an_inflation(self):
+        players = [(1, "Lower Public MMR", 3000), (2, "Higher Public MMR", 6000)]
+        with patch.object(
+            lobby_service,
+            "get_deflated_mmr_map",
+            return_value={"1": 4000, "2": 4500},
+        ):
+            effective = lobby_service.build_effective_mmr_map(players, 1001)
+
+        self.assertEqual(3000, effective["1"])
+        self.assertEqual(4500, effective["2"])
+
+    def test_immortal_captain_pairs_use_effective_but_return_public_mmr(self):
+        players = [
+            (1, "Boosted Player", 6000),
+            (2, "Second Player", 5000),
+            (3, "Third Player", 4100),
+        ]
+        with patch.object(lobby_service, "get_deflated_mmr_map", return_value={"1": 4000}):
+            pairs = lobby_service.get_all_captain_pairs(players, guild_id=1001)
+
+        captains, _pool, effective_difference = pairs[0]
+        self.assertEqual({1, 3}, {captain[0] for captain in captains})
+        self.assertEqual(100, effective_difference)
+        self.assertIn((1, "Boosted Player", 6000), captains)
 
     def test_team_embed_only_displays_std_dev_when_enabled(self):
         guild = SimpleNamespace(id=2001)
@@ -179,6 +236,60 @@ class TeamBalanceSettingTests(unittest.TestCase):
         self.assertTrue(guild_config_service.load_debug_mode_setting(3001))
         self.assertFalse(guild_config_service.load_mmr_spread_setting(3002))
         self.assertFalse(guild_config_service.load_debug_mode_setting(3002))
+
+    def test_deflated_mmr_overrides_are_audited_updated_and_removed_per_guild(self):
+        created, first_entry = guild_config_service.save_deflated_mmr(
+            3001,
+            42,
+            5000,
+            guild_name="Test Guild",
+            set_by=11,
+            name="Player One",
+        )
+        updated, second_entry = guild_config_service.save_deflated_mmr(
+            3001,
+            42,
+            4800,
+            guild_name="Test Guild",
+            set_by=22,
+            name="Renamed Player",
+        )
+
+        self.assertTrue(created)
+        self.assertFalse(updated)
+        self.assertEqual("11", first_entry["created_by"])
+        self.assertEqual("11", second_entry["created_by"])
+        self.assertEqual("22", second_entry["updated_by"])
+        self.assertEqual({"42": 4800}, guild_config_service.get_deflated_mmr_map(3001))
+        self.assertEqual({}, guild_config_service.get_deflated_mmr_map(3002))
+
+        removed, removed_entry = guild_config_service.delete_deflated_mmr(3001, 42)
+        self.assertTrue(removed)
+        self.assertEqual(4800, removed_entry["mmr"])
+        self.assertEqual([], guild_config_service.get_deflated_mmrs(3001))
+
+
+class ImmortalDraftRatingTests(unittest.TestCase):
+    def test_timeout_autopick_uses_effective_mmr_but_displays_public_mmr(self):
+        public_low = Candidate(player_id="1", mmr=3000, effective_mmr=3000, name="Public Low")
+        privately_lower = Candidate(player_id="2", mmr=5000, effective_mmr=2500, name="Deflated")
+        captain_one = SimpleNamespace(id=10, mention="<@10>", display_name="Captain One")
+        captain_two = SimpleNamespace(id=20, mention="<@20>", display_name="Captain Two")
+        session = ImmortalDraftSession(
+            bot=None,
+            guild=SimpleNamespace(id=1001),
+            channel=None,
+            cap1=captain_one,
+            cap2=captain_two,
+            cap1_mmr=6000,
+            cap2_mmr=5900,
+            candidates=[privately_lower, public_low],
+        )
+
+        self.assertEqual(["1", "2"], [candidate.player_id for candidate in session.candidates])
+        self.assertEqual("2", session._autopick_member_id())
+        self.assertIn("5000", privately_lower.display())
+        self.assertNotIn("2500", privately_lower.display())
 
 
 if __name__ == "__main__":
