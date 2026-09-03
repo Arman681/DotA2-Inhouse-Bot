@@ -3903,7 +3903,7 @@ def attach_commands(bot, deps):
                 color=discord.Color.gold()
             )
             embed.add_field(
-                name="Matchmaking Overrides",
+                name="__**Matchmaking Overrides**__",
                 value=(
                     "**!deflate `<@user|discord_id>` `<mmr>`** - Set a private MMR cap while public MMR stays visible.\n"
                     "**!undeflate `<@user|discord_id>`** - Remove a private MMR cap.\n"
