@@ -193,11 +193,11 @@ Below is the current command set reflected in `commands.py`.
 - `!help` / `!help admin` — show command help
 
 ### Admin / Inhouse Admin commands
-- `!add @user ...` — add one or more users to the lobby
+- `!add <@user|discord_id> ...` — add one or more users to the lobby
 - `!add <placeholder_name> <mmr>` — add a placeholder player
-- `!remove @user ...` — remove one or more users from the lobby
+- `!remove <@user|discord_id> ...` — remove one or more users from the lobby
 - `!remove <placeholder_name>` — remove a placeholder
-- `!replace ...` — replace a lobby user/placeholder with another user/placeholder
+- `!replace <@user|discord_id|placeholder> <@user|discord_id|placeholder> [mmr]` — replace a lobby player; a new placeholder requires MMR
 - `!lobby [regular|immortal]` — create or refresh the lobby and optionally set mode
 - `!reset` — clear the lobby and create a fresh lobby embed
 - `!startrsvp <time> <games> [optional notes]` — post one all-ranks RSVP event more than one hour before start; running events block duplicates
