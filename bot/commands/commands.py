@@ -2391,8 +2391,12 @@ def attach_commands(bot, deps):
     @bot.command(name="add")
     @is_admin_or_has_role()
     async def add_to_lobby(ctx, *args):
+        usage = (
+            "Usage: !add `<@user|discord_id>` `[...]` "
+            "OR `!add <placeholder_name> <mmr>`"
+        )
         if not args:
-            await ctx.reply("Usage: !add `@player1` `[@player2 ...]` OR `!add <placeholder_name> <mmr>`")
+            await ctx.reply(usage)
             return
         guild_id = ctx.guild.id
         if guild_id not in lobby_players:
@@ -2409,9 +2413,9 @@ def attach_commands(bot, deps):
             except:
                 message = None
         # -------------------------------
-        # Placeholder mode: !add name mmr
+        # Placeholder mode: !add name mmr. A numeric first token is treated as a user ID.
         # -------------------------------
-        if len(args) == 2 and not ctx.message.mentions:
+        if len(args) == 2 and parse_discord_user_id(args[0]) is None:
             placeholder_name = args[0].strip()
             mmr_raw = args[1].strip()
             if not placeholder_name:
@@ -2432,13 +2436,16 @@ def attach_commands(bot, deps):
             lobby_players[guild_id].append((placeholder_id, placeholder_name, placeholder_mmr))
             added.append(f"{placeholder_name} ({placeholder_mmr})")
         # -------------------------------
-        # Normal mention mode: !add @user
+        # Normal member mode: !add @user|discord_id [...]
         # -------------------------------
         else:
-            members = ctx.message.mentions
-            if not members:
-                await ctx.reply("Usage: !add `@player1` `[@player2 ...]` OR `!add <placeholder_name> <mmr>`")
-                return
+            members = []
+            for token in args:
+                member = await resolve_guild_member(ctx, token)
+                if member is None:
+                    await ctx.reply(f"I could not find every specified user in this server. {usage}")
+                    return
+                members.append(member)
             for member in members:
                 if any(str(uid) == str(member.id) for uid, _, _ in lobby_players[guild_id]):
                     continue
@@ -2465,8 +2472,9 @@ def attach_commands(bot, deps):
     @bot.command(name="remove")
     @is_admin_or_has_role()
     async def remove_from_lobby(ctx, *args):
+        usage = "Usage: !remove `<@user|discord_id>` `[...]` OR `!remove <placeholder_name>`"
         if not args:
-            await ctx.reply("Usage: !remove `@player1` `[@player2 ...]` OR `!remove <placeholder_name>`")
+            await ctx.reply(usage)
             return
         guild_id = ctx.guild.id
         removed = []
@@ -2481,9 +2489,9 @@ def attach_commands(bot, deps):
             except:
                 message = None
         # -------------------------------
-        # Placeholder mode: !remove name
+        # Placeholder mode: !remove name. A numeric token is treated as a user ID.
         # -------------------------------
-        if len(args) == 1 and not ctx.message.mentions:
+        if len(args) == 1 and parse_discord_user_id(args[0]) is None:
             target_name = args[0].strip().lower()
 
             for i, (uid, name, _) in enumerate(lobby_players[guild_id]):
@@ -2492,18 +2500,18 @@ def attach_commands(bot, deps):
                     removed.append(name)
                     break
         # -------------------------------
-        # Normal mention mode: !remove @user
+        # Normal member mode: !remove @user|discord_id [...]
         # -------------------------------
         else:
-            members = ctx.message.mentions
-            if not members:
-                await ctx.reply("Usage: !remove `@player1` `[@player2 ...]` OR `!remove <placeholder_name>`")
+            user_ids = [parse_discord_user_id(token) for token in args]
+            if any(user_id is None for user_id in user_ids):
+                await ctx.reply(usage)
                 return
-            for member in members:
-                for i, (uid, _, _) in enumerate(lobby_players[guild_id]):
-                    if str(uid) == str(member.id):
+            for user_id in user_ids:
+                for i, (uid, name, _) in enumerate(lobby_players[guild_id]):
+                    if str(uid) == str(user_id):
                         del lobby_players[guild_id][i]
-                        removed.append(member.display_name)
+                        removed.append(name)
                         break
         if removed:
             await full_post_rocket_reset(guild_id, message)
@@ -2511,24 +2519,25 @@ def attach_commands(bot, deps):
             await update_lobby_embed(ctx.guild)
         else:
             await ctx.reply("None of the specified players were in the lobby.")
-        @remove_from_lobby.error
-        async def remove_from_lobby_error(ctx, error):
-            if isinstance(error, commands.CheckFailure):
-                await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
-            else:
-                await ctx.reply("An unexpected error occurred while removing players from the lobby.")
+    @remove_from_lobby.error
+    async def remove_from_lobby_error(ctx, error):
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You do not have permission to use this command. You must be a server admin or have the 'Inhouse Admin' role.")
+        else:
+            await ctx.reply("An unexpected error occurred while removing players from the lobby.")
 
     @bot.command(name="replace")
     @is_admin_or_has_role()
     async def replace_in_lobby(ctx, *args):
+        usage = (
+            "Usage:\n"
+            "`!replace <@user|discord_id> <@user|discord_id>`\n"
+            "`!replace <@user|discord_id> <placeholder_name> <mmr>`\n"
+            "`!replace <placeholder_name> <@user|discord_id>`\n"
+            "`!replace <old_placeholder> <new_placeholder> <mmr>`"
+        )
         if not args:
-            await ctx.reply(
-                "Usage:\n"
-                "`!replace @olduser @newuser`\n"
-                "`!replace @olduser <placeholder_name> <mmr>`\n"
-                "`!replace <placeholder_name> @newuser`\n"
-                "`!replace <old_placeholder> <new_placeholder> <mmr>`"
-            )
+            await ctx.reply(usage)
             return
         guild_id = ctx.guild.id
         if guild_id not in lobby_players:
@@ -2542,30 +2551,24 @@ def attach_commands(bot, deps):
             except Exception:
                 message = None
         current_players = lobby_players[guild_id]
-        def parse_member_token(token: str):
-            match = re.fullmatch(r"<@!?(\d+)>", token.strip())
-            if not match:
-                return None
-            member_id = int(match.group(1))
-            return ctx.guild.get_member(member_id)
         # -------------------------------
         # Parse OLD target from args[0]
         # -------------------------------
         old_token = args[0].strip()
-        old_member = parse_member_token(old_token)
+        old_member_id = parse_discord_user_id(old_token)
         old_target_uid = None
         old_target_name = None
         old_index = None
-        if old_member:
-            for i, (uid, name, mmr) in enumerate(current_players):
-                if str(uid) == str(old_member.id):
+        if old_member_id is not None:
+            for i, (uid, name, _mmr) in enumerate(current_players):
+                if str(uid) == str(old_member_id):
                     old_target_uid = uid
                     old_target_name = name
                     old_index = i
                     break
         else:
             old_placeholder_name = old_token.lower()
-            for i, (uid, name, mmr) in enumerate(current_players):
+            for i, (uid, name, _mmr) in enumerate(current_players):
                 if is_placeholder_player(uid) and name.lower() == old_placeholder_name:
                     old_target_uid = uid
                     old_target_name = name
@@ -2578,20 +2581,18 @@ def attach_commands(bot, deps):
         # Parse NEW target from remaining args
         # -------------------------------
         if len(args) < 2:
-            await ctx.reply(
-                "Usage:\n"
-                "`!replace @olduser @newuser`\n"
-                "`!replace @olduser <placeholder_name> <mmr>`\n"
-                "`!replace <placeholder_name> @newuser`\n"
-                "`!replace <old_placeholder> <new_placeholder> <mmr>`"
-            )
+            await ctx.reply(usage)
             return
         new_token = args[1].strip()
-        new_member = parse_member_token(new_token)
-        # Case 1: replacing with a mentioned user
-        if new_member:
+        new_member_id = parse_discord_user_id(new_token)
+        # Case 1: replacing with a mentioned user or raw Discord ID
+        if new_member_id is not None:
             if len(args) != 2:
-                await ctx.reply("Usage: `!replace @olduser @newuser` or `!replace <placeholder_name> @newuser`")
+                await ctx.reply(usage)
+                return
+            new_member = await resolve_guild_member(ctx, new_token)
+            if new_member is None:
+                await ctx.reply("I could not find the replacement user in this server. Use an @mention or Discord ID.")
                 return
             if any(str(uid) == str(new_member.id) for uid, _, _ in current_players if str(uid) != str(old_target_uid)):
                 await ctx.reply("That replacement user is already in the lobby.")
@@ -2600,11 +2601,7 @@ def attach_commands(bot, deps):
         # Case 2: replacing with a placeholder
         else:
             if len(args) != 3:
-                await ctx.reply(
-                    "Usage for placeholder replacement:\n"
-                    "`!replace @olduser <placeholder_name> <mmr>`\n"
-                    "`!replace <old_placeholder> <new_placeholder> <mmr>`"
-                )
+                await ctx.reply(usage)
                 return
             placeholder_name = new_token
             mmr_raw = args[2].strip()
@@ -3851,9 +3848,9 @@ def attach_commands(bot, deps):
                 title="Admin Commands",
                 description=(
                     "__**Player & Lobby Management**__\n"
-                    "**!add `<@user1>` `<@user2>` ...** - Add one or more users to the lobby.\n"
-                    "**!remove `<@user1>` `<@user2>` ...** - Remove one or more users from the lobby.\n"
-                    "**!replace `<@user1|placeholder1>` `<@user2|placeholder2>`** - Replace one lobby user or placeholder with another.\n"
+                    "**!add `<@user|discord_id>` ...** - Add one or more users to the lobby.\n"
+                    "**!remove `<@user|discord_id>` ...** - Remove one or more users from the lobby.\n"
+                    "**!replace `<@user|discord_id|placeholder>` `<@user|discord_id|placeholder>`** - Replace one lobby player; placeholder replacements also require MMR.\n"
                     "**!lobby** - Create or refresh the inhouse lobby.\n"
                     "**!reset** - Clear the current lobby and start fresh.\n"
                     "**!startrsvp `<time>` `<games>` `[optional notes]`** - Post one all-ranks RSVP event more than one hour before start; confirmed rosters automatically open a locked lobby five minutes early and advance through that many games.\n"
