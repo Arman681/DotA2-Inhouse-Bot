@@ -48,6 +48,7 @@ class FakeGuild:
 class FakeContext:
     def __init__(self, guild):
         self.guild = guild
+        self.author = SimpleNamespace(id=999999999999999999)
         self.channel = SimpleNamespace()
         self.message = SimpleNamespace(mentions=[])
         self.reply = AsyncMock()
@@ -67,6 +68,7 @@ class LobbyCommandUserIdTests(unittest.IsolatedAsyncioTestCase):
         self.save_lobby_players = Mock()
         self.full_post_rocket_reset = AsyncMock()
         self.update_lobby_embed = AsyncMock()
+        self.save_deflated_mmr = Mock(return_value=(True, {}))
         self.bot = FakeBot()
         deps = defaultdict(Mock)
         deps.update({
@@ -75,12 +77,27 @@ class LobbyCommandUserIdTests(unittest.IsolatedAsyncioTestCase):
             "lobby_players": self.lobby_players,
             "lobby_message": {},
             "get_mmr": lambda member: 4000 if member.id == self.old_member.id else 4500,
+            "active_match_ids": {},
+            "immortal_draft_running": {},
+            "save_deflated_mmr": self.save_deflated_mmr,
             "full_post_rocket_reset": self.full_post_rocket_reset,
             "save_lobby_players": self.save_lobby_players,
             "update_lobby_embed": self.update_lobby_embed,
             "is_placeholder_player": lambda user_id: str(user_id).startswith("placeholder:"),
         })
         attach_commands(self.bot, deps)
+
+    async def test_deflate_reply_contains_only_cap_and_discord_id_context(self):
+        await self.bot.commands["deflate"].callback(
+            self.ctx,
+            str(self.old_member.id),
+            "500",
+        )
+
+        self.ctx.reply.assert_awaited_once_with(
+            "Created a matchmaking MMR cap of **500** for Discord ID "
+            f"**{self.old_member.id}**."
+        )
 
     async def test_add_accepts_a_raw_discord_user_id(self):
         await self.bot.commands["add"].callback(self.ctx, str(self.old_member.id))
