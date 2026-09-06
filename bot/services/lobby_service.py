@@ -348,13 +348,24 @@ def get_lobby_channel_for_guild(guild):
     return None
 
 
-def calculate_team_mmr_std_dev(team):
-    return pstdev(float(player[2]) for player in team)
+def calculate_team_mmr_std_dev(team, mmr_map=None):
+    if mmr_map is None:
+        return pstdev(float(player[2]) for player in team)
+    return pstdev(float(mmr_map.get(str(player[0]), player[2])) for player in team)
 
 
-def calculate_balanced_teams(players, guild_id, max_mmr_diff=100):
+def calculate_balanced_teams(
+    players,
+    guild_id,
+    max_mmr_diff=100,
+    effective_mmr_map=None,
+):
     preference_map = {}
-    mmr_map = build_effective_mmr_map(players, guild_id)
+    mmr_map = (
+        effective_mmr_map
+        if effective_mmr_map is not None
+        else build_effective_mmr_map(players, guild_id)
+    )
     for uid, _, _mmr in players:
         uid_str = str(uid)
         doc = db.collection("players").document(uid_str).get()
