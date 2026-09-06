@@ -3859,7 +3859,7 @@ def attach_commands(bot, deps):
                     "**!setpassword `<new_password>`** - Change the inhouse lobby password.\n"
                     "**!setlobbychannel** - Set current channel for lobby embeds and reset posts.\n"
                     "**!toggle_roles `<on|off>`** - Enable/disable preferred role usage in team balancing.\n"
-                    "**!toggle_stddev `<on|off>`** - Rank valid regular teams using average-MMR and standard-deviation differences.\n"
+                    "**!toggle_stddev `<on|off>`** - Toggle MMR-spread balancing; team standard deviations are always displayed.\n"
                     "**!lobbyroles** - Show preferred roles for all 10 lobby players.\n\n"
 
                     "__**Bot Settings**__\n"
