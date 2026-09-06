@@ -658,9 +658,11 @@ async def roll_lobby_to_post_rocket_state(
 ):
     mode = inhouse_mode.get(guild_id, "regular")
     if mode == "regular":
+        effective_mmr_map = build_effective_mmr_map(lobby_players[guild_id], guild_id)
         team_rolls[guild_id], valid_combo_count = calculate_balanced_teams(
             lobby_players[guild_id],
             guild_id,
+            effective_mmr_map=effective_mmr_map,
         )
         if not team_rolls[guild_id]:
             await channel.send(
@@ -671,6 +673,7 @@ async def roll_lobby_to_post_rocket_state(
                 lobby_players[guild_id],
                 guild_id,
                 max_mmr_diff=400,
+                effective_mmr_map=effective_mmr_map,
             )
         if not team_rolls[guild_id]:
             await channel.send(
@@ -681,7 +684,16 @@ async def roll_lobby_to_post_rocket_state(
         team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][0]
         original_teams[guild_id] = (team1, team2, score1, score2, roles1, roles2)
         roll_count[guild_id] = 1
-        embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
+        embed = build_team_embed(
+            team1,
+            team2,
+            score1,
+            score2,
+            roles1,
+            roles2,
+            guild,
+            mmr_map=effective_mmr_map,
+        )
     elif mode == "immortal":
         effective_mmr_map = build_effective_mmr_map(lobby_players[guild_id], guild_id)
         all_pairs = get_all_captain_pairs(
@@ -1294,7 +1306,17 @@ async def on_raw_reaction_add(payload):
                 index = 0
             team1, team2, score1, score2, roles1, roles2 = team_rolls[guild_id][index]
             original_teams[guild_id] = (team1, team2, score1, score2, roles1, roles2)
-            embed = build_team_embed(team1, team2, score1, score2, roles1, roles2, guild)
+            effective_mmr_map = build_effective_mmr_map(lobby_players[guild_id], guild_id)
+            embed = build_team_embed(
+                team1,
+                team2,
+                score1,
+                score2,
+                roles1,
+                roles2,
+                guild,
+                mmr_map=effective_mmr_map,
+            )
         # IMMORTAL INHOUSE REROLL
         elif mode == "immortal":
             max_rolls = IMMORTAL_MAX_ROLLS
