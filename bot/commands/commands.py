@@ -2117,8 +2117,7 @@ def attach_commands(bot, deps):
         public_mmr = int(public_mmr)
         if deflated_mmr >= public_mmr:
             await ctx.reply(
-                f"The deflated MMR must be lower than Discord ID **{member.id}**'s "
-                f"current public MMR of **{public_mmr:,}**."
+                "The matchmaking MMR cap must be lower than the player's current public MMR."
             )
             return
 
@@ -2131,16 +2130,11 @@ def attach_commands(bot, deps):
                 set_by=ctx.author.id,
                 name=member.display_name,
             )
-            applied_to_lobby = await invalidate_generated_matchmaking(ctx)
+            await invalidate_generated_matchmaking(ctx)
             action = "Created" if created else "Updated"
-            timing = (
-                " Any generated teams or captains were cleared so the override applies on the next roll."
-                if applied_to_lobby
-                else " It will apply the next time teams or captains are generated."
-            )
             await ctx.reply(
                 f"{action} a matchmaking MMR cap of **{deflated_mmr:,}** for Discord ID "
-                f"**{member.id}**. Their public MMR remains **{public_mmr:,}**.{timing}"
+                f"**{member.id}**."
             )
         except Exception as error:
             await ctx.reply(f"Failed to save the deflated MMR due to an error: {error}")
@@ -2168,13 +2162,8 @@ def attach_commands(bot, deps):
             if not removed:
                 await ctx.reply(f"Discord ID **{user_id}** does not have a deflated MMR override.")
                 return
-            applied_to_lobby = await invalidate_generated_matchmaking(ctx)
-            timing = (
-                " Any generated teams or captains were cleared so public MMR applies on the next roll."
-                if applied_to_lobby
-                else " Their public MMR will apply the next time teams or captains are generated."
-            )
-            await ctx.reply(f"Removed the deflated MMR override for Discord ID **{user_id}**.{timing}")
+            await invalidate_generated_matchmaking(ctx)
+            await ctx.reply(f"Removed the deflated MMR override for Discord ID **{user_id}**.")
         except Exception as error:
             await ctx.reply(f"Failed to remove the deflated MMR due to an error: {error}")
 
