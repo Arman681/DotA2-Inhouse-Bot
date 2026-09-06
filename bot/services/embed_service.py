@@ -152,7 +152,6 @@ async def update_all_lobbies():
 
 def build_team_embed(team1, team2, score1, score2, roles1=None, roles2=None, guild=None, preference_map=None, mmr_map=None):
     roles_enabled = load_preferred_roles_setting(guild.id)
-    spread_enabled = load_mmr_spread_setting(guild.id)
 
     def matchmaking_mmr(player):
         if mmr_map is None:
@@ -162,13 +161,12 @@ def build_team_embed(team1, team2, score1, score2, roles1=None, roles2=None, gui
     avg1 = sum(matchmaking_mmr(player) for player in team1) / 5
     avg2 = sum(matchmaking_mmr(player) for player in team2) / 5
     description = f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count.get(guild.id, 1)}/{MAX_ROLLS}"
-    if spread_enabled:
-        std_dev1 = calculate_team_mmr_std_dev(team1, mmr_map)
-        std_dev2 = calculate_team_mmr_std_dev(team2, mmr_map)
-        description += (
-            f"\n📊 MMR standard deviation — T1: {std_dev1:.1f}, "
-            f"T2: {std_dev2:.1f}, Difference: {abs(std_dev1 - std_dev2):.1f}"
-        )
+    std_dev1 = calculate_team_mmr_std_dev(team1, mmr_map)
+    std_dev2 = calculate_team_mmr_std_dev(team2, mmr_map)
+    description += (
+        f"\n📊 MMR standard deviation — T1: {std_dev1:.1f}, "
+        f"T2: {std_dev2:.1f}, Difference: {abs(std_dev1 - std_dev2):.1f}"
+    )
     if guild.id in valid_team_combos:
         description += f"\n🧮 Valid team combinations found: {valid_team_combos[guild.id]}"
     embed = discord.Embed(title="DotA2 Inhouse Lobby", description=description, color=discord.Color.gold())
