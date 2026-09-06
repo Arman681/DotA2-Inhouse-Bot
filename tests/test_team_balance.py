@@ -211,6 +211,40 @@ class TeamBalanceTests(unittest.TestCase):
         self.assertIn("MMR standard deviation", enabled_embed.description)
         self.assertIn("Difference:", enabled_embed.description)
 
+    def test_team_embed_uses_effective_aggregate_mmr_but_public_player_mmr(self):
+        guild = SimpleNamespace(id=2001)
+        team1 = tuple(self.players[:5])
+        team2 = tuple(self.players[5:])
+        effective_mmr_map = {
+            str(player_id): mmr
+            for player_id, _name, mmr in self.players
+        }
+        effective_mmr_map["4"] = 1000
+
+        with (
+            patch.object(embed_service, "load_preferred_roles_setting", return_value=False),
+            patch.object(embed_service, "load_lobby_password_for_guild", return_value="test"),
+            patch.object(embed_service, "load_mmr_spread_setting", return_value=True),
+        ):
+            embed = embed_service.build_team_embed(
+                team1,
+                team2,
+                0,
+                0,
+                guild=guild,
+                mmr_map=effective_mmr_map,
+            )
+
+        std_dev1 = lobby_service.calculate_team_mmr_std_dev(team1, effective_mmr_map)
+        std_dev2 = lobby_service.calculate_team_mmr_std_dev(team2, effective_mmr_map)
+        self.assertIn("T1: 2840, T2: 5480", embed.description)
+        self.assertIn(
+            f"T1: {std_dev1:.1f}, T2: {std_dev2:.1f}, "
+            f"Difference: {abs(std_dev1 - std_dev2):.1f}",
+            embed.description,
+        )
+        self.assertIn("Player 4 (4100)", embed.fields[0].value)
+
 
 class TeamBalanceSettingTests(unittest.TestCase):
     def setUp(self):
