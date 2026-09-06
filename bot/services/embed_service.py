@@ -153,12 +153,18 @@ async def update_all_lobbies():
 def build_team_embed(team1, team2, score1, score2, roles1=None, roles2=None, guild=None, preference_map=None, mmr_map=None):
     roles_enabled = load_preferred_roles_setting(guild.id)
     spread_enabled = load_mmr_spread_setting(guild.id)
-    avg1 = sum(p[2] for p in team1) / 5
-    avg2 = sum(p[2] for p in team2) / 5
+
+    def matchmaking_mmr(player):
+        if mmr_map is None:
+            return player[2]
+        return mmr_map.get(str(player[0]), player[2])
+
+    avg1 = sum(matchmaking_mmr(player) for player in team1) / 5
+    avg2 = sum(matchmaking_mmr(player) for player in team2) / 5
     description = f"(10/10): T1: {int(avg1)}, T2: {int(avg2)}, Roll #{roll_count.get(guild.id, 1)}/{MAX_ROLLS}"
     if spread_enabled:
-        std_dev1 = calculate_team_mmr_std_dev(team1)
-        std_dev2 = calculate_team_mmr_std_dev(team2)
+        std_dev1 = calculate_team_mmr_std_dev(team1, mmr_map)
+        std_dev2 = calculate_team_mmr_std_dev(team2, mmr_map)
         description += (
             f"\n📊 MMR standard deviation — T1: {std_dev1:.1f}, "
             f"T2: {std_dev2:.1f}, Difference: {abs(std_dev1 - std_dev2):.1f}"
