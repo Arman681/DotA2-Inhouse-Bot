@@ -299,7 +299,7 @@ Stores the current per-server RSVP event, including:
 Stores server-specific inhouse MMR and nickname.
 
 ### `deflated_mmr/{guild_id}`
-Stores per-server matchmaking MMR caps keyed by Discord user ID, including the last-known name and administrator/timestamp audit metadata. FeederBot uses the lower of the current public MMR and the configured cap for regular team balancing, role tie-breaking, automatic Immortal captain selection, and timeout autopicks. Public lobby, RSVP, draft, and `!mmr` displays continue to use the public MMR.
+Stores per-server matchmaking MMR caps keyed by Discord user ID, including the last-known name and administrator/timestamp audit metadata. FeederBot uses the lower of the current public MMR and the configured cap for regular team balancing, role tie-breaking, automatic Immortal captain selection, and timeout autopicks. Individual player values in lobby, RSVP, draft, and `!mmr` displays continue to use public MMR, while aggregate team averages and MMR-spread statistics use the effective matchmaking MMR.
 
 ### `wallets/{guild_id}/users/{user_id}`
 Stores Feederbucks balances and optionally nicknames.
