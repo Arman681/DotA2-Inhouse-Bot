@@ -225,7 +225,7 @@ Below is the current command set reflected in `commands.py`.
 - `!randompoll` — poll a random public live match
 - `!submitmatch <match_id>` — manually resolve match result, MMR, and bets
 - `!toggle_roles <on|off>` — enable/disable preferred-role balancing
-- `!toggle_stddev <on|off>` — rank valid regular teams using average-MMR difference plus `0.6 ×` the difference between team MMR standard deviations
+- `!toggle_stddev <on|off>` — enable/disable MMR-spread balancing; when enabled, rank valid regular teams using average-MMR difference plus `0.6 ×` the difference between team MMR standard deviations. Team standard deviations and their difference are displayed regardless of this setting, using effective matchmaking MMR.
 - `!debug <on|off>` — make 🚀 generate teams without starting the Steam live-match search
 - `!lobbyroles` — show preferred roles for the current 10-player lobby
 - `!captainpolicy <policy> [threshold]` — show or set captain selection policy
