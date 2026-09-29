@@ -15,7 +15,7 @@ def set_cancel_callback(callback):
 def format_preferred_roles(preferred_roles: Optional[List[int]]) -> str:
     if not preferred_roles:
         return "[no roles set]"
-    return f"[{', '.join(f'Pos {role}' for role in preferred_roles)}]"
+    return f"[{', '.join(str(role) for role in preferred_roles)}]"
 
 
 class Candidate:

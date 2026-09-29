@@ -313,7 +313,7 @@ class ImmortalDraftRatingTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            "Player One · 5000 [Pos 3, Pos 1, Pos 5, Pos 2, Pos 4]",
+            "Player One · 5000 [3, 1, 5, 2, 4]",
             candidate.display(),
         )
 
@@ -331,7 +331,7 @@ class ImmortalDraftRatingTests(unittest.TestCase):
         )
 
         self.assertLessEqual(len(candidate.display()), 78)
-        self.assertTrue(candidate.display().endswith("10000 [Pos 1, Pos 2, Pos 3, Pos 4, Pos 5]"))
+        self.assertTrue(candidate.display().endswith("10000 [1, 2, 3, 4, 5]"))
 
     def test_timeout_autopick_uses_effective_mmr_but_displays_public_mmr(self):
         public_low = Candidate(player_id="1", mmr=3000, effective_mmr=3000, name="Public Low")
@@ -371,7 +371,7 @@ class ImmortalDraftRatingTests(unittest.TestCase):
 
         embed = session.make_embed()
 
-        self.assertEqual("<@10> · 6000 [Pos 2, Pos 1, Pos 3, Pos 4, Pos 5]", embed.fields[0].value)
+        self.assertEqual("<@10> · 6000 [2, 1, 3, 4, 5]", embed.fields[0].value)
         self.assertEqual("<@20> · 5900 [no roles set]", embed.fields[1].value)
 
 
