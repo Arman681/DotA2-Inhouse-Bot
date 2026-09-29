@@ -2,6 +2,7 @@
 import asyncio
 import discord
 from discord import ui
+from statistics import pstdev
 from typing import List, Dict, Optional, Tuple
 
 PICK_ORDER = [("cap1", 1), ("cap2", 2), ("cap1", 2), ("cap2", 2), ("cap1", 1)]
@@ -9,6 +10,13 @@ _cancel_callback = None
 def set_cancel_callback(callback):
     global _cancel_callback
     _cancel_callback = callback
+
+
+def format_preferred_roles(preferred_roles: Optional[List[int]]) -> str:
+    if not preferred_roles:
+        return "[no roles set]"
+    return f"[{', '.join(f'Pos {role}' for role in preferred_roles)}]"
+
 
 class Candidate:
     def __init__(
@@ -18,14 +26,21 @@ class Candidate:
         member: Optional[discord.Member] = None,
         name: Optional[str] = None,
         effective_mmr: Optional[int] = None,
+        preferred_roles: Optional[List[int]] = None,
     ):
         self.player_id = str(player_id)
         self.member = member
         self.name = name or (member.display_name if member else "Unknown")
         self.mmr = int(mmr)
         self.effective_mmr = min(self.mmr, int(effective_mmr)) if effective_mmr is not None else self.mmr
+        self.preferred_roles = preferred_roles
     def display(self) -> str:
-        return f"{self.name} · {self.mmr}"
+        suffix = f" · {self.mmr} {format_preferred_roles(self.preferred_roles)}"
+        max_name_length = max(1, 78 - len(suffix))
+        display_name = self.name
+        if len(display_name) > max_name_length:
+            display_name = f"{display_name[:max_name_length - 1]}…"
+        return f"{display_name}{suffix}"
     def mention_or_name(self) -> str:
         return self.member.mention if self.member else f"**{self.name}**"
 
@@ -42,6 +57,8 @@ class ImmortalDraftSession:
         candidates: List[Candidate],
         per_pick_seconds: int = 50,  # 20 + 30 reserve per pick
         header_message: Optional[discord.Message] = None,
+        cap1_preferred_roles: Optional[List[int]] = None,
+        cap2_preferred_roles: Optional[List[int]] = None,
     ):
         self.bot = bot
         self.guild = guild
@@ -50,6 +67,8 @@ class ImmortalDraftSession:
         self.cap2 = cap2
         self.cap1_mmr = cap1_mmr
         self.cap2_mmr = cap2_mmr
+        self.cap1_preferred_roles = cap1_preferred_roles
+        self.cap2_preferred_roles = cap2_preferred_roles
         # sort low -> high like in Immortal Draft UI
         self.candidates: List[Candidate] = sorted(candidates, key=lambda c: c.mmr)
         self.available_ids = [c.player_id for c in self.candidates]
@@ -157,8 +176,22 @@ class ImmortalDraftSession:
         e = discord.Embed(title="Immortal Draft",
                           description=self.candidate_line(),
                           color=discord.Color.blurple())
-        e.add_field(name="Captain #1", value=f"{self.cap1.mention}", inline=True)
-        e.add_field(name="Captain #2", value=f"{self.cap2.mention}", inline=True)
+        e.add_field(
+            name="Captain #1",
+            value=(
+                f"{self.cap1.mention} · {self.cap1_mmr} "
+                f"{format_preferred_roles(self.cap1_preferred_roles)}"
+            ),
+            inline=True,
+        )
+        e.add_field(
+            name="Captain #2",
+            value=(
+                f"{self.cap2.mention} · {self.cap2_mmr} "
+                f"{format_preferred_roles(self.cap2_preferred_roles)}"
+            ),
+            inline=True,
+        )
         e.add_field(name="\u200b", value="\u200b", inline=True)
         e.add_field(name="Team #1", value=f"{team1}\n**Team MMR:** {total1}", inline=True)
         e.add_field(name="Team #2", value=f"{team2}\n**Team MMR:** {total2}", inline=True)
@@ -246,6 +279,18 @@ class ImmortalDraftSession:
         t1, t2, total1, total2 = self.team_lines()
         avg1 = round(total1 / 5)
         avg2 = round(total2 / 5)
+        team1_mmrs = [self.cap1_mmr] + [
+            candidate.mmr
+            for candidate in self.candidates
+            if candidate.player_id in self.teams["cap1"]
+        ]
+        team2_mmrs = [self.cap2_mmr] + [
+            candidate.mmr
+            for candidate in self.candidates
+            if candidate.player_id in self.teams["cap2"]
+        ]
+        std_dev1 = pstdev(team1_mmrs)
+        std_dev2 = pstdev(team2_mmrs)
         try:
             await self.channel.send(
                 embed=discord.Embed(
@@ -254,11 +299,13 @@ class ImmortalDraftSession:
                         f"**Team #1 (Captain {self.cap1.display_name})**\n"
                         f"{t1}\n"
                         f"**MMR Total:** {total1}\n"
-                        f"**Average MMR:** {avg1}\n\n"
+                        f"**Average MMR:** {avg1}\n"
+                        f"**MMR Std Dev:** {std_dev1:.1f}\n\n"
                         f"**Team #2 (Captain {self.cap2.display_name})**\n"
                         f"{t2}\n"
                         f"**MMR Total:** {total2}\n"
-                        f"**Average MMR:** {avg2}\n\n"
+                        f"**Average MMR:** {avg2}\n"
+                        f"**MMR Std Dev:** {std_dev2:.1f}\n\n"
                         f"Move to your in-game lobby teams and begin Captains Mode."
                     ),
                     color=discord.Color.green()
@@ -368,8 +415,8 @@ class PickButton(ui.Button):
     # when this player is picked (manually or auto), disable & relabel the button
     def mark_picked(self):
         self.disabled = True
-        # buttons don’t render ~~strike~~ markdown; a plain suffix is clearest
-        self.label = f"{self.base_label} (picked)"
+        # Keep the label within Discord's 80-character limit after adding roles.
+        self.label = f"{self.base_label[:78]} ✓"
         self.style = discord.ButtonStyle.danger
     async def callback(self, interaction: discord.Interaction):
         s = self.view.session  # type: ignore
