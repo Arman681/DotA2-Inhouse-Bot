@@ -1,6 +1,7 @@
 import unittest
+from statistics import pstdev
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from bot.services import embed_service, guild_config_service, lobby_service
 from bot.services.immortal_draft import Candidate, ImmortalDraftSession
@@ -303,6 +304,35 @@ class TeamBalanceSettingTests(unittest.TestCase):
 
 
 class ImmortalDraftRatingTests(unittest.TestCase):
+    def test_candidate_display_lists_roles_in_preference_order(self):
+        candidate = Candidate(
+            player_id="1",
+            mmr=5000,
+            name="Player One",
+            preferred_roles=[3, 1, 5, 2, 4],
+        )
+
+        self.assertEqual(
+            "Player One · 5000 [Pos 3, Pos 1, Pos 5, Pos 2, Pos 4]",
+            candidate.display(),
+        )
+
+    def test_candidate_display_marks_missing_roles(self):
+        candidate = Candidate(player_id="1", mmr=5000, name="Player One")
+
+        self.assertEqual("Player One · 5000 [no roles set]", candidate.display())
+
+    def test_candidate_display_keeps_roles_inside_button_label_limit(self):
+        candidate = Candidate(
+            player_id="1",
+            mmr=10000,
+            name="A placeholder player with an unusually long display name",
+            preferred_roles=[1, 2, 3, 4, 5],
+        )
+
+        self.assertLessEqual(len(candidate.display()), 78)
+        self.assertTrue(candidate.display().endswith("10000 [Pos 1, Pos 2, Pos 3, Pos 4, Pos 5]"))
+
     def test_timeout_autopick_uses_effective_mmr_but_displays_public_mmr(self):
         public_low = Candidate(player_id="1", mmr=3000, effective_mmr=3000, name="Public Low")
         privately_lower = Candidate(player_id="2", mmr=5000, effective_mmr=2500, name="Deflated")
@@ -323,6 +353,68 @@ class ImmortalDraftRatingTests(unittest.TestCase):
         self.assertEqual("2", session._autopick_member_id())
         self.assertIn("5000", privately_lower.display())
         self.assertNotIn("2500", privately_lower.display())
+
+    def test_captain_fields_include_mmr_and_preferred_roles(self):
+        captain_one = SimpleNamespace(id=10, mention="<@10>", display_name="Captain One")
+        captain_two = SimpleNamespace(id=20, mention="<@20>", display_name="Captain Two")
+        session = ImmortalDraftSession(
+            bot=None,
+            guild=SimpleNamespace(id=1001),
+            channel=None,
+            cap1=captain_one,
+            cap2=captain_two,
+            cap1_mmr=6000,
+            cap2_mmr=5900,
+            candidates=[],
+            cap1_preferred_roles=[2, 1, 3, 4, 5],
+        )
+
+        embed = session.make_embed()
+
+        self.assertEqual("<@10> · 6000 [Pos 2, Pos 1, Pos 3, Pos 4, Pos 5]", embed.fields[0].value)
+        self.assertEqual("<@20> · 5900 [no roles set]", embed.fields[1].value)
+
+
+class ImmortalDraftResultsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_results_display_each_team_mmr_standard_deviation(self):
+        captain_one = SimpleNamespace(id=10, mention="<@10>", display_name="Captain One")
+        captain_two = SimpleNamespace(id=20, mention="<@20>", display_name="Captain Two")
+        channel = SimpleNamespace(send=AsyncMock())
+        candidates = [
+            Candidate(player_id=str(index), mmr=mmr, name=f"Player {index}")
+            for index, mmr in enumerate(
+                [3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500],
+                start=1,
+            )
+        ]
+        session = ImmortalDraftSession(
+            bot=None,
+            guild=SimpleNamespace(id=1001),
+            channel=channel,
+            cap1=captain_one,
+            cap2=captain_two,
+            cap1_mmr=7000,
+            cap2_mmr=7500,
+            candidates=candidates,
+        )
+        session.teams = {
+            "cap1": ["1", "3", "5", "7"],
+            "cap2": ["2", "4", "6", "8"],
+        }
+
+        await session.finalize_draft()
+
+        result_embed = channel.send.await_args.kwargs["embed"]
+        expected_one = pstdev([7000, 3000, 4000, 5000, 6000])
+        expected_two = pstdev([7500, 3500, 4500, 5500, 6500])
+        self.assertIn(
+            f"**Average MMR:** 5000\n**MMR Std Dev:** {expected_one:.1f}",
+            result_embed.description,
+        )
+        self.assertIn(
+            f"**Average MMR:** 5500\n**MMR Std Dev:** {expected_two:.1f}",
+            result_embed.description,
+        )
 
 
 if __name__ == "__main__":
