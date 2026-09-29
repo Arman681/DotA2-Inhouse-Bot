@@ -257,6 +257,7 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
                     effective_mmr=effective_mmr,
                     member=None,
                     name=name,
+                    preferred_roles=get_preferred_roles(uid),
                 )
             )
         else:
@@ -269,6 +270,7 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
                         effective_mmr=effective_mmr,
                         member=member,
                         name=member.display_name,
+                        preferred_roles=get_preferred_roles(member.id),
                     )
                 )
     if len(candidates) != 8:
@@ -296,6 +298,8 @@ async def start_immortal_draft(bot, guild: discord.Guild, channel: discord.TextC
         cap2_mmr=int(_c2_mmr),
         candidates=candidates,
         header_message=header_message,
+        cap1_preferred_roles=get_preferred_roles(cap1.id),
+        cap2_preferred_roles=get_preferred_roles(cap2.id),
     )
     await session.start()
     if session.timer_task:
